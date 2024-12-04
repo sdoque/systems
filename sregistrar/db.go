@@ -52,6 +52,7 @@ func createDB() (*sql.DB, error) {
 // createTables creates the necessary tables in the SQLite database.
 func createTables(db *sql.DB) error {
 	tableStatements := []string{
+		`PRAGMA journal_mode = WAL;`,
 		`CREATE TABLE Services (
 			Id INTEGER PRIMARY KEY,
 			Definition TEXT,

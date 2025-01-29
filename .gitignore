@@ -23,8 +23,6 @@ vendor/
 .vscode/launch.json
 
 # AiGo
-Systemconfig.json
-go.mod
-go.sum
-serviceRegistry.db
+*.db
 *.pem
+*.json

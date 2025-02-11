@@ -52,6 +52,7 @@ func createDB() (*sql.DB, error) {
 // createTables creates the necessary tables in the SQLite database.
 func createTables(db *sql.DB) error {
 	tableStatements := []string{
+		`PRAGMA journal_mode = WAL;`,
 		`CREATE TABLE Services (
 			Id INTEGER PRIMARY KEY,
 			Definition TEXT,
@@ -333,7 +334,7 @@ func getRecord(rsc *UnitAsset, id int) (*forms.ServiceRecord_v1, error) {
 func getIPAddresses(rsc *UnitAsset, serviceId int) ([]string, error) {
 	var ips []string
 	rows, err := rsc.db.Query(`
-		 SELECT IPAddress FROM IPAddresses 
+		 SELECT IPAddress FROM IPAddresses
 		 INNER JOIN ServicesXIP ON IPAddresses.Id = ServicesXIP.IPAddressId
 		 WHERE ServicesXIP.ServiceId = ?
 	 `, serviceId)
@@ -355,7 +356,7 @@ func getIPAddresses(rsc *UnitAsset, serviceId int) ([]string, error) {
 func getProtoPorts(rsc *UnitAsset, serviceId int) (map[string]int, error) {
 	protoPorts := make(map[string]int)
 	rows, err := rsc.db.Query(`
-		 SELECT Proto, Port FROM ProtoPorts 
+		 SELECT Proto, Port FROM ProtoPorts
 		 INNER JOIN ServicesXPP ON ProtoPorts.Id = ServicesXPP.ProtoPortId
 		 WHERE ServicesXPP.ServiceId = ?
 	 `, serviceId)
@@ -378,7 +379,7 @@ func getProtoPorts(rsc *UnitAsset, serviceId int) (map[string]int, error) {
 func getDetails(rsc *UnitAsset, serviceId int) (map[string][]string, error) {
 	details := make(map[string][]string)
 	rows, err := rsc.db.Query(`
-		 SELECT DetailKey, DetailValue FROM Details 
+		 SELECT DetailKey, DetailValue FROM Details
 		 INNER JOIN ServicesXDetails ON Details.Id = ServicesXDetails.DetailId
 		 WHERE ServicesXDetails.ServiceId = ?
 	 `, serviceId)

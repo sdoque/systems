@@ -210,10 +210,7 @@ func (ua *UnitAsset) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []by
 	}
 
 	fmt.Printf("/n the length of the service list is: %d\n", len(serviceList.List))
-	serviceLocation, err := selectService(serviceList, newQuest)
-	if err != nil {
-		return
-	}
+	serviceLocation := selectService(serviceList)
 	payload, err := json.MarshalIndent(serviceLocation, "", "  ")
 	fmt.Printf("the service location is %+v\n", serviceLocation)
 	return payload, err
@@ -246,40 +243,13 @@ func extractServList(bodyBytes []byte) (rec forms.ServiceRecordList_v1, err erro
 	return
 }
 
-func find(needle string, stack []string) bool {
-	for _, s := range stack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
-}
-
-func findService(location string, list []forms.ServiceRecord_v1) (rec forms.ServiceRecord_v1) {
-	for _, rec := range list {
-		if find(location, rec.Details["Location"]) {
-			return rec
-		}
-	}
-	return
-}
-
-func selectService(serviceList forms.ServiceRecordList_v1, newQuest forms.ServiceQuest_v1) (serv forms.ServicePoint_v1, err error) {
-	// Try to find a service with a matching location as the "questioner".
-	var rec forms.ServiceRecord_v1
-	for _, loc := range newQuest.Details["Location"] {
-		rec = findService(loc, serviceList.List)
-		if len(rec.ServiceDefinition) > 0 {
-			// Found it!
-			serv.NewForm()
-			serv.ProviderName = rec.SystemName
-			serv.ProviderCertificate = rec.Certificate
-			serv.ServiceDefinition = rec.ServiceDefinition
-			serv.Details = rec.Details
-			serv.ServLocation = "http://" + rec.IPAddresses[0] + ":" + strconv.Itoa(rec.ProtoPort["http"]) + "/" + rec.SystemName + "/" + rec.SubPath
-			return
-		}
-	}
-	err = fmt.Errorf("couldn't find matching service for: %v", newQuest)
+func selectService(serviceList forms.ServiceRecordList_v1) (serv forms.ServicePoint_v1) {
+	rec := serviceList.List[0]
+	serv.NewForm()
+	serv.ProviderName = rec.SystemName
+	serv.ProviderCertificate = rec.Certificate
+	serv.ServiceDefinition = rec.ServiceDefinition
+	serv.Details = rec.Details
+	serv.ServLocation = "http://" + rec.IPAddresses[0] + ":" + strconv.Itoa(rec.ProtoPort["http"]) + "/" + rec.SystemName + "/" + rec.SubPath
 	return
 }

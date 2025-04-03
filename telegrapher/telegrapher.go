@@ -24,8 +24,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/vanDeventer/mbaigo/components"
-	"github.com/vanDeventer/mbaigo/usecases"
+	"github.com/sdoque/mbaigo/components"
+	"github.com/sdoque/mbaigo/usecases"
 )
 
 func main() {

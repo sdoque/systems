@@ -22,7 +22,7 @@ import (
 	"strings"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
-	"github.com/vanDeventer/mbaigo/components"
+	"github.com/sdoque/mbaigo/components"
 )
 
 // Define your global variable

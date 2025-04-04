@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2024 Synecdoque
+ * Copyright (c) 2025 Synecdoque
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -96,9 +96,9 @@ func initTemplate() components.UnitAsset {
 		ServicesMap: components.Services{
 			access.SubPath: &access,
 		},
-		Broker:   "tcp://10.0.0.33:1883",
-		Username: "aiko",
-		Password: "babe",
+		Broker:   "tcp://localhost:1883",
+		Username: "user",
+		Password: "password",
 		Topics:   []string{"kitchen/temperature", "topic2", "topic3"}, // Default topics
 		Pattern:  []string{"pattern1", "pattern2", "pattern3"},        // Default patterns
 	}

@@ -1,56 +1,229 @@
 # mbaigo System: Telegrapher
 
-The Telegrapher system has for asset an MQTT broker such that it can offer as a service the broker’s services, which can published or subscribed to.
+The Telegrapher system is built around an MQTT broker.  
+It offers the broker’s topics as services, which can be published or subscribed to.  
+MQTT is a messaging protocol, not a service-oriented solution.  
+Telegrapher transforms MQTT topics into services by extracting path information and interpreting it as metadata describing the service.
 
-## Compiling
-To compile the code, one needs to get the mbaigo module
-```go get github.com/sdoque/mbaigo```
-and initialize the *go.mod* file with ``` go mod init github.com/sdoque/arrowsys/telegrapher``` before running *go mod tidy*.
+---
 
-The reason the *go.mod* file is not included in the repository is that when developing the mbaigo module, a replace statement needs to be included to point to the development code.
+## 💪 Compiling
 
-To run the code, one just needs to type in ```go run telegrapher.go thing.go``` within a terminal or at a command prompt.
+To compile this code, ensure you have Go installed and fetch the `mbaigo` module:
 
-It is **important** to start the program from within it own directory (and each system should have their own directory) because it looks for its configuration file there. If it does not find it there, it will generate one and shutdown to allow the configuration file to be updated.
-
-The configuration and operation of the system can be verified using the system's web server using a standard web browser, whose address is provided by the system at startup.
-
-To build the software for one's own machine,
-```go build -o telegrapher_imac```, where the ending is used to clarify for which platform the code is for.
-
-
-## Cross compiling/building
-The following commands enable one to build for different platforms:
-- Raspberry Pi 64: ```GOOS=linux GOARCH=arm64 go build -o telegrapher_rpi64 telegrapher.go thing.go```
-One can find a complete list of platform by typing *‌go tool dist list* at the command prompt
-
-If one wants to secure copy it to a Raspberry pi,
-`scp telegrapher_rpi64 jan@192.168.1.195:demo/telegrapher/` where user is the *username* @ the *IP address* of the Raspberry Pi with a relative (to the user's home directory) target *demo/telegrapher/* directory.telegrapher
-
-## Deploying the asset
-On a Raspberry Pi, typing one line at the time,
-
+```bash
+go get github.com/sdoque/mbaigo@latest
 ```
+
+Then initialize your Go module:
+
+```bash
+go mod init github.com/sdoque/arrowsys/telegrapher
+go mod tidy
+```
+
+> **Note**: The `go.mod` file is not included in this repository. This allows you to use a local development version of the `mbaigo` module by adding a `replace` directive, e.g.:
+>
+> ```go
+> replace github.com/sdoque/mbaigo => ../path/to/local/mbaigo
+> ```
+
+To run the code:
+
+```bash
+go run telegrapher.go thing.go
+```
+
+> **Important**: Run the program from its own directory. Each system should use a dedicated directory because the program reads/writes its configuration file locally.  
+If the file is missing, the program will generate a template and shut down, allowing you to edit it.
+
+The system includes a web server for configuration and status monitoring. The server address is printed at startup and can be accessed via a standard web browser.
+
+To build the executable for your current machine:
+
+```bash
+go build -o telegrapher_imac
+```
+
+(The suffix is optional and simply helps you identify the platform.)
+
+---
+
+## 🚀 Cross-compiling
+
+To build for different platforms:
+
+### Raspberry Pi 64-bit:
+```bash
+GOOS=linux GOARCH=arm64 go build -o telegrapher_rpi64 telegrapher.go thing.go
+```
+
+You can see all available platform targets with:
+
+```bash
+go tool dist list
+```
+
+To copy the binary to a Raspberry Pi:
+
+```bash
+scp telegrapher_rpi64 jan@192.168.1.195:demo/telegrapher/
+```
+
+Where:
+- `jan` is your Pi's username
+- `192.168.1.195` is the Pi's IP address
+- `demo/telegrapher/` is the target directory (relative to the user's home directory)
+
+---
+
+## 📦 Deploying the MQTT Broker (Asset)
+
+If you don't have an MQTT broker for testing, you can install the [Eclipse Mosquitto broker](https://mosquitto.org). On a Raspberry Pi or Debian-based system:
+
+```bash
 sudo apt update && sudo apt upgrade
 sudo apt install -y mosquitto mosquitto-clients
 mosquitto -v
 ```
 
-To publish to a topic on the host type ```mosquitto _pub -h localhost -t /test/topic -m "Hello from localhost"```  and to subscribe to a topic ```mosquitto _sub -h localhost -t /test/topic```
+### 🔁 Basic Publish/Subscribe Test
 
-### Adding some security
-Add the following by editing the configuration file ```sudo nano /etc/mosquitto/mosquitto.conf```
+**Publish**:
 
+```bash
+mosquitto_pub -h localhost -t /test/topic -m "Hello from localhost"
 ```
+
+**Subscribe**:
+
+```bash
+mosquitto_sub -h localhost -t /test/topic
+```
+
+If you do not have a publisher available, a test publisher is provided in the `mqttGen/` subdirectory of the [source code repository](https://github.com/sdoque/systems/tree/main/telegrapher). It publishes temperature values in a sine wave pattern every second using MQTT.
+
+To run it:
+
+```bash
+cd mqttGen
+go run mqttGen.go
+```
+
+---
+
+## 🔐 Adding Some Security
+
+Edit the Mosquitto configuration file:
+
+```bash
+sudo nano /etc/mosquitto/mosquitto.conf
+```
+
+Add the following lines:
+
+```conf
 listener 1883
 allow_anonymous false
 password_file /etc/mosquitto/pwdfile
 ```
 
+### Add Users
 
-Adding a user with a password prompt ```sudo mosquitto_passwd -c /etc/mosquitto/pwdfile publisher_user``` and then adding with password in the command ```sudo mosquitto_passwd -b /etc/mosquitto/pwdfile subscriber_user subpwd```
+Create a password file and prompt for password:
 
-The broker has to be restarted ```sudo service mosquitto restart```
+```bash
+sudo mosquitto_passwd -c /etc/mosquitto/pwdfile publisher_user
+```
 
-Example command line statement 
-  ```mosquitto_sub -h localhost -t kitchen/temperature -u user -P password```
+Add another user with password on the command line:
+
+```bash
+sudo mosquitto_passwd -b /etc/mosquitto/pwdfile subscriber_user subpwd
+```
+
+Restart Mosquitto to apply the changes:
+
+```bash
+sudo service mosquitto restart
+```
+
+### Test Authenticated Subscription
+
+```bash
+mosquitto_sub -h localhost -t kitchen/temperature -u subscriber_user -P subpwd
+```
+
+
+Excellent question — and one that matters a lot for actual deployment!
+
+---
+
+
+### 📡 To Allow Subscribers from Other Computers
+
+Here’s what needs to be true:
+
+#### ✅ 1. **Mosquitto must be listening on an external interface**
+
+Your current config might:
+
+```conf
+listener 1883
+```
+
+By default, this binds to **all interfaces**, including external ones (e.g., your Wi-Fi IP). So this part is good *unless* it was previously restricted with `bind_address`.
+
+To be sure it listens on all interfaces, don’t specify `bind_address`, or do this:
+
+```conf
+listener 1883 0.0.0.0
+```
+
+---
+
+#### ✅ 2. **The device's firewall must allow port 1883**
+
+If you're running `ufw` (Uncomplicated Firewall) or `iptables`, make sure port 1883 is open:
+
+```bash
+sudo ufw allow 1883/tcp
+```
+
+You can check with:
+
+```bash
+sudo ufw status
+```
+
+---
+
+#### ✅ 3. **Clients must connect using the broker's IP address**
+
+From another computer (on the same network), use:
+
+```bash
+mosquitto_sub -h <BROKER_IP_ADDRESS> -t kitchen/temperature -u subscriber_user -P subpwd
+```
+
+Replace `<BROKER_IP_ADDRESS>` with the IP of the Raspberry Pi or host running Mosquitto (e.g., `192.168.1.195`).
+
+---
+
+### 🛡️ Bonus: Secure Remote Access
+
+If you're exposing the broker outside your local network (e.g. over the internet), you should:
+
+- Use **port 8883** (MQTT over TLS)
+- Set up a certificate with Let's Encrypt or OpenSSL
+- Consider firewalling by IP, or using a VPN
+
+---
+
+### ✅ TL;DR
+
+Your current config **supports remote connections**, but only if:
+
+- Mosquitto is listening on `0.0.0.0`
+- Port 1883 is open on the host
+- Clients use the correct IP

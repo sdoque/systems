@@ -1,5 +1,7 @@
 # Service Registry System
 
+**NOTE** This system is not currently being maintained, see [issue 9](https://github.com/sdoque/mbaigo/issues/9).
+
 The Service Registry system is one of the mandatory core system of an Arrowhead local cloud.
 It keeps track of the currently available services within that cloud.
 

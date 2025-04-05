@@ -72,7 +72,7 @@ func initTemplate() components.UnitAsset {
 	rotation := components.Service{
 		Definition:  "rotation",
 		SubPath:     "rotation",
-		Details:     map[string][]string{"Forms": {"SignalA_v1a"}, "Unit": {"percent", "rotational"}},
+		Details:     map[string][]string{"Forms": {"SignalA_v1a"}, "Unit": {"Percent", "Rotational"}},
 		RegPeriod:   30,
 		Description: "informs of the servo's current position (GET) or updates the position (PUT)",
 	}

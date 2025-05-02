@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2024 Synecdoque
+ * Copyright (c) 2025 Synecdoque
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -144,13 +144,16 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 
 	// Collect and ingest measurements
 	var wg sync.WaitGroup
+	sProtocols := components.SProtocols(sys.Husk.ProtoPort)
 	for _, measurement := range uac.Measurements {
+		// determine the protocols that the system supports
 		cMeasurement := components.Cervice{
-			Name:    measurement.Name,
-			Details: measurement.Details,
-			Url:     make([]string, 0),
+			Definition: measurement.Name,
+			Details:    measurement.Details,
+			Protos:     sProtocols,
+			Nodes:      make(map[string][]string, 0),
 		}
-		ua.CervicesMap[cMeasurement.Name] = &cMeasurement
+		ua.CervicesMap[cMeasurement.Definition] = &cMeasurement
 
 		wg.Add(1)
 		go func(name string, period time.Duration) {
@@ -158,7 +161,7 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 			if err := ua.collectIngest(name, period, writeAPI); err != nil {
 				log.Printf("Error in collectIngest for measurement: %v", err)
 			}
-		}(measurement.Name, measurement.Period)
+		}(measurement.Name, measurement.Period*time.Second)
 	}
 
 	// Return the unit asset and a cleanup function to close the InfluxDB client
@@ -189,7 +192,7 @@ func (ua *UnitAsset) collectIngest(name string, period time.Duration, writeAPI a
 				log.Printf("\nUnable to obtain a %s reading with error %s\n", name, err)
 				continue // return fmt.Errorf("unsupported measurement: %s", name)
 			}
-
+			fmt.Printf("%+v\n", tf)
 			// Perform a type assertion to convert the returned Form to SignalA_v1a
 			tup, ok := tf.(*forms.SignalA_v1a)
 			if !ok {

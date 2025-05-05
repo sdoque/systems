@@ -46,6 +46,7 @@ type MeasurementT struct {
 // UnitAsset type models the unit asset (interface) of the system
 type UnitAsset struct {
 	Name        string              `json:"bucket_name"`
+	Type        string              `json:"type"`
 	Owner       *components.System  `json:"-"`
 	Details     map[string][]string `json:"details"`
 	ServicesMap components.Services `json:"-"`
@@ -62,6 +63,11 @@ type UnitAsset struct {
 // GetName returns the name of the Resource.
 func (ua *UnitAsset) GetName() string {
 	return ua.Name
+}
+
+// GetServices returns the services of the Resource.
+func (ua *UnitAsset) GetType() string {
+	return ua.Type
 }
 
 // GetServices returns the services of the Resource.

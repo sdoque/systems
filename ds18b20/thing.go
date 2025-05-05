@@ -19,7 +19,6 @@ package main
 import (
 	"context"
 	"log"
-	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -27,7 +26,6 @@ import (
 
 	"github.com/sdoque/mbaigo/components"
 	"github.com/sdoque/mbaigo/forms"
-	"golang.org/x/exp/rand"
 )
 
 // Define the types of requests the measurement manager can handle
@@ -42,6 +40,7 @@ type STray struct {
 // UnitAsset type models the unit asset (interface) of the system.
 type UnitAsset struct {
 	Name        string              `json:"name"`
+	Type        string              `json:"type"`
 	Owner       *components.System  `json:"-"`
 	Details     map[string][]string `json:"details"`
 	ServicesMap components.Services `json:"-"`
@@ -55,6 +54,11 @@ type UnitAsset struct {
 // GetName returns the name of the Resource.
 func (ua *UnitAsset) GetName() string {
 	return ua.Name
+}
+
+// GetServices returns the services of the Resource.
+func (ua *UnitAsset) GetType() string {
+	return ua.Type
 }
 
 // GetServices returns the services of the Resource.
@@ -105,6 +109,7 @@ func initTemplate() components.UnitAsset {
 func newResource(uac UnitAsset, sys *components.System, servs []components.Service) (components.UnitAsset, func()) {
 	ua := &UnitAsset{ // this a struct that implements the UnitAsset interface
 		Name:        uac.Name,
+		Type:        uac.Type,
 		Owner:       sys,
 		Details:     uac.Details,
 		ServicesMap: components.CloneServices(servs),
@@ -124,8 +129,6 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 // readTemperature obtains the temperature from respective ds18b20 resource at regular intervals
 func (ua *UnitAsset) readTemperature(ctx context.Context) {
 	defer close(ua.trayChan) // Ensure the channel is closed when the goroutine exits
-
-	randomdDelay()
 
 	// Create a ticker that triggers every 2 seconds
 	ticker := time.NewTicker(2 * time.Second)
@@ -197,26 +200,4 @@ func (ua *UnitAsset) readTemperature(ctx context.Context) {
 			order.ValueP <- f
 		}
 	}
-}
-
-// randomDelay is used to have the requests to multiple 1-wire sensor out of synch to free the bus. (This is a quick hack :-( )
-func randomdDelay() {
-	rand.Seed(uint64(time.Now().UnixNano()))
-
-	// Constants
-	baseDelay := 93 * time.Millisecond           // 0.093 seconds
-	maxMultiples := int(math.Floor(1.0 / 0.093)) // Calculate the max multiples (10 in this case)
-
-	// Generate a random multiplier (1 to maxMultiples - 1)
-	randomMultiplier := rand.Intn(maxMultiples-1) + 1
-
-	// Calculate the delay
-	delay := time.Duration(randomMultiplier) * baseDelay
-
-	log.Printf("Random delay: %v\n", delay)
-
-	// Sleep for the random duration
-	time.Sleep(delay)
-
-	log.Println("Program resumed after delay.")
 }

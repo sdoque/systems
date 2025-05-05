@@ -1,0 +1,76 @@
+Starting: /Users/jan/go/bin/dlv dap --listen=127.0.0.1:56452 --log-dest=3 from /Users/jan/go/src/github.com/sdoque/systems/telegrapher
+DAP server listening at: 127.0.0.1:56452
+Connected to MQTT broker
+Subscribed to topic: IW/iwCollect (192.168.42.10)/NDATA/ANALOGUE MOXA/PRESSURE 1
+Subscribed to topic: IW/iwCollect (192.168.42.10)/NDATA/ANALOGUE MOXA/PRESSURE 2
+Subscribed to topic: IW/iwCollect (192.168.42.10)/NDATA/ANALOGUE MOXA/TEMP 1 PT 100
+Subscribed to topic: IW/iwCollect (192.168.42.10)/NDATA/ANALOGUE MOXA/TEMP 2 INFRARED
+Subscribed to topic: IW/iwCollect (192.168.42.10)/NDATA/MEMORY/%AVAILABLERAM
+Received message: {
+  "TagType": "DecimalTag",
+  "Name": "%AVAILABLERAM",
+  "DataType": "Decimal",
+  "IOType": "System",
+  "Units": "",
+  "PublishedTimeStamp": "2025-04-30T16:57:48.9853265Z",
+  "Parameters": {},
+  "Readings": [
+    {
+      "TimeStamp": "2025-04-30T16:57:48.9663275Z",
+      "Value": 1.96381,
+      "Quality": 1.0
+    }
+  ],
+  "Min": 1.11742,
+  "Max": 2.292011,
+  "Avg": 1.96267678
+} from topic: IW/iwCollect (192.168.42.10)/NDATA/MEMORY/%AVAILABLERAM
+Subscribed to topic: IW/iwCollect (192.168.42.10)/NDATA/MEMORY/%CDRIVESPACE
+Received message: {
+  "TagType": "IntTag",
+  "Name": "%CDRIVESPACE",
+  "DataType": "Int",
+  "IOType": "System",
+  "Units": "",
+  "PublishedTimeStamp": "2025-04-30T16:57:48.9893265Z",
+  "Parameters": {},
+  "Readings": [
+    {
+      "TimeStamp": "2025-04-30T16:57:48.9683268Z",
+      "Value": 15913,
+      "Quality": 1.0
+    }
+  ],
+  "Min": 15122,
+  "Max": 16026,
+  "Avg": 15914.25
+} from topic: IW/iwCollect (192.168.42.10)/NDATA/MEMORY/%CDRIVESPACE
+Received message: {
+  "TagType": "DecimalTag",
+  "Name": "%CPUUSE",
+  "DataType": "Decimal",
+  "IOType": "System",
+  "Units": "",
+  "PublishedTimeStamp": "2025-04-30T16:57:48.9813266Z",
+  "Parameters": {},
+  "Readings": [
+    {
+      "TimeStamp": "2025-04-30T16:57:48.9653273Z",
+      "Value": 51.30911,
+      "Quality": 1.0
+    }
+  ],
+  "Min": 42.46912,
+  "Max": 100.0,
+  "Avg": 53.3337068
+} from topic: IW/iwCollect (192.168.42.10)/NDATA/MEMORY/%CPUUSE
+Subscribed to topic: IW/iwCollect (192.168.42.10)/NDATA/MEMORY/%CPUUSE
+System telegrapher's parsed Certificate:
+  Subject: CN=arrowhead.eu,OU=CPS,O=Luleaa University of Technology,L=Luleaa,ST=Norrbotten,C=SE
+  Issuer: CN=arrowhead.eu,O=arrowhead.eu
+  Serial Number: 249180500393778320385754551781825731124
+  Not Before: 2025-05-01 05:29:03 +0000 UTC
+  Not After: 2026-05-01 05:29:03 +0000 UTC
+The system telegrapher is up with its web server available at http://192.168.1.105:20172/telegrapher
+
+lead registrar found at: http://192.168.1.107:20102/serviceregistrar/registry

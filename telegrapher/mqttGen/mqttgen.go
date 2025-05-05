@@ -21,6 +21,12 @@ type SignalA_v1a struct {
 	Version   string    `json:"version" xml:"version"`
 }
 
+// NewForm creates a new form of type SignalA
+func (sig *SignalA_v1a) NewForm() *SignalA_v1a {
+	sig.Version = "SignalA_v1.0"
+	return sig
+}
+
 // Config structure to hold MQTT settings
 type Config struct {
 	Broker   string `json:"broker"`
@@ -115,12 +121,18 @@ func main() {
 		sineValue := amplitude*math.Sin(2*math.Pi*elapsed/period) + offset
 
 		// Create the payload
-		payload := SignalA_v1a{
-			Value:     sineValue,
-			Unit:      "celsius",
-			Timestamp: time.Now(),
-			Version:   "SignalA_v1.0",
-		}
+		// payload := SignalA_v1a{
+		// 	Value:     sineValue,
+		// 	Unit:      "celsius",
+		// 	Timestamp: time.Now(),
+		// 	Version:   "SignalA_v1.0",
+		// }
+
+		var payload SignalA_v1a
+		payload.NewForm()
+		payload.Value = sineValue
+		payload.Unit = "Celsius"
+		payload.Timestamp = time.Now()
 
 		// Marshal the struct to JSON
 		jsonPayload, err := json.Marshal(payload)

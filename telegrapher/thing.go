@@ -127,7 +127,7 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 
 	// Define the message handler callback
 	messageHandler := func(client mqtt.Client, msg mqtt.Message) {
-		fmt.Printf("Received message: %s from topic: %s\n", msg.Payload(), msg.Topic())
+		fmt.Printf("Received A message: %s from topic: %s\n", msg.Payload(), msg.Topic())
 
 		// Ensure the map is initialized (just in case)
 		if messageList == nil {
@@ -137,6 +137,8 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 		messageList[msg.Topic()] = msg.Payload() // Assign message to topic in the map
 	}
 
+	log.Printf("The message list is:\n%+v\n", messageList)
+
 	for _, topicItem := range uac.Topics {
 		// Consider the last term of a topic to be a service, and the preceding part is the asset
 		lastSlashIndex := strings.LastIndex(topicItem, "/")
@@ -144,9 +146,9 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 			fmt.Printf("topic %s has no forward slash and is ignored\n", topicItem)
 			continue
 		}
-		a := topicItem[:lastSlashIndex]   // The asset part
-		s := topicItem[lastSlashIndex+1:] // The service part
+		a := topicItem[:lastSlashIndex] // The asset part
 		aName := strings.ReplaceAll(a, "/", "_")
+		s := topicItem[lastSlashIndex+1:] // The service part
 
 		// Redefine the service
 		access := components.Service{
@@ -203,18 +205,18 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 
 //-------------------------------------Unit asset's resource functions
 
-// subscribeToTopic subscribes to the given MQTT topic
-func (ua *UnitAsset) subscribeToTopic() {
-	// Define the message handler callback
-	messageHandler := func(client mqtt.Client, msg mqtt.Message) {
-		fmt.Printf("Received message: %s from topic: %s\n", msg.Payload(), msg.Topic())
-		// ua.message = msg.Payload()
-	}
+// // subscribeToTopic subscribes to the given MQTT topic
+// func (ua *UnitAsset) subscribeToTopic() {
+// 	// Define the message handler callback
+// 	messageHandler := func(client mqtt.Client, msg mqtt.Message) {
+// 		ua.message = string(msg.Payload()) // Convert []byte to string
+// 		fmt.Printf("Received message: %s from topic: %s\n", ua.message, msg.Topic())
+// 	}
 
-	// Subscribe to the topic
-	theTopic := ua.metatopic + "/" + ua.serviceDef
-	if token := ua.client.Subscribe(theTopic, 0, messageHandler); token.Wait() && token.Error() != nil {
-		log.Fatalf("Error subscribing to topic: %v", token.Error())
-	}
-	fmt.Printf("Subscribed to topic: %s\n", theTopic)
-}
+// 	// Subscribe to the topic
+// 	theTopic := ua.metatopic + "/" + ua.serviceDef
+// 	if token := ua.client.Subscribe(theTopic, 0, messageHandler); token.Wait() && token.Error() != nil {
+// 		log.Fatalf("Error subscribing to topic: %v", token.Error())
+// 	}
+// 	fmt.Printf("Subscribed to topic: %s\n", theTopic)
+// }

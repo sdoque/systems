@@ -118,6 +118,7 @@ func (ua *UnitAsset) access(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "POST", "PUT":
+
 		contentType := r.Header.Get("Content-Type")
 		mediaType, _, err := mime.ParseMediaType(contentType)
 		if err != nil {
@@ -142,16 +143,14 @@ func (ua *UnitAsset) access(w http.ResponseWriter, r *http.Request) {
 			log.Println("problem unpacking the temperature signal form")
 			return
 		}
-		// Create a struct to send on a channel to handle the request
-		readRecord := STray{
+		setSignal := STray{
 			Action: "write",
-			Sample: speed,
-			Result: make(chan []forms.ServiceRecord_v1),
+			Sample: make(chan forms.SignalA_v1a),
 			Error:  make(chan error),
 		}
 
 		// Send request to add a record to the unit asset
-		ua.requests <- readRecord
+		ua.sampleChan <- setSignal
 
 		// Use a select statement to wait for responses on either the Result or Error channel
 		select {

@@ -98,7 +98,7 @@ func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath
 func (ua *UnitAsset) access(w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch r.Method {
 	case "GET":
-		msg := messageList[ua.metatopic+"/"+servicePath]
+		msg := messageList[ua.topic]
 		if msg != nil {
 			w.WriteHeader(http.StatusOK)
 			w.Header().Set("Content-Type", "application/json")

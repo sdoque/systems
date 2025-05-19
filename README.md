@@ -30,6 +30,8 @@ Many of the testing is done with the Raspberry Pi (3, 4, &5) with [GPIO](https:/
 - 20150  ds18b20 (1-wire sensor)
 - 20151  Parallax (PWM)
 - 20152  Thermostat
+- 20153  Revolutionary (Rev Pi PLC)
+- 20154  Levler (Level control)
 - 20160  Picam
 - 20161  USB microphone 
 - 20170  UA client (OPC UA)

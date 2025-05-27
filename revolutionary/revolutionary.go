@@ -53,17 +53,17 @@ func main() {
 	sys.UAssets[assetName] = &assetTemplate
 
 	// Configure the system
-	rawResources, servsTemp, err := usecases.Configure(&sys)
+	rawResources, err := usecases.Configure(&sys)
 	if err != nil {
 		log.Fatalf("configuration error: %v\n", err)
 	}
 	sys.UAssets = make(map[string]*components.UnitAsset) // clear the unit asset map (from the template)
 	for _, raw := range rawResources {
-		var uac UnitAsset
+		var uac usecases.ConfigurableAsset
 		if err := json.Unmarshal(raw, &uac); err != nil {
 			log.Fatalf("resource configuration error: %+v\n", err)
 		}
-		ua, cleanup := newResource(uac, &sys, servsTemp)
+		ua, cleanup := newResource(uac, &sys)
 		defer cleanup()
 		sys.UAssets[ua.GetName()] = &ua
 	}
@@ -96,20 +96,20 @@ func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath
 
 // access gets the unit asset's AIO channel datum and sends it in a signal form
 func (ua *UnitAsset) access(w http.ResponseWriter, r *http.Request) {
+	requestTray := ServiceTray{
+		Sample: make(chan forms.SignalA_v1a),
+		Error:  make(chan error),
+	}
 	switch r.Method {
 	case "GET":
-		getMeasuremet := STray{
-			Action: "read",
-			Sample: make(chan forms.SignalA_v1a),
-			Error:  make(chan error),
-		}
-		ua.sampleChan <- getMeasuremet
+		requestTray.Action = "read"      // Set the action to read
+		ua.serviceChannel <- requestTray // Send request to read a signal over the channel
 		select {
-		case err := <-getMeasuremet.Error:
+		case err := <-requestTray.Error:
 			fmt.Printf("Logic error in getting measurement, %s\n", err)
 			w.WriteHeader(http.StatusInternalServerError) // Use 500 for an internal error
 			return
-		case signalForm := <-getMeasuremet.Sample:
+		case signalForm := <-requestTray.Sample:
 			usecases.HTTPProcessGetRequest(w, r, &signalForm)
 			return
 		case <-time.After(5 * time.Second): // Optional timeout
@@ -118,6 +118,7 @@ func (ua *UnitAsset) access(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "POST", "PUT":
+		requestTray.Action = "write" // Set the action to write
 
 		contentType := r.Header.Get("Content-Type")
 		mediaType, _, err := mime.ParseMediaType(contentType)
@@ -125,7 +126,6 @@ func (ua *UnitAsset) access(w http.ResponseWriter, r *http.Request) {
 			fmt.Println("Error parsing media type:", err)
 			return
 		}
-
 		defer r.Body.Close()
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -138,45 +138,27 @@ func (ua *UnitAsset) access(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		speed, ok := serviceReq.(*forms.SignalA_v1a)
+		outputForm, ok := serviceReq.(*forms.SignalA_v1a)
 		if !ok {
 			log.Println("problem unpacking the temperature signal form")
 			return
 		}
-		setSignal := STray{
-			Action: "write",
-			Sample: make(chan forms.SignalA_v1a),
-			Error:  make(chan error),
-		}
+		requestTray.Sample <- *outputForm
 
 		// Send request to add a record to the unit asset
-		ua.sampleChan <- setSignal
+		ua.serviceChannel <- requestTray
 
 		// Use a select statement to wait for responses on either the Result or Error channel
 		select {
-		case err := <-readRecord.Error:
+		case err := <-requestTray.Error:
 			if err != nil {
 				log.Printf("Error retrieving service records: %v", err)
 				http.Error(w, "Error retrieving service records", http.StatusInternalServerError)
 				return
 			}
-		case servvicesList := <-readRecord.Result:
-			fmt.Println(servvicesList)
-			var slForm forms.ServiceRecordList_v1
-			slForm.NewForm()
-			slForm.List = servvicesList
-			updatedRecordBytes, err := usecases.Pack(&slForm, mediaType)
-			if err != nil {
-				log.Printf("error confirming new service: %s", err)
-				http.Error(w, "Error registering service", http.StatusInternalServerError)
-			}
-			w.Header().Set("Content-Type", mediaType)
-			w.WriteHeader(http.StatusOK)
-			_, err = w.Write([]byte(updatedRecordBytes))
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
+		case <-requestTray.Sample:
+			// Successfully sent the request to the RevPi
+			w.WriteHeader(http.StatusOK) // Use 200 for a successful request
 		case <-time.After(5 * time.Second): // Optional timeout
 			http.Error(w, "Request timed out", http.StatusGatewayTimeout)
 			log.Println("Failure to process service discovery request")

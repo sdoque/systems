@@ -19,6 +19,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -32,7 +33,12 @@ import (
 	"github.com/sdoque/mbaigo/usecases"
 )
 
-//-------------------------------------Define the unit asset
+// -------------------------------------Define the unit asset
+// Traits are Asset-specific configurable parameters
+type Traits struct {
+	SystemList    forms.SystemRecordList_v1 `json:"-"`
+	RepositoryURL string                    `json:"graphDBurl"`
+}
 
 // UnitAsset type models the unit asset (interface) of the system
 type UnitAsset struct {
@@ -41,9 +47,8 @@ type UnitAsset struct {
 	Details     map[string][]string `json:"details"`
 	ServicesMap components.Services `json:"-"`
 	CervicesMap components.Cervices `json:"-"`
-	//
-	SystemList    forms.SystemRecordList_v1 `json:"-"`
-	RepositoryURL string                    `json:"graphDBurl"`
+	// Asset-specific parameters
+	Traits
 }
 
 // GetName returns the name of the Resource.
@@ -66,6 +71,11 @@ func (ua *UnitAsset) GetDetails() map[string][]string {
 	return ua.Details
 }
 
+// GetTraits returns the traits of the Resource.
+func (ua *UnitAsset) GetTraits() any {
+	return ua.Traits
+}
+
 // ensure UnitAsset implements components.UnitAsset (this check is done at during the compilation)
 var _ components.UnitAsset = (*UnitAsset)(nil)
 
@@ -84,11 +94,13 @@ func initTemplate() components.UnitAsset {
 
 	// var uat components.UnitAsset // this is an interface, which we then initialize
 	uat := &UnitAsset{
-		Name:          "assembler",
-		Owner:         &components.System{},
-		Details:       map[string][]string{"Location": {"LocalCloud"}},
-		ServicesMap:   map[string]*components.Service{cloudgraph.SubPath: &cloudgraph},
-		RepositoryURL: "http://localhost:7200/repositories/Arrowhead/statements",
+		Name:        "assembler",
+		Owner:       &components.System{},
+		Details:     map[string][]string{"Location": {"LocalCloud"}},
+		ServicesMap: map[string]*components.Service{cloudgraph.SubPath: &cloudgraph},
+		Traits: Traits{
+			RepositoryURL: "http://localhost:7200/repositories/Arrowhead/statements",
+		},
 	}
 	return uat
 }
@@ -96,14 +108,20 @@ func initTemplate() components.UnitAsset {
 //-------------------------------------Instantiate unit asset(s) based on configuration
 
 // newResource creates the unit asset with its pointers and channels based on the configuration
-func newResource(uac UnitAsset, sys *components.System, servs []components.Service) (components.UnitAsset, func()) {
+func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {
 	// var ua components.UnitAsset // this is an interface, which we then initialize
 	ua := &UnitAsset{ // this is an interface, which we then initialize
-		Name:          uac.Name,
-		Owner:         sys,
-		Details:       uac.Details,
-		ServicesMap:   components.CloneServices(servs),
-		RepositoryURL: uac.RepositoryURL,
+		Name:        configuredAsset.Name,
+		Owner:       sys,
+		Details:     configuredAsset.Details,
+		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
+	}
+
+	traits, err := UnmarshalTraits(configuredAsset.Traits)
+	if err != nil {
+		log.Println("Warning: could not unmarshal traits:", err)
+	} else if len(traits) > 0 {
+		ua.Traits = traits[0] // or handle multiple traits if needed
 	}
 
 	// start the unit asset(s)
@@ -111,6 +129,19 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 	return ua, func() {
 		log.Println("Disconnecting from GraphDB")
 	}
+}
+
+// UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
+func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
+	var traitsList []Traits
+	for _, raw := range rawTraits {
+		var t Traits
+		if err := json.Unmarshal(raw, &t); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
+		}
+		traitsList = append(traitsList, t)
+	}
+	return traitsList, nil
 }
 
 // -------------------------------------Unit asset's function methods

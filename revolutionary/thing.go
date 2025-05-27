@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -28,16 +29,24 @@ import (
 
 	"github.com/sdoque/mbaigo/components"
 	"github.com/sdoque/mbaigo/forms"
+	"github.com/sdoque/mbaigo/usecases"
 )
 
 // Define the types of requests the measurement manager can handle
-type STray struct {
+type ServiceTray struct {
 	Action string
 	Sample chan forms.SignalA_v1a
 	Error  chan error
 }
 
-//-------------------------------------Define the unit asset
+// -------------------------------------Define the unit asset
+// Traits are Asset-specific configurable parameters
+type Traits struct {
+	Address  string  `json:"address"`  // Address of the IO
+	Value    float64 `json:"value"`    // Start up value of the IO
+	MinValue float64 `json:"minValue"` // Minimum value of the IO
+	MaxValue float64 `json:"maxValue"` // Maximum value of the IO
+}
 
 // UnitAsset type models the unit asset (interface) of the system.
 type UnitAsset struct {
@@ -46,10 +55,10 @@ type UnitAsset struct {
 	Details     map[string][]string `json:"details"`
 	ServicesMap components.Services `json:"-"`
 	CervicesMap components.Cervices `json:"-"`
-	//
-	value      float64    `json:"-"`
-	tStamp     time.Time  `json:"-"`
-	sampleChan chan STray `json:"-"` // Add a channel for signal reading
+	// Asset-specific parameters
+	Traits
+	tStamp         time.Time        `json:"-"`
+	serviceChannel chan ServiceTray `json:"-"` // Add a channel for signal reading
 }
 
 // GetName returns the name of the Resource.
@@ -72,6 +81,11 @@ func (ua *UnitAsset) GetDetails() map[string][]string {
 	return ua.Details
 }
 
+// GetTraits returns the traits of the Resource.
+func (ua *UnitAsset) GetTraits() any {
+	return ua.Traits
+}
+
 // ensure UnitAsset implements components.UnitAsset (this check is done at during the compilation)
 var _ components.UnitAsset = (*UnitAsset)(nil)
 
@@ -81,17 +95,21 @@ var _ components.UnitAsset = (*UnitAsset)(nil)
 func initTemplate() components.UnitAsset {
 	// Define the services that expose the capabilities of the unit asset(s)
 	access := components.Service{
-		Definition:  "access",
+		Definition:  "level",
 		SubPath:     "access",
 		Details:     map[string][]string{"Forms": {"SignalA_v1a"}},
 		RegPeriod:   30,
-		Description: "reads the input (GET) or chandes the outup (POST) of the channel",
+		Description: "reads the input (GET) or changes the output (POST) of the channel",
 	}
 
 	// var uat components.UnitAsset // this is an interface, which we then initialize
 	uat := &UnitAsset{
-		Name:    "InputValue_1",
-		Details: map[string][]string{"Unit": {"Volts"}, "Location": {"UpperTank"}},
+		Name:    "LevelSensor_1",
+		Details: map[string][]string{"Unit": {"Percent"}, "Location": {"UpperTank"}, "Description": {"level"}},
+		Traits: Traits{
+			Address: "InputValue_1", // Default address for the Rev Pi AIO channel
+			Value:   0.0,            // Default value for the output
+		},
 		ServicesMap: components.Services{
 			access.SubPath: &access, // add the service to the map
 		},
@@ -102,13 +120,20 @@ func initTemplate() components.UnitAsset {
 //-------------------------------------Instantiate the unit assets based on configuration
 
 // newResource creates the Resource resource with its pointers and channels based on the configuration
-func newResource(uac UnitAsset, sys *components.System, servs []components.Service) (components.UnitAsset, func()) {
+func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {
 	ua := &UnitAsset{ // this a struct that implements the UnitAsset interface
-		Name:        uac.Name,
-		Owner:       sys,
-		Details:     uac.Details,
-		ServicesMap: components.CloneServices(servs),
-		sampleChan:  make(chan STray), // Initialize the channel
+		Name:           configuredAsset.Name,
+		Owner:          sys,
+		Details:        configuredAsset.Details,
+		ServicesMap:    usecases.MakeServiceMap(configuredAsset.Services),
+		serviceChannel: make(chan ServiceTray), // Initialize the channel
+	}
+
+	traits, err := UnmarshalTraits(configuredAsset.Traits)
+	if err != nil {
+		log.Println("Warning: could not unmarshal traits:", err)
+	} else if len(traits) > 0 {
+		ua.Traits = traits[0] // or handle multiple traits if needed
 	}
 
 	// start the unit asset(s)
@@ -119,11 +144,23 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 	}
 }
 
+func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
+	var traitsList []Traits
+	for _, raw := range rawTraits {
+		var t Traits
+		if err := json.Unmarshal(raw, &t); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
+		}
+		traitsList = append(traitsList, t)
+	}
+	return traitsList, nil
+}
+
 //-------------------------------------Unit asset's functionalities
 
 // sampleSignal obtains the temperature from respective Rev Pi AIO resource at regular intervals
 func (ua *UnitAsset) sampleSignal(ctx context.Context) {
-	defer close(ua.sampleChan) // Ensure the channel is closed when the goroutine exits
+	defer close(ua.serviceChannel) // Ensure the channel is closed when the goroutine exits
 
 	// Create a ticker that triggers every second
 	ticker := time.NewTicker(1 * time.Second)
@@ -141,16 +178,17 @@ func (ua *UnitAsset) sampleSignal(ctx context.Context) {
 				return
 
 			case <-ticker.C: // sample the signal at regular intervals
-				v, err := readInputVoltage(ua.Name)
+				v, err := readInputVoltage(ua.Address)
 				if err != nil {
 					fmt.Println("Read error:", err)
 				} else {
 					fmt.Printf("%s = %.2f V\n", ua.Name, v)
 				}
+				nv := NormalizeToPercent(v, ua.MinValue, ua.MaxValue) // Normalize the value to a percentage
 
-				// Send the sampeled signal and timestamp back to the main loop
+				// Send the sampled signal and timestamp back to the main loop
 				select {
-				case sigChan <- v:
+				case sigChan <- nv:
 					tStampChan <- time.Now()
 				case <-ctx.Done(): // Stop the goroutine if context is canceled
 					return
@@ -162,28 +200,30 @@ func (ua *UnitAsset) sampleSignal(ctx context.Context) {
 	for {
 		select {
 		case sigValue := <-sigChan: // Update signal value and timestamp
-			ua.value = sigValue
+			ua.Value = sigValue
 			ua.tStamp = <-tStampChan
 
-		case order := <-ua.sampleChan:
+		case order := <-ua.serviceChannel:
 			switch order.Action {
 			case "read":
 				// Send the latest signal value and timestamp to the channel
 				var f forms.SignalA_v1a
 				f.NewForm()
-				f.Value = ua.value
-				f.Unit = "Volts"
+				f.Value = ua.Value
+				f.Unit = "Percent"
 				f.Timestamp = ua.tStamp
 				order.Sample <- f
 			case "write":
 				// Receive the form from the channel
 				f := <-order.Sample
-				ua.value = f.Value
-				rawValue := voltageToRaw(ua.value)
+				ua.Value = f.Value
+				rawValue := PercentToRaw(ua.Value)
 				err := writeOutput(ua.Name, rawValue)
 				if err != nil {
 					order.Error <- fmt.Errorf("write error: %w", err)
+					return
 				}
+				order.Sample <- f // Send the form back to the channel
 			default:
 				order.Error <- fmt.Errorf("invalid action: %s", order.Action)
 			}
@@ -219,13 +259,30 @@ func writeOutput(varName string, value int) error {
 	return cmd.Run()
 }
 
-// voltageToRaw converts a voltage value to a raw value for the piTest command line tool.
-func voltageToRaw(voltage float64) int {
-	if voltage < 0 {
-		voltage = 0
+// PercentToRaw converts a percentage (0–100%) to a raw 16-bit value for the piTest tool.
+func PercentToRaw(percent float64) int {
+	if percent < 0 {
+		percent = 0
 	}
-	if voltage > 10 {
-		voltage = 10
+	if percent > 100 {
+		percent = 100
 	}
-	return int((voltage / 10.0) * 65535.0)
+	return int((percent / 100.0) * 65535.0)
+}
+
+// NormalizeToPercent normalizes a reading to a percentage based on the provided min and max values.
+func NormalizeToPercent(reading, min, max float64) float64 {
+	if max == min {
+		return 0 // or return NaN/error to avoid division by zero
+	}
+	percent := 100 * (reading - min) / (max - min)
+
+	// Clamp to [0, 100] in case reading is outside the expected range
+	if percent < 0 {
+		return 0
+	}
+	if percent > 100 {
+		return 100
+	}
+	return percent
 }

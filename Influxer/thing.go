@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -43,6 +44,15 @@ type MeasurementT struct {
 
 //-------------------------------------Define the unit asset
 
+// Traits are Asset-specific configurable parameters
+type Traits struct {
+	FluxURL      string         `json:"db_url"`
+	Token        string         `json:"token"`
+	Org          string         `json:"organization"`
+	Bucket       string         `json:"bucket"`
+	Measurements []MeasurementT `json:"measurements"`
+}
+
 // UnitAsset type models the unit asset (interface) of the system
 type UnitAsset struct {
 	Name        string              `json:"bucket_name"`
@@ -51,12 +61,8 @@ type UnitAsset struct {
 	ServicesMap components.Services `json:"-"`
 	CervicesMap components.Cervices `json:"-"`
 	//
-	FluxURL      string           `json:"db_url"`
-	Token        string           `json:"token"`
-	Org          string           `json:"organization"`
-	Bucket       string           `json:"bucket"`
-	Measurements []MeasurementT   `json:"measurements"`
-	client       influxdb2.Client // InfluxDB client
+	Traits
+	client influxdb2.Client // InfluxDB client
 }
 
 // GetName returns the name of the Resource.
@@ -79,6 +85,11 @@ func (ua *UnitAsset) GetDetails() map[string][]string {
 	return ua.Details
 }
 
+// GetTraits returns the traits of the Resource.
+func (ua *UnitAsset) GetTraits() any {
+	return ua.Traits
+}
+
 // ensure UnitAsset implements components.UnitAsset (this check is done at during the compilation)
 var _ components.UnitAsset = (*UnitAsset)(nil)
 
@@ -98,15 +109,17 @@ func initTemplate() components.UnitAsset {
 	uat := &UnitAsset{
 		Name:    "demo",
 		Details: map[string][]string{"Database": {"InfluxDB"}},
-		FluxURL: "http://10.0.0.33:8086",
-		Token:   "K1NTWNlToyUNXdii7IwNJ1W-kMsagUr8w1r4cRVYqK-N-R9vVT1MCJwHFBxOgiW85iKiMSsUpbrxQsQZJA8IzA==",
-		Org:     "mbaigo",
-		Bucket:  "demo",
-		Measurements: []MeasurementT{
-			{
-				Name:    "temperature",
-				Details: map[string][]string{"Location": {"Kitchen"}},
-				Period:  3,
+		Traits: Traits{
+			FluxURL: "http://10.0.0.33:8086",
+			Token:   "K1NTWNlToyUNXdii7IwNJ1W-kMsagUr8w1r4cRVYqK-N-R9vVT1MCJwHFBxOgiW85iKiMSsUpbrxQsQZJA8IzA==",
+			Org:     "mbaigo",
+			Bucket:  "demo",
+			Measurements: []MeasurementT{
+				{
+					Name:    "temperature",
+					Details: map[string][]string{"Location": {"Kitchen"}},
+					Period:  3,
+				},
 			},
 		},
 		ServicesMap: components.Services{
@@ -119,17 +132,24 @@ func initTemplate() components.UnitAsset {
 //-------------------------------------Instantiate the unit assets based on configuration
 
 // newResource creates a new UnitAsset resource based on the configuration
-func newResource(uac UnitAsset, sys *components.System, servs []components.Service) (components.UnitAsset, func()) {
+func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {
 	ua := &UnitAsset{
-		Name:        uac.Name,
+		Name:        configuredAsset.Name,
 		Owner:       sys,
-		Details:     uac.Details,
-		ServicesMap: components.CloneServices(servs),
-		FluxURL:     uac.FluxURL,
-		Token:       uac.Token,
-		Org:         uac.Org,
-		Bucket:      uac.Bucket,
+		Details:     configuredAsset.Details,
+		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
+		// FluxURL:     uac.FluxURL,
+		// Token:       uac.Token,
+		// Org:         uac.Org,
+		// Bucket:      uac.Bucket,
 		CervicesMap: make(map[string]*components.Cervice), // Initialize map
+	}
+
+	traits, err := UnmarshalTraits(configuredAsset.Traits)
+	if err != nil {
+		log.Println("Warning: could not unmarshal traits:", err)
+	} else if len(traits) > 0 {
+		ua.Traits = traits[0] // or handle multiple traits if needed
 	}
 
 	if ua.FluxURL == "" || ua.Token == "" || ua.Org == "" || ua.Bucket == "" {
@@ -145,7 +165,7 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 	// Collect and ingest measurements
 	var wg sync.WaitGroup
 	sProtocols := components.SProtocols(sys.Husk.ProtoPort)
-	for _, measurement := range uac.Measurements {
+	for _, measurement := range ua.Traits.Measurements {
 		// determine the protocols that the system supports
 		cMeasurement := components.Cervice{
 			Definition: measurement.Name,
@@ -171,6 +191,19 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 		log.Println("Disconnecting from InfluxDB")
 		ua.client.Close()
 	}
+}
+
+// UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
+func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
+	var traitsList []Traits
+	for _, raw := range rawTraits {
+		var t Traits
+		if err := json.Unmarshal(raw, &t); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
+		}
+		traitsList = append(traitsList, t)
+	}
+	return traitsList, nil
 }
 
 //-------------------------------------Unit asset's functionalities

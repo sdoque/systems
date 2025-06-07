@@ -20,7 +20,6 @@ import (
 	"context"
 	"crypto/x509/pkix"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"mime"
@@ -67,13 +66,15 @@ func main() {
 		log.Fatalf("configuration error: %v\n", err)
 	}
 	sys.UAssets = make(map[string]*components.UnitAsset) // clear the unit asset map (from the template)
+	var cleanups []func()
 	for _, raw := range rawResources {
 		var uac usecases.ConfigurableAsset
 		if err := json.Unmarshal(raw, &uac); err != nil {
 			log.Fatalf("resource configuration error: %+v\n", err)
 		}
 		ua, cleanup := newResource(uac, &sys)
-		defer cleanup()
+		cleanups = append(cleanups, cleanup)
+		// defer cleanup()
 		sys.UAssets[ua.GetName()] = &ua
 	}
 
@@ -89,7 +90,10 @@ func main() {
 	// wait for shutdown signal, and gracefully close properly goroutines with context
 	<-sys.Sigs // wait for a SIGINT (Ctrl+C) signal
 	log.Println("\nshuting down system", sys.Name)
-	cancel()                    // cancel the context, signaling the goroutines to stop
+	cancel() // cancel the context, signaling the goroutines to stop
+	for _, cleanup := range cleanups {
+		cleanup()
+	}
 	time.Sleep(2 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
 }
 
@@ -105,75 +109,62 @@ func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath
 
 // access gets the unit asset's AIO channel datum and sends it in a signal form
 func (ua *UnitAsset) access(w http.ResponseWriter, r *http.Request) {
-	requestTray := ServiceTray{
-		Sample: make(chan forms.SignalA_v1a),
-		Error:  make(chan error),
-	}
+
 	switch r.Method {
-	case "GET":
-		requestTray.Action = "read"      // Set the action to read
-		ua.serviceChannel <- requestTray // Send request to read a signal over the channel
+	case http.MethodGet:
+		// Prepare a fresh tray for this request
+		requestTray := ServiceTray{
+			SampledDatum: make(chan forms.SignalA_v1a),
+			Error:        make(chan error),
+		}
+		ua.serviceChannel <- requestTray
 		select {
 		case err := <-requestTray.Error:
-			fmt.Printf("Logic error in getting measurement, %s\n", err)
-			w.WriteHeader(http.StatusInternalServerError) // Use 500 for an internal error
+			log.Printf("Logic error in getting measurement: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
-		case signalForm := <-requestTray.Sample:
+		case signalForm := <-requestTray.SampledDatum:
 			usecases.HTTPProcessGetRequest(w, r, &signalForm)
 			return
-		case <-time.After(5 * time.Second): // Optional timeout
+		case <-time.After(5 * time.Second):
 			http.Error(w, "Request timed out", http.StatusGatewayTimeout)
-			log.Println("Failure to process signal reading request")
+			log.Println("Timeout on GET access")
 			return
 		}
-	case "POST", "PUT":
-		requestTray.Action = "write" // Set the action to write
 
+	case http.MethodPost, http.MethodPut:
+		// Unpack the incoming form
+		log.Printf("Unpacking output signal form for %s", ua.Name)
 		contentType := r.Header.Get("Content-Type")
 		mediaType, _, err := mime.ParseMediaType(contentType)
 		if err != nil {
-			fmt.Println("Error parsing media type:", err)
+			log.Printf("Error parsing media type: %v", err)
+			http.Error(w, "Unsupported Media Type", http.StatusUnsupportedMediaType)
 			return
 		}
-		defer r.Body.Close()
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
-			log.Printf("error reading service discovery request body: %v", err)
+			log.Printf("Error reading request body: %v", err)
+			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
 		serviceReq, err := usecases.Unpack(bodyBytes, mediaType)
 		if err != nil {
-			log.Printf("error extracting the service discovery request %v\n", err)
+			log.Printf("Error unpacking output signal form: %v", err)
+			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
-
-		outputForm, ok := serviceReq.(*forms.SignalA_v1a)
+		outputForm, ok := serviceReq.(*forms.SignalA_v1a) // Ensure the form is of the expected type
 		if !ok {
-			log.Println("problem unpacking the temperature signal form")
+			log.Println("Unexpected form type in access")
+			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
-		requestTray.Sample <- *outputForm
 
-		// Send request to add a record to the unit asset
-		ua.serviceChannel <- requestTray
+		ua.outputChannel <- outputForm.Value // Send the value to the output channel for processing
+		w.WriteHeader(http.StatusOK)         // Respond with 200 OK if the write is successful
 
-		// Use a select statement to wait for responses on either the Result or Error channel
-		select {
-		case err := <-requestTray.Error:
-			if err != nil {
-				log.Printf("Error retrieving service records: %v", err)
-				http.Error(w, "Error retrieving service records", http.StatusInternalServerError)
-				return
-			}
-		case <-requestTray.Sample:
-			// Successfully sent the request to the RevPi
-			w.WriteHeader(http.StatusOK) // Use 200 for a successful request
-		case <-time.After(5 * time.Second): // Optional timeout
-			http.Error(w, "Request timed out", http.StatusGatewayTimeout)
-			log.Println("Failure to process service discovery request")
-			return
-		}
 	default:
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
+		http.Error(w, "Method not supported", http.StatusMethodNotAllowed)
 	}
 }

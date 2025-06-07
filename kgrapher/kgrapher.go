@@ -96,15 +96,33 @@ func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath
 	switch servicePath {
 	case "cloudgraph":
 		ua.aggregate(w, r)
+	case "localontologies":
+		ua.listOntologies(w, r)
+	case "files":
+		// this is a catch-all for the files service, which is not implemented in this system
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}
 }
 
+// assembleOntologies writes out the knowledge graph of the local cloud and pushes it to GraphDB
 func (ua *UnitAsset) aggregate(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		ua.assembleOntologies(w)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+	}
+}
+
+// listOntologies writes out the HTML produced by localOntologies()
+func (ua *UnitAsset) listOntologies(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		p := r.Pattern
+		html := ua.localOntologies(p)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8") // set the content type for the response of the HTML page not the ontologies
+		fmt.Fprint(w, html)
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}

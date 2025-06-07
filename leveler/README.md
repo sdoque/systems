@@ -25,13 +25,13 @@ To build the software for one's own machine,
 
 ## Cross compiling/building
 The following commands enable one to build for different platforms:
-- Intel Mac:  ```GOOS=darwin GOARCH=amd64 go build -o leveler_imac leveler.go thing.go```
-- ARM Mac: ```GOOS=darwin GOARCH=arm64 go build -o leveler_amac leveler.go thing.go```
-- Windows 64: ```GOOS=windows GOARCH=amd64 go build -o leveler.exe leveler.go thing.go```
-- Raspberry Pi 64: ```GOOS=linux GOARCH=arm64 go build -o leveler_rpi64 leveler.go thing.go```
-- Linux: ```GOOS=linux GOARCH=amd64 go build -o leveler_linux leveler.go thing.go```
+- Intel Mac:  ```GOOS=darwin GOARCH=amd64 go build -o leveler_imac ```
+- ARM Mac: ```GOOS=darwin GOARCH=arm64 go build -o leveler_amac```
+- Windows 64: ```GOOS=windows GOARCH=amd64 go build -o leveler.exe ```
+- Raspberry Pi 64: ```GOOS=linux GOARCH=arm64 go build -o leveler_rpi64```
+- Linux: ```GOOS=linux GOARCH=amd64 go build -o leveler_linux ```
 
 One can find a complete list of platform by typing *‌go tool dist list* at the command prompt
 
 If one wants to secure copy it to a Raspberry pi,
-`scp leveler_rpi64 username@ipAddress:mbaigo/leveler/` where user is the *username* @ the *IP address* of the Raspberry Pi with a relative (to the user's home directory) target *mbaigo/leveler/* directory.
+`scp leveler_rpi64 pi@192.168.1.9:station/leveler/` where user is the *pi* @ the *IP address* of the Raspberry Pi with a relative (to the user's home directory) target *station/leveler/* directory.

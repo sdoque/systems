@@ -34,9 +34,8 @@ import (
 
 // Define the types of requests the measurement manager can handle
 type ServiceTray struct {
-	Action string
-	Sample chan forms.SignalA_v1a
-	Error  chan error
+	SampledDatum chan forms.SignalA_v1a
+	Error        chan error
 }
 
 // -------------------------------------Define the unit asset
@@ -59,6 +58,7 @@ type UnitAsset struct {
 	Traits
 	tStamp         time.Time        `json:"-"`
 	serviceChannel chan ServiceTray `json:"-"` // Add a channel for signal reading
+	outputChannel  chan float64     `json:"-"` // Channel for output signals
 }
 
 // GetName returns the name of the Resource.
@@ -127,6 +127,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		Details:        configuredAsset.Details,
 		ServicesMap:    usecases.MakeServiceMap(configuredAsset.Services),
 		serviceChannel: make(chan ServiceTray), // Initialize the channel
+		outputChannel:  make(chan float64),     // Initialize the output channel
 	}
 
 	traits, err := UnmarshalTraits(configuredAsset.Traits)
@@ -141,6 +142,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 
 	return ua, func() {
 		log.Printf("disconnecting from %s\n", ua.Name)
+		// close(ua.outputChannel)  // Ensure the output channel is closed when the goroutine exits
+		// close(ua.serviceChannel) // Ensure the channel is closed when the goroutine exits
 	}
 }
 
@@ -161,8 +164,6 @@ func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
 
 // sampleSignal obtains the temperature from respective Rev Pi AIO resource at regular intervals
 func (ua *UnitAsset) sampleSignal(ctx context.Context) {
-	defer close(ua.serviceChannel) // Ensure the channel is closed when the goroutine exits
-
 	// Create a ticker that triggers every second
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop() // Clean up the ticker when done
@@ -183,7 +184,7 @@ func (ua *UnitAsset) sampleSignal(ctx context.Context) {
 				if err != nil {
 					fmt.Println("Read error:", err)
 				} else {
-					fmt.Printf("%s = %.2f V\n", ua.Name, v)
+					fmt.Printf("%s = %.2f V\n", ua.Name, v/1000)
 				}
 				nv := NormalizeToPercent(v, ua.MinValue, ua.MaxValue) // Normalize the value to a percentage
 
@@ -203,30 +204,24 @@ func (ua *UnitAsset) sampleSignal(ctx context.Context) {
 		case sigValue := <-sigChan: // Update signal value and timestamp
 			ua.Value = sigValue
 			ua.tStamp = <-tStampChan
-
 		case order := <-ua.serviceChannel:
-			switch order.Action {
-			case "read":
-				// Send the latest signal value and timestamp to the channel
-				var f forms.SignalA_v1a
-				f.NewForm()
-				f.Value = ua.Value
-				f.Unit = "Percent"
-				f.Timestamp = ua.tStamp
-				order.Sample <- f
-			case "write":
-				// Receive the form from the channel
-				f := <-order.Sample
-				ua.Value = f.Value
-				rawValue := PercentToRaw(ua.Value)
-				err := writeOutput(ua.Name, rawValue)
-				if err != nil {
-					order.Error <- fmt.Errorf("write error: %w", err)
-					return
-				}
-				order.Sample <- f // Send the form back to the channel
-			default:
-				order.Error <- fmt.Errorf("invalid action: %s", order.Action)
+			// switch order.Action {
+			// case "read":
+			// Send the latest signal value and timestamp to the channel
+			var f forms.SignalA_v1a
+			f.NewForm()
+			f.Value = ua.Value
+			f.Unit = "Percent"
+			f.Timestamp = ua.tStamp
+			order.SampledDatum <- f
+		case requestedOutup := <-ua.outputChannel:
+			log.Printf("Received output request for %s: %.2f%%\n", ua.Name, requestedOutup)
+			rawValue := PercentToRaw(requestedOutup)
+			log.Printf("Converted output value to raw: %d\n", rawValue)
+			err := writeOutput(ua.Address, rawValue)
+			if err != nil {
+				fmt.Printf("Error writing output: %v\n", err)
+				return
 			}
 		}
 	}
@@ -237,18 +232,18 @@ func readInputVoltage(varName string) (float64, error) {
 	fmt.Println("Reading input:", varName)
 	cmd := exec.Command("/usr/bin/piTest", "-1", "-q", "-r", varName)
 	cmd.Stderr = os.Stderr
-	output, err := cmd.Output()
+	reading, err := cmd.Output()
 	if err != nil {
 		return 0, fmt.Errorf("reading the Rev Pi failed: %w", err)
 	}
 
-	valueStr := strings.TrimSpace(string(output))
+	valueStr := strings.TrimSpace(string(reading))
 	raw, err := strconv.Atoi(valueStr)
 	if err != nil {
 		return 0, fmt.Errorf("invalid raw value: %w", err)
 	}
 
-	voltage := (float64(raw)/65535.0)*20.0 - 10.0
+	voltage := float64(raw) // the raw value is in millivolts, convert to volts
 	return voltage, nil
 }
 
@@ -268,15 +263,15 @@ func PercentToRaw(percent float64) int {
 	if percent > 100 {
 		percent = 100
 	}
-	return int((percent / 100.0) * 65535.0)
+	return int(percent * 100.0)
 }
 
 // NormalizeToPercent normalizes a reading to a percentage based on the provided min and max values.
 func NormalizeToPercent(reading, min, max float64) float64 {
-	if max == min {
-		return 0 // or return NaN/error to avoid division by zero
-	}
-	percent := 100 * (reading - min) / (max - min)
+	// if max == min {
+	// 	return 0 // or return NaN/error to avoid division by zero
+	// }
+	percent := reading / 100 //* (reading - min) / (max - min)
 
 	// Clamp to [0, 100] in case reading is outside the expected range
 	if percent < 0 {

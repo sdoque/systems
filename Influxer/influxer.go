@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -34,14 +35,22 @@ func main() {
 	defer cancel()                                          // make sure all paths cancel the context to avoid context leak
 
 	// instantiate the System
-	sys := components.NewSystem("influxer", ctx)
+	sys := components.NewSystem("Collector", ctx)
 
-	// Instatiate the Capusle
+	// Instantiate the husk
 	sys.Husk = &components.Husk{
 		Description: " is a system that ingests time signals into an Influx database",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		ProtoPort:   map[string]int{"https": 0, "http": 20180, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/influxer",
+		DName: pkix.Name{
+			CommonName:         sys.Name,
+			Organization:       []string{"Synecdoque"},
+			OrganizationalUnit: []string{"Systems"},
+			Locality:           []string{"Luleå"},
+			Province:           []string{"Norrbotten"},
+			Country:            []string{"SE"},
+		},
 	}
 
 	// instantiate a template unit asset
@@ -50,17 +59,17 @@ func main() {
 	sys.UAssets[assetName] = &assetTemplate
 
 	// Configure the system
-	rawResources, servsTemp, err := usecases.Configure(&sys)
+	rawResources, err := usecases.Configure(&sys)
 	if err != nil {
 		log.Fatalf("Configuration error: %v\n", err)
 	}
 	sys.UAssets = make(map[string]*components.UnitAsset) // clear the unit asset map (from the template)
 	for _, raw := range rawResources {
-		var uac UnitAsset
+		var uac usecases.ConfigurableAsset
 		if err := json.Unmarshal(raw, &uac); err != nil {
 			log.Fatalf("Resource configuration error: %+v\n", err)
 		}
-		ua, cleanup := newResource(uac, &sys, servsTemp)
+		ua, cleanup := newResource(uac, &sys)
 		defer cleanup()
 		sys.UAssets[ua.GetName()] = &ua
 	}

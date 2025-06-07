@@ -32,17 +32,17 @@ import (
 func main() {
 	// prepare for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background()) // create a context that can be cancelled
-	defer cancel()                                          // make sure all paths cancel the context to avoid context leak
+	defer cancel()
 
 	// instantiate the System
-	sys := components.NewSystem("Leveler", ctx)
+	sys := components.NewSystem("photographer", ctx)
 
-	// Instantiate the husk
+	// instatiate the husk
 	sys.Husk = &components.Husk{
-		Description: " is a controller for a consumed servo motor position based on a consumed temperature",
-		Details:     map[string][]string{"Developer": {"Synecdoque"}},
-		ProtoPort:   map[string]int{"https": 0, "http": 20154, "coap": 0},
-		InfoLink:    "https://github.com/sdoque/systems/tree/main/leveler",
+		Description: " takes a picture using a camera and saves a file",
+		Details:     map[string][]string{"Developer": {"Arrowhead"}},
+		ProtoPort:   map[string]int{"https": 0, "http": 20160, "coap": 0},
+		InfoLink:    "https://github.com/sdoque/mbaigo/tree/master/photographer",
 		DName: pkix.Name{
 			CommonName:         sys.Name,
 			Organization:       []string{"Synecdoque"},
@@ -80,61 +80,41 @@ func main() {
 	// Register the (system) and its services
 	usecases.RegisterServices(&sys)
 
-	// start the http handler and server
+	// start the requests handlers and servers
 	go usecases.SetoutServers(&sys)
 
 	// wait for shutdown signal, and gracefully close properly goroutines with context
 	<-sys.Sigs // wait for a SIGINT (Ctrl+C) signal
 	fmt.Println("\nshuting down system", sys.Name)
 	cancel()                    // cancel the context, signaling the goroutines to stop
-	time.Sleep(2 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
+	time.Sleep(3 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
 }
 
 // Serving handles the resources services. NOTE: it expects those names from the request URL path
-func (t *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {
+func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
-	case "setpoint":
-		t.setpt(w, r)
-	case "levelerror":
-		t.diff(w, r)
-	case "jitter":
-		t.variations(w, r)
+	case "photograph":
+		ua.photograph(w, r)
+	case "files":
+		// return a 200 OK acknowledgment
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "OK")
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}
 }
 
-func (rsc *UnitAsset) setpt(w http.ResponseWriter, r *http.Request) {
+func (ua *UnitAsset) photograph(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		setPointForm := rsc.getSetPoint()
-		usecases.HTTPProcessGetRequest(w, r, &setPointForm)
-	case "PUT":
-		sig, err := usecases.HTTPProcessSetRequest(w, r)
+		fileForm, err := ua.takePicture()
 		if err != nil {
-			log.Println("Error with the setting request of the position ", err)
+			log.Println(err)
+			http.Error(w, "Failed to take a picture, check if PiCam is connected", http.StatusNotFound)
+			return
 		}
-		rsc.setSetPoint(sig)
-	default:
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
-	}
-}
+		usecases.HTTPProcessGetRequest(w, r, &fileForm)
 
-func (rsc *UnitAsset) diff(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case "GET":
-		signalErr := rsc.getError()
-		usecases.HTTPProcessGetRequest(w, r, &signalErr)
-	default:
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
-	}
-}
-
-func (rsc *UnitAsset) variations(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case "GET":
-		signalErr := rsc.getJitter()
-		usecases.HTTPProcessGetRequest(w, r, &signalErr)
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}

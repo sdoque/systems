@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2024 Synecdoque
+ * Copyright (c) 2025 Synecdoque
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
@@ -38,7 +39,8 @@ type Traits struct {
 	Ki        float64       `json:"ki"`
 	jitter    time.Duration
 	deviation float64
-	previousT float64
+	integral  float64
+	previousT float64 // previous level reading to avoid flooding the log
 }
 
 // UnitAsset type models the unit asset (interface) of the system
@@ -165,7 +167,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		ua.Traits = traits[0] // or handle multiple traits if needed
 	}
 
-	ua.CervicesMap["level"].Details = components.MergeDetails(ua.Details, map[string][]string{"Unit": {"Percent"}, "Forms": {"SignalA_v1a"}})
+	ua.CervicesMap["level"].Details = components.MergeDetails(ua.Details, map[string][]string{"Unit": {"Percent"}, "Forms": {"SignalA_v1a"}, "Location": {"UpperTank"}})
 	ua.CervicesMap["pumpSpeed"].Details = components.MergeDetails(ua.Details, map[string][]string{"Unit": {"Percent"}, "Forms": {"SignalA_v1a"}})
 
 	// start the unit asset(s)
@@ -194,7 +196,7 @@ func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
 func (ua *UnitAsset) getSetPoint() (f forms.SignalA_v1a) {
 	f.NewForm()
 	f.Value = ua.SetPt
-	f.Unit = "millimeter"
+	f.Unit = "Percent"
 	f.Timestamp = time.Now()
 	return f
 }
@@ -209,7 +211,7 @@ func (ua *UnitAsset) setSetPoint(f forms.SignalA_v1a) {
 func (ua *UnitAsset) getError() (f forms.SignalA_v1a) {
 	f.NewForm()
 	f.Value = ua.deviation
-	f.Unit = "millimeter"
+	f.Unit = "Percent"
 	f.Timestamp = time.Now()
 	return f
 }
@@ -268,20 +270,20 @@ func (ua *UnitAsset) processFeedbackLoop() {
 	of.Unit = ua.CervicesMap["pumpSpeed"].Details["Unit"][0]
 	of.Timestamp = time.Now()
 
-	// pack the new valve state form
+	// pack the new pumpSpeed state form
 	op, err := usecases.Pack(&of, "application/json")
 	if err != nil {
 		return
 	}
-	// send the new valve state request
+	// send the new state request
 	_, err = usecases.SetState(ua.CervicesMap["pumpSpeed"], ua.Owner, op)
 	if err != nil {
-		log.Printf("cannot update valve state: %s\n", err)
+		log.Printf("cannot update pump speed: %s\n", err)
 		return
 	}
 
 	if tup.Value != ua.previousT {
-		log.Printf("the level is %.2f mm with an error %.2f°mm and the pumpSpeed set at %.2f%%\n", tup.Value, ua.deviation, output)
+		log.Printf("the level is %.2f percent with an error %.2f percent and the pumpSpeed set at %.2f%%\n", tup.Value, ua.deviation, output)
 		ua.previousT = tup.Value
 	}
 
@@ -289,14 +291,26 @@ func (ua *UnitAsset) processFeedbackLoop() {
 }
 
 // calculateOutput is the actual P controller
-func (ua *UnitAsset) calculateOutput(thermDiff float64) float64 {
-	pSpeed := ua.Kp*thermDiff + 50 // if the error is 0, the position is at 50%
+func (ua *UnitAsset) calculateOutput(levelDiff float64) float64 {
+	// Proportional term
+	pTerm := ua.Kp * levelDiff
 
-	// limit the output between 0 and 100%
-	if pSpeed < 0 {
-		pSpeed = 0
-	} else if pSpeed > 100 {
-		pSpeed = 100
+	// Update integral with exponential decay using Lambda
+	sampleSeconds := (ua.Period * time.Second).Seconds()
+	decay := math.Exp(-sampleSeconds / ua.Lambda)
+	ua.integral = decay*ua.integral + levelDiff*sampleSeconds
+
+	// Integral term
+	iTerm := ua.Ki * ua.integral
+
+	// Combined PI output
+	output := pTerm + iTerm
+
+	// Limit output to [0, 100]%
+	if output < 0 {
+		output = 0
+	} else if output > 100 {
+		output = 100
 	}
-	return pSpeed
+	return output
 }

@@ -75,7 +75,7 @@ The configuration and operation of the system can be verified using the system's
 ## Cross compiling/building
 The following commands enable one to build for a different platform:
 
-- Raspberry Pi 64: ```GOOS=linux GOARCH=arm64 go build -o Revolutionary_rpi64 ```
+- Raspberry Pi 64: ```GOOS=linux GOARCH=arm64 go build -o revolutionary_rpi64```
 
 If one wants to secure copy it to a Revolution pi,
-`scp Revolutionary_rpi64 username@ipAddress:mbaigo/Revolutionary/` where user is the *username* @ the *IP address* of the Raspberry Pi with a relative (to the user's home directory) destination (the *mbaigo/Revolutionary/* directory in this case).
+```scp revolutionary_rpi64 pi@192.168.1.9:station/revolutionary/``` where user is the *pi* @ the *IP address* of the Raspberry Pi with a relative (to the user's home directory) destination (the *station/Revolutionary/* directory in this case).

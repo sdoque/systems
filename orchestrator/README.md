@@ -9,11 +9,9 @@ In the current state, the Orchestrator forwards this request to the Service Regi
 The Orchestrator has more responsibilities, such as checking the authorization for a system to consume a specific service from another system. These will be implemented in the future.
 
 ## Compiling
-To compile the code, one needs to get the AiGo module
-```go get github.com/sdoque/mbaigo```
-and initialize the *go.mod* file with ``` go mod init github.com/sdoque/systems/orchestrator``` before running *go mod tidy*.
+To compile the code, one needs to initialize the *go.mod* file with ``` go mod init github.com/sdoque/systems/orchestrator``` before running *go mod tidy*.
 
-To run the code, one just needs to type in ```go run orchestrator.go thing.go``` within a terminal or at a command prompt.
+To run the code, one just needs to type in ```go run .``` within a terminal or at a command prompt.
 
 It is **important** to start the program from within its own directory (and each system should have their own directory) because it looks for its configuration file there. If it does not find it there, it will generate one and shutdown to allow the configuration file to be updated.
 
@@ -25,15 +23,15 @@ To build the software for one's own machine,
 
 ## Cross compiling/building
 The following commands enable one to build for different platforms:
-- Intel Mac:  ```GOOS=darwin GOARCH=amd64 go build -o orchestrator_imac orchestrator.go thing.go```
-- ARM Mac: ```GOOS=darwin GOARCH=arm64 go build -o orchestrator_amac orchestrator.go thing.go```
-- Windows 64: ```GOOS=windows GOARCH=amd64 go build -o orchestrator.exe orchestrator.go thing.go```
-- Raspberry Pi 64: ```GOOS=linux GOARCH=arm64 go build -o orchestrator_rpi64 orchestrator.go thing.go```
-- Linux: ```GOOS=linux GOARCH=amd64 go build -o -o orchestrator_linux orchestrator.go thing.go```
+- Intel Mac:  ```GOOS=darwin GOARCH=amd64 go build -o orchestrator_imac```
+- ARM Mac: ```GOOS=darwin GOARCH=arm64 go build -o orchestrator_amac```
+- Windows 64: ```GOOS=windows GOARCH=amd64 go build -o orchestrator.exe```
+- Raspberry Pi 64: ```GOOS=linux GOARCH=arm64 go build -o orchestrator_rpi64```
+- Linux: ```GOOS=linux GOARCH=amd64 go build -o orchestrator_linux```
 
 One can find a complete list of platform by typing *‌go tool dist list* at the command prompt
 
 If one wants to secure copy it to a Raspberry pi,
-`scp orchestrator_rpi64 username@ipAddress:mbaigo/orchestrator/` where user is the *username* @ the *IP address* of the Raspberry Pi with a relative (to the user's home directory) location *mbaigo/orchestrator/* directory.
+`scp orchestrator_rpi64 username@ipAddress:rpiExec/orchestrator/` where user is the *username* @ the *IP address* of the Raspberry Pi with a relative (to the user's home directory) location *rpiExec/orchestrator/* directory.
 
 Additionally, one must ensure that the file is an executable file (e.g., ```chmod +x orchestrator_rpi64```).

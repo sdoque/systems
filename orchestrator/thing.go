@@ -32,6 +32,11 @@ import (
 
 //-------------------------------------Define the Thing's resource
 
+// Traits are Asset-specific configurable parameters and variables
+type Traits struct {
+	leadingRegistrar *components.CoreSystem
+}
+
 // UnitAsset type models the unit asset (interface) of the system.
 type UnitAsset struct {
 	Name        string              `json:"name"`
@@ -40,7 +45,7 @@ type UnitAsset struct {
 	ServicesMap components.Services `json:"-"`
 	CervicesMap components.Cervices `json:"-"`
 	//
-	leadingRegistrar *components.CoreSystem
+	Traits
 }
 
 // GetName returns the name of the Resource.
@@ -63,6 +68,11 @@ func (ua *UnitAsset) GetDetails() map[string][]string {
 	return ua.Details
 }
 
+// GetTraits returns the traits of the Resource.
+func (ua *UnitAsset) GetTraits() any {
+	return ua.Traits
+}
+
 // ensure UnitAsset implements components.UnitAsset (this check is done at during the compilation)
 var _ components.UnitAsset = (*UnitAsset)(nil)
 
@@ -78,10 +88,15 @@ func initTemplate() components.UnitAsset {
 		Description: "looks for the desired service described in a quest form (POST)",
 	}
 
-	// var uat components.UnitAsset // this is an interface, which we then initialize
+	assetTraits := Traits{
+		leadingRegistrar: nil, // Initialize the leading registrar to nil
+	}
+
+	// create the unit asset template
 	uat := &UnitAsset{
 		Name:    "orchestration",
 		Details: map[string][]string{"Platform": {"Independent"}},
+		Traits:  assetTraits,
 		ServicesMap: components.Services{
 			squest.SubPath: &squest, // Inline assignment of the temperature service
 		},
@@ -92,13 +107,20 @@ func initTemplate() components.UnitAsset {
 //-------------------------------------Instantiate the unit assets based on configuration
 
 // newResource creates the Resource resource with its pointers and channels based on the configuration using the template
-func newResource(uac UnitAsset, sys *components.System, servs []components.Service) (components.UnitAsset, func()) {
+func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {
 	// var ua components.UnitAsset // this is an interface, which we then initialize
 	ua := &UnitAsset{ // this is an interface, which we then initialize
-		Name:        uac.Name,
+		Name:        configuredAsset.Name,
 		Owner:       sys,
-		Details:     uac.Details,
-		ServicesMap: components.CloneServices(servs),
+		Details:     configuredAsset.Details,
+		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
+	}
+
+	traits, err := UnmarshalTraits(configuredAsset.Traits)
+	if err != nil {
+		log.Println("Warning: could not unmarshal traits:", err)
+	} else if len(traits) > 0 {
+		ua.Traits = traits[0] // or handle multiple traits if needed
 	}
 
 	// start the unit asset(s)
@@ -107,6 +129,19 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 	return ua, func() {
 		log.Println("Ending orchestration services")
 	}
+}
+
+// UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
+func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
+	var traitsList []Traits
+	for _, raw := range rawTraits {
+		var t Traits
+		if err := json.Unmarshal(raw, &t); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
+		}
+		traitsList = append(traitsList, t)
+	}
+	return traitsList, nil
 }
 
 //-------------------------------------Thing's resource functions

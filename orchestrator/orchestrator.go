@@ -15,6 +15,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -43,6 +44,14 @@ func main() {
 		Details:     map[string][]string{"Developer": {"Arrowhead"}},
 		ProtoPort:   map[string]int{"https": 0, "http": 20103, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/orchestrator",
+		DName: pkix.Name{
+			CommonName:         sys.Name,
+			Organization:       []string{"Synecdoque"},
+			OrganizationalUnit: []string{"Systems"},
+			Locality:           []string{"Luleå"},
+			Province:           []string{"Norrbotten"},
+			Country:            []string{"SE"},
+		},
 	}
 
 	// instantiate a template unit asset
@@ -51,17 +60,17 @@ func main() {
 	sys.UAssets[assetName] = &assetTemplate
 
 	// Configure the system
-	rawResources, servsTemp, err := usecases.Configure(&sys)
+	rawResources, err := usecases.Configure(&sys)
 	if err != nil {
 		log.Fatalf("Configuration error: %v\n", err)
 	}
 	sys.UAssets = make(map[string]*components.UnitAsset) // clear the unit asset map (from the template)
 	for _, raw := range rawResources {
-		var uac UnitAsset
+		var uac usecases.ConfigurableAsset
 		if err := json.Unmarshal(raw, &uac); err != nil {
 			log.Fatalf("Resource configuration error: %+v\n", err)
 		}
-		ua, cleanup := newResource(uac, &sys, servsTemp)
+		ua, cleanup := newResource(uac, &sys)
 		defer cleanup()
 		sys.UAssets[ua.GetName()] = &ua
 	}
@@ -131,7 +140,7 @@ func (ua *UnitAsset) orchestrate(w http.ResponseWriter, r *http.Request) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, err = w.Write(servLocation) // respond with the selected servicelocation
+		_, err = w.Write(servLocation) // respond with the selected service location
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

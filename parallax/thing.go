@@ -14,6 +14,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
@@ -24,9 +25,16 @@ import (
 
 	"github.com/sdoque/mbaigo/components"
 	"github.com/sdoque/mbaigo/forms"
+	"github.com/sdoque/mbaigo/usecases"
 )
 
-//-------------------------------------Define the unit asset
+// -------------------------------------Define the unit asset
+// Traits are Asset-specific configurable parameters
+type Traits struct {
+	GpioPin  gpio.PinIO `json:"-"`
+	position int        `json:"-"`
+	dutyChan chan int   `json:"-"`
+}
 
 // UnitAsset type models the unit asset (interface) of the system
 type UnitAsset struct {
@@ -36,9 +44,7 @@ type UnitAsset struct {
 	ServicesMap components.Services `json:"-"`
 	CervicesMap components.Cervices `json:"-"`
 	//
-	GpioPin  gpio.PinIO `json:"-"`
-	position int        `json:"-"`
-	dutyChan chan int   `json:"-"`
+	Traits
 }
 
 // GetName returns the name of the Resource.
@@ -61,6 +67,11 @@ func (ua *UnitAsset) GetDetails() map[string][]string {
 	return ua.Details
 }
 
+// GetTraits returns the traits of the Resource.
+func (ua *UnitAsset) GetTraits() any {
+	return ua.Traits
+}
+
 // ensure UnitAsset implements components.UnitAsset
 var _ components.UnitAsset = (*UnitAsset)(nil)
 
@@ -80,7 +91,7 @@ func initTemplate() components.UnitAsset {
 	// var uat components.UnitAsset // this is an interface, which we then initialize
 	uat := &UnitAsset{
 		Name:    "Servo_1",
-		Details: map[string][]string{"Model": {"standard servo", "-90 to +90 degrees"}, "Location": {"Kitchen"}},
+		Details: map[string][]string{"Model": {"standard servo", "half_circle"}, "Location": {"Kitchen"}},
 		ServicesMap: components.Services{
 			rotation.SubPath: &rotation, // Inline assignment of the rotation service
 		},
@@ -91,15 +102,23 @@ func initTemplate() components.UnitAsset {
 //-------------------------------------Instantiate the unit assets based on configuration
 
 // newResource creates the Resource resource with its pointers and channels based on the configuration using the tConfig structs
-func newResource(uac UnitAsset, sys *components.System, servs []components.Service) (components.UnitAsset, func()) {
+func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {
 	// ua components.UnitAsset is an interface, which is implemented and initialized
 	ua := &UnitAsset{
-		Name:        uac.Name,
+		Name:        configuredAsset.Name,
 		Owner:       sys,
-		Details:     uac.Details,
-		ServicesMap: components.CloneServices(servs),
-		dutyChan:    make(chan int),
+		Details:     configuredAsset.Details,
+		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
 	}
+
+	traits, err := UnmarshalTraits(configuredAsset.Traits)
+	if err != nil {
+		log.Println("Warning: could not unmarshal traits:", err)
+	} else if len(traits) > 0 {
+		ua.Traits = traits[0] // or handle multiple traits if needed
+	}
+
+	ua.Traits.dutyChan = make(chan int)
 
 	// Initialize the periph.io host
 	if _, err := host.Init(); err != nil {
@@ -128,6 +147,19 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 	}
 }
 
+// UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
+func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
+	var traitsList []Traits
+	for _, raw := range rawTraits {
+		var t Traits
+		if err := json.Unmarshal(raw, &t); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
+		}
+		traitsList = append(traitsList, t)
+	}
+	return traitsList, nil
+}
+
 //-------------------------------------Unit asset's resource functions
 
 // timing constants for the PWM (pulse width modulation)
@@ -142,7 +174,7 @@ const (
 func (ua *UnitAsset) getPosition() (f forms.SignalA_v1a) {
 	f.NewForm()
 	f.Value = float64(ua.position)
-	f.Unit = "percent"
+	f.Unit = "Percent"
 	f.Timestamp = time.Now()
 	return f
 }

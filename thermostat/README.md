@@ -10,11 +10,9 @@ It offers three services, *setpoint*, *thermalerror* and *jitter*. The setpoint 
 The control loop is executed every 10 seconds, and can be configured.
 
 ## Compiling
-To compile the code, one needs to get the AiGo module
-```go get github.com/sdoque/mbaigo```
-and initialize the *go.mod* file with ``` go mod init github.com/sdoque/systems/thermostat``` before running *go mod tidy*.
+To compile the code, one needs to initialize the *go.mod* file with ``` go mod init github.com/sdoque/systems/thermostat``` before running *go mod tidy*.
 
-To run the code, one just needs to type in ```go run thermostat.go thing.go``` within a terminal or at a command prompt.
+To run the code, one just needs to type in ```go run .``` within a terminal or at a command prompt.
 
 It is **important** to start the program from within its own directory (and each system should have their own directory) because it looks for its configuration file there. If it does not find it there, it will generate one and shutdown to allow the configuration file to be updated.
 
@@ -26,13 +24,13 @@ To build the software for one's own machine,
 
 ## Cross compiling/building
 The following commands enable one to build for different platforms:
-- Intel Mac:  ```GOOS=darwin GOARCH=amd64 go build -o thermostat_imac thermostat.go thing.go```
-- ARM Mac: ```GOOS=darwin GOARCH=arm64 go build -o thermostat_amac thermostat.go thing.go```
-- Windows 64: ```GOOS=windows GOARCH=amd64 go build -o thermostat.exe thermostat.go thing.go```
-- Raspberry Pi 64: ```GOOS=linux GOARCH=arm64 go build -o thermostat_rpi64 thermostat.go thing.go```
-- Linux: ```GOOS=linux GOARCH=amd64 go build -o thermostat_linux thermostat.go thing.go```
+- Intel Mac:  ```GOOS=darwin GOARCH=amd64 go build -o thermostat_imac ```
+- ARM Mac: ```GOOS=darwin GOARCH=arm64 go build -o thermostat_amac ```
+- Windows 64: ```GOOS=windows GOARCH=amd64 go build -o thermostat.exe```
+- Raspberry Pi 64: ```GOOS=linux GOARCH=arm64 go build -o thermostat_rpi64```
+- Linux: ```GOOS=linux GOARCH=amd64 go build -o thermostat_linux ```
 
 One can find a complete list of platform by typing *‌go tool dist list* at the command prompt
 
 If one wants to secure copy it to a Raspberry pi,
-`scp thermostat_rpi64 username@ipAddress:mbaigo/thermostat/` where user is the *username* @ the *IP address* of the Raspberry Pi with a relative (to the user's home directory) target *mbaigo/thermostat/* directory.
+`scp thermostat_rpi64 username@ipAddress:rpiExec/thermostat/` where user is the *username* @ the *IP address* of the Raspberry Pi with a relative (to the user's home directory) target *rpiExec/thermostat/* directory.

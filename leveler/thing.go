@@ -32,15 +32,15 @@ import (
 // -------------------------------------Define the unit asset
 // Traits are Asset-specific configurable parameters and variables
 type Traits struct {
-	SetPt     float64       `json:"setPoint"` // the set point for the level
-	Period    time.Duration `json:"samplingPeriod"`
-	Kp        float64       `json:"kp"`
-	Lambda    float64       `json:"lambda"`
-	Ki        float64       `json:"ki"`
-	jitter    time.Duration
-	deviation float64
-	integral  float64
-	previousT float64 // previous level reading to avoid flooding the log
+	SetPt         float64       `json:"setPoint"` // the set point for the level
+	Period        time.Duration `json:"samplingPeriod"`
+	Kp            float64       `json:"kp"`
+	Lambda        float64       `json:"lambda"`
+	Ki            float64       `json:"ki"`
+	jitter        time.Duration
+	deviation     float64
+	integral      float64
+	previousLevel float64 // previous level reading to avoid flooding the log
 }
 
 // UnitAsset type models the unit asset (interface) of the system
@@ -115,7 +115,8 @@ func initTemplate() components.UnitAsset {
 		Lambda: 0.5,
 		Ki:     0,
 	}
-	// var uat components.UnitAsset // this is an interface, which we then initialize
+
+	// create the unit asset template
 	uat := &UnitAsset{
 		Name:    "Leveler_1",
 		Details: map[string][]string{"Location": {"UpperTank"}},
@@ -178,6 +179,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 }
 
+// UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
 func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
 	var traitsList []Traits
 	for _, raw := range rawTraits {
@@ -282,9 +284,9 @@ func (ua *UnitAsset) processFeedbackLoop() {
 		return
 	}
 
-	if tup.Value != ua.previousT {
+	if tup.Value != ua.previousLevel {
 		log.Printf("the level is %.2f percent with an error %.2f percent and the pumpSpeed set at %.2f%%\n", tup.Value, ua.deviation, output)
-		ua.previousT = tup.Value
+		ua.previousLevel = tup.Value
 	}
 
 	ua.jitter = time.Since(jitterStart)

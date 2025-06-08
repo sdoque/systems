@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -43,6 +44,14 @@ func main() {
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		ProtoPort:   map[string]int{"https": 0, "http": 20150, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/ds18b20",
+		DName: pkix.Name{
+			CommonName:         sys.Name,
+			Organization:       []string{"Synecdoque"},
+			OrganizationalUnit: []string{"Systems"},
+			Locality:           []string{"Luleå"},
+			Province:           []string{"Norrbotten"},
+			Country:            []string{"SE"},
+		},
 	}
 
 	// instantiate a template unit asset
@@ -51,18 +60,20 @@ func main() {
 	sys.UAssets[assetName] = &assetTemplate
 
 	// Configure the system
-	rawResources, servsTemp, err := usecases.Configure(&sys)
+	rawResources, err := usecases.Configure(&sys)
 	if err != nil {
 		log.Fatalf("configuration error: %v\n", err)
 	}
 	sys.UAssets = make(map[string]*components.UnitAsset) // clear the unit asset map (from the template)
+	var cleanups []func()
 	for _, raw := range rawResources {
-		var uac UnitAsset
+		var uac usecases.ConfigurableAsset
 		if err := json.Unmarshal(raw, &uac); err != nil {
 			log.Fatalf("resource configuration error: %+v\n", err)
 		}
-		ua, cleanup := newResource(uac, &sys, servsTemp)
-		defer cleanup()
+		ua, cleanup := newResource(uac, &sys)
+		cleanups = append(cleanups, cleanup)
+		defer cleanup() // ensure cleanup is called when the program exits
 		sys.UAssets[ua.GetName()] = &ua
 	}
 

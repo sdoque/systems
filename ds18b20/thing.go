@@ -18,8 +18,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log"
-	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -27,7 +28,7 @@ import (
 
 	"github.com/sdoque/mbaigo/components"
 	"github.com/sdoque/mbaigo/forms"
-	"golang.org/x/exp/rand"
+	"github.com/sdoque/mbaigo/usecases"
 )
 
 // Define the types of requests the measurement manager can handle
@@ -37,7 +38,12 @@ type STray struct {
 	Error  chan error
 }
 
-//-------------------------------------Define the unit asset
+// -------------------------------------Define the unit asset
+// Traits are Asset-specific configurable parameters
+type Traits struct {
+	temperature float64   `json:"-"`
+	tStamp      time.Time `json:"-"`
+}
 
 // UnitAsset type models the unit asset (interface) of the system.
 type UnitAsset struct {
@@ -47,9 +53,8 @@ type UnitAsset struct {
 	ServicesMap components.Services `json:"-"`
 	CervicesMap components.Cervices `json:"-"`
 	//
-	temperature float64    `json:"-"`
-	tStamp      time.Time  `json:"-"`
-	trayChan    chan STray `json:"-"` // Add a channel for temperature readings
+	Traits
+	trayChan chan STray `json:"-"` // Add a channel for temperature readings
 }
 
 // GetName returns the name of the Resource.
@@ -70,6 +75,11 @@ func (ua *UnitAsset) GetCervices() components.Cervices {
 // GetDetails returns the details of the Resource.
 func (ua *UnitAsset) GetDetails() map[string][]string {
 	return ua.Details
+}
+
+// GetTraits returns the traits of the Resource.
+func (ua *UnitAsset) GetTraits() any {
+	return ua.Traits
 }
 
 // ensure UnitAsset implements components.UnitAsset (this check is done at during the compilation)
@@ -102,15 +112,21 @@ func initTemplate() components.UnitAsset {
 //-------------------------------------Instantiate the unit assets based on configuration
 
 // newResource creates the Resource resource with its pointers and channels based on the configuration
-func newResource(uac UnitAsset, sys *components.System, servs []components.Service) (components.UnitAsset, func()) {
+func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {
 	ua := &UnitAsset{ // this a struct that implements the UnitAsset interface
-		Name:        uac.Name,
+		Name:        configuredAsset.Name,
 		Owner:       sys,
-		Details:     uac.Details,
-		ServicesMap: components.CloneServices(servs),
+		Details:     configuredAsset.Details,
+		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
 		trayChan:    make(chan STray), // Initialize the channel
 	}
 
+	traits, err := UnmarshalTraits(configuredAsset.Traits)
+	if err != nil {
+		log.Println("Warning: could not unmarshal traits:", err)
+	} else if len(traits) > 0 {
+		ua.Traits = traits[0] // or handle multiple traits if needed
+	}
 	// start the unit asset(s)
 	go ua.readTemperature(sys.Ctx)
 
@@ -119,13 +135,24 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 	}
 }
 
+// UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
+func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
+	var traitsList []Traits
+	for _, raw := range rawTraits {
+		var t Traits
+		if err := json.Unmarshal(raw, &t); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
+		}
+		traitsList = append(traitsList, t)
+	}
+	return traitsList, nil
+}
+
 //-------------------------------------Unit asset's functionalities
 
 // readTemperature obtains the temperature from respective ds18b20 resource at regular intervals
 func (ua *UnitAsset) readTemperature(ctx context.Context) {
 	defer close(ua.trayChan) // Ensure the channel is closed when the goroutine exits
-
-	randomdDelay()
 
 	// Create a ticker that triggers every 2 seconds
 	ticker := time.NewTicker(2 * time.Second)
@@ -197,26 +224,4 @@ func (ua *UnitAsset) readTemperature(ctx context.Context) {
 			order.ValueP <- f
 		}
 	}
-}
-
-// randomDelay is used to have the requests to multiple 1-wire sensor out of synch to free the bus. (This is a quick hack :-( )
-func randomdDelay() {
-	rand.Seed(uint64(time.Now().UnixNano()))
-
-	// Constants
-	baseDelay := 93 * time.Millisecond           // 0.093 seconds
-	maxMultiples := int(math.Floor(1.0 / 0.093)) // Calculate the max multiples (10 in this case)
-
-	// Generate a random multiplier (1 to maxMultiples - 1)
-	randomMultiplier := rand.Intn(maxMultiples-1) + 1
-
-	// Calculate the delay
-	delay := time.Duration(randomMultiplier) * baseDelay
-
-	log.Printf("Random delay: %v\n", delay)
-
-	// Sleep for the random duration
-	time.Sleep(delay)
-
-	log.Println("Program resumed after delay.")
 }

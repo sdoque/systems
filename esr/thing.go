@@ -17,6 +17,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -36,10 +37,22 @@ type ServiceRegistryRequest struct {
 	Record forms.Form
 	Id     int64
 	Result chan []forms.ServiceRecord_v1 // For returning records
-	Error  chan error                    // For error handling
+	Error  chan error
 }
 
-//-------------------------------------Define the unit asset
+// -------------------------------------Define the unit asset
+// Traits are Asset-specific configurable parameters and variables
+type Traits struct {
+	serviceRegistry map[int]forms.ServiceRecord_v1
+
+	recCount int64
+	requests chan ServiceRegistryRequest
+	// Error            chan error // For error handling
+	sched            *Scheduler
+	leading          bool
+	leadingSince     time.Time
+	leadingRegistrar *components.CoreSystem // if not leading this points to the current leader
+}
 
 // UnitAsset type models the unit asset (interface) of the system
 type UnitAsset struct {
@@ -49,14 +62,8 @@ type UnitAsset struct {
 	ServicesMap components.Services `json:"-"`
 	CervicesMap components.Cervices `json:"-"`
 	//
-	serviceRegistry  map[int]forms.ServiceRecord_v1
-	mu               sync.Mutex
-	recCount         int64
-	requests         chan ServiceRegistryRequest
-	sched            *Scheduler
-	leading          bool
-	leadingSince     time.Time
-	leadingRegistrar *components.CoreSystem // if not leading this points to the current leader
+	Traits // Embedding the Traits struct to include its fields and methods
+	mu     sync.Mutex
 }
 
 // GetName returns the name of the Resource.
@@ -77,6 +84,11 @@ func (ua *UnitAsset) GetCervices() components.Cervices {
 // GetDetails returns the details of the Resource.
 func (ua *UnitAsset) GetDetails() map[string][]string {
 	return ua.Details
+}
+
+// GetTraits returns the traits of the Resource.
+func (ua *UnitAsset) GetTraits() any {
+	return ua.Traits
 }
 
 // ensure UnitAsset implements components.UnitAsset (this check is done at during the compilation)
@@ -115,10 +127,13 @@ func initTemplate() components.UnitAsset {
 		Description: "reports (GET) the role of the Service Registrar as leading or on stand by",
 	}
 
-	// var uat components.UnitAsset // this is an interface, which we then initialize
+	assetTraits := Traits{}
+
+	// Create the UnitAsset with the defined services
 	uat := &UnitAsset{
 		Name:    "registry",
 		Details: map[string][]string{"Location": {"LocalCloud"}},
+		Traits:  assetTraits,
 		ServicesMap: components.Services{
 			registerService.SubPath:   &registerService,
 			queryService.SubPath:      &queryService,
@@ -132,22 +147,35 @@ func initTemplate() components.UnitAsset {
 //-------------------------------------Instantiate unit asset(s) based on configuration
 
 // newResource creates the unit asset with its pointers and channels based on the configuration using the uaConfig structs
-func newResource(uac UnitAsset, sys *components.System, servs []components.Service) (components.UnitAsset, func()) {
+func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {
 	// Start the registration expiration check scheduler
 	cleaningScheduler := NewScheduler()
 	go cleaningScheduler.run()
 
 	// Initialize the UnitAsset
 	ua := &UnitAsset{
-		Name:            uac.Name,
-		Owner:           sys,
-		Details:         uac.Details,
+		Name:        configuredAsset.Name,
+		Owner:       sys,
+		Details:     configuredAsset.Details,
+		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
+	}
+
+	traits, err := UnmarshalTraits(configuredAsset.Traits)
+	if err != nil {
+		log.Println("Warning: could not unmarshal traits:", err)
+	} else if len(traits) > 0 {
+		ua.Traits = traits[0] // or handle multiple traits if needed
+	}
+
+	assetTraits := Traits{
 		serviceRegistry: make(map[int]forms.ServiceRecord_v1),
 		recCount:        1, // 0 is used for non registered services
 		sched:           cleaningScheduler,
-		ServicesMap:     components.CloneServices(servs),
 		requests:        make(chan ServiceRegistryRequest), // Initialize the requests channel
+		// Error:           make(chan error),                  // Initialize the error channel
 	}
+
+	ua.Traits = assetTraits // Assign the traits to the UnitAsset
 
 	ua.Role() // Start to repeatedly check which is the leading registrar
 
@@ -159,6 +187,19 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 		cleaningScheduler.Stop() // Gracefully stop the scheduler
 		log.Println("Closing the service registry database connection")
 	}
+}
+
+// UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
+func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
+	var traitsList []Traits
+	for _, raw := range rawTraits {
+		var t Traits
+		if err := json.Unmarshal(raw, &t); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
+		}
+		traitsList = append(traitsList, t)
+	}
+	return traitsList, nil
 }
 
 //-------------------------------------Unit's resource methods
@@ -204,6 +245,7 @@ func (ua *UnitAsset) serviceRegistryHandler() {
 				_, exists := ua.serviceRegistry[rec.Id]
 				if !exists {
 					ua.mu.Unlock()
+					request.Error <- fmt.Errorf("no existing record with id %d", rec.Id)
 					continue
 				}
 				dbRec := ua.serviceRegistry[rec.Id]

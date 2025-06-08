@@ -18,6 +18,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 
@@ -29,6 +31,18 @@ import (
 //-------------------------------------Define the unit asset
 
 // UnitAsset type models the unit asset (interface) of the system
+// Traits are Asset-specific configurable parameters
+type Traits struct {
+	SetPt     float64       `json:"setPoint"`
+	Period    time.Duration `json:"samplingPeriod"`
+	Kp        float64       `json:"kp"`
+	Lambda    float64       `json:"lambda"`
+	Ki        float64       `json:"ki"`
+	jitter    time.Duration `json:"-"`
+	deviation float64       `json:"-"`
+	previousT float64       `json:"-"`
+}
+
 type UnitAsset struct {
 	Name        string              `json:"name"`
 	Owner       *components.System  `json:"-"`
@@ -36,14 +50,7 @@ type UnitAsset struct {
 	ServicesMap components.Services `json:"-"`
 	CervicesMap components.Cervices `json:"-"`
 	//
-	jitter    time.Duration
-	Setpt     float64       `json:"setpoint"`
-	Period    time.Duration `json:"samplingPeriod"`
-	Kp        float64       `json:"kp"`
-	Lambda    float64       `json:"lamda"`
-	Ki        float64       `json:"ki"`
-	deviation float64
-	previousT float64
+	Traits
 }
 
 // GetName returns the name of the Resource.
@@ -64,6 +71,11 @@ func (ua *UnitAsset) GetCervices() components.Cervices {
 // GetDetails returns the details of the Resource.
 func (ua *UnitAsset) GetDetails() map[string][]string {
 	return ua.Details
+}
+
+// GetTraits returns the traits of the Resource.
+func (ua *UnitAsset) GetTraits() any {
+	return ua.Traits
 }
 
 // ensure UnitAsset implements components.UnitAsset (this check is done at during the compilation)
@@ -96,15 +108,19 @@ func initTemplate() components.UnitAsset {
 		Description: "provides the current jitter or control algorithm execution calculated every period (GET)",
 	}
 
+	assetTraits := Traits{
+		SetPt:  20,
+		Period: 10,
+		Kp:     5,
+		Lambda: 0.5,
+		Ki:     0,
+	}
+
 	// var uat components.UnitAsset // this is an interface, which we then initialize
 	uat := &UnitAsset{
 		Name:    "controller_1",
 		Details: map[string][]string{"Location": {"Kitchen"}},
-		Setpt:   20,
-		Period:  10,
-		Kp:      5,
-		Lambda:  0.5,
-		Ki:      0,
+		Traits:  assetTraits,
 		ServicesMap: components.Services{
 			setPointService.SubPath:     &setPointService,
 			thermalErrorService.SubPath: &thermalErrorService,
@@ -117,7 +133,7 @@ func initTemplate() components.UnitAsset {
 //-------------------------------------Instantiate the unit assets based on configuration
 
 // newResource creates the Resource resource with its pointers and channels based on the configuration using the tConig structs
-func newResource(uac UnitAsset, sys *components.System, servs []components.Service) (components.UnitAsset, func()) {
+func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {
 	// determine the protocols that the system supports
 	sProtocols := components.SProtocols(sys.Husk.ProtoPort)
 	// instantiate the consumed services
@@ -134,20 +150,23 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 	}
 	// instantiate the unit asset
 	ua := &UnitAsset{
-		Name:        uac.Name,
+		Name:        configuredAsset.Name,
 		Owner:       sys,
-		Details:     uac.Details,
-		ServicesMap: components.CloneServices(servs),
-		Setpt:       uac.Setpt,
-		Period:      uac.Period,
-		Kp:          uac.Kp,
-		Lambda:      uac.Lambda,
-		Ki:          uac.Ki,
+		Details:     configuredAsset.Details,
+		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
 		CervicesMap: components.Cervices{
 			t.Definition: t,
 			r.Definition: r,
 		},
 	}
+
+	traits, err := UnmarshalTraits(configuredAsset.Traits)
+	if err != nil {
+		log.Println("Warning: could not unmarshal traits:", err)
+	} else if len(traits) > 0 {
+		ua.Traits = traits[0] // or handle multiple traits if needed
+	}
+
 	// thermalUnit := ua.ServicesMap["setpoint"].Details["Unit"][0] // the measurement done below are still in Celsius, so allowing it to be configurable does not really make sense at this point
 	ua.CervicesMap["temperature"].Details = components.MergeDetails(ua.Details, map[string][]string{"Unit": {"Celsius"}, "Forms": {"SignalA_v1a"}})
 	ua.CervicesMap["rotation"].Details = components.MergeDetails(ua.Details, map[string][]string{"Unit": {"Percent"}, "Forms": {"SignalA_v1a"}})
@@ -160,12 +179,25 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 	}
 }
 
+// UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
+func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
+	var traitsList []Traits
+	for _, raw := range rawTraits {
+		var t Traits
+		if err := json.Unmarshal(raw, &t); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
+		}
+		traitsList = append(traitsList, t)
+	}
+	return traitsList, nil
+}
+
 //-------------------------------------Thing's resource methods
 
 // getSetPoint fills out a signal form with the current thermal setpoint
 func (ua *UnitAsset) getSetPoint() (f forms.SignalA_v1a) {
 	f.NewForm()
-	f.Value = ua.Setpt
+	f.Value = ua.SetPt
 	f.Unit = "Celsius"
 	f.Timestamp = time.Now()
 	return f
@@ -173,7 +205,7 @@ func (ua *UnitAsset) getSetPoint() (f forms.SignalA_v1a) {
 
 // setSetPoint updates the thermal setpoint
 func (ua *UnitAsset) setSetPoint(f forms.SignalA_v1a) {
-	ua.Setpt = f.Value
+	ua.SetPt = f.Value
 	log.Printf("new set point: %.1f", f.Value)
 }
 
@@ -230,7 +262,7 @@ func (ua *UnitAsset) processFeedbackLoop() {
 	}
 
 	// perform the control algorithm
-	ua.deviation = ua.Setpt - tup.Value
+	ua.deviation = ua.SetPt - tup.Value
 	output := ua.calculateOutput(ua.deviation)
 
 	// prepare the form to send

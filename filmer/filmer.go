@@ -35,14 +35,14 @@ func main() {
 	defer cancel()
 
 	// instantiate the System
-	sys := components.NewSystem("telegrapher", ctx)
+	sys := components.NewSystem("filmer", ctx)
 
-	// instantiate the husk
+	// instatiate the husk
 	sys.Husk = &components.Husk{
-		Description: " subscribes and publishes to an MQTT broker",
-		Details:     map[string][]string{"Developer": {"Synecdoque"}},
-		ProtoPort:   map[string]int{"https": 0, "http": 20172, "coap": 0},
-		InfoLink:    "https://github.com/sdoque/systems/tree/main/telegrapher",
+		Description: " takes a picture using a camera and saves a file",
+		Details:     map[string][]string{"Developer": {"Arrowhead"}},
+		ProtoPort:   map[string]int{"https": 0, "http": 20162, "coap": 0},
+		InfoLink:    "https://github.com/sdoque/mbaigo/tree/master/filmer",
 		DName: pkix.Name{
 			CommonName:         sys.Name,
 			Organization:       []string{"Synecdoque"},
@@ -80,7 +80,7 @@ func main() {
 	// Register the (system) and its services
 	usecases.RegisterServices(&sys)
 
-	// start the http handler and server
+	// start the requests handlers and servers
 	go usecases.SetoutServers(&sys)
 
 	// wait for shutdown signal, and gracefully close properly goroutines with context
@@ -90,47 +90,14 @@ func main() {
 	time.Sleep(3 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
 }
 
-// Serving handles the resources services. NOTE: it exepcts those names from the request URL path
+// Serving handles the resources services. NOTE: it expects those names from the request URL path
 func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {
-	svrs := ua.GetServices()
-	if svrs[servicePath] != nil {
-		ua.access(w, r, servicePath)
-	} else {
-		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
-	}
-}
-
-func (ua *UnitAsset) access(w http.ResponseWriter, r *http.Request, servicePath string) {
-	switch r.Method {
-	case "GET":
-		msg := ua.Message
-		if len(msg) > 0 {
-			w.WriteHeader(http.StatusOK)
-			w.Header().Set("Content-Type", "application/json")
-			w.Write(msg)
-		} else {
-			http.Error(w, "The subscribed topic is not being published", http.StatusBadRequest)
-		}
-	case "PUT":
-		// data, err := io.ReadAll(r.Body)
-		// if err != nil {
-		// 	http.Error(w, "Failed to read request body", http.StatusBadRequest)
-		// 	return
-		// }
-		// defer r.Body.Close()
-
-		// if err := ua.publishRaw(data); err != nil {
-		log.Printf("MQTT client is connected: %v", ua.mClient.IsConnected())
-
-		if err := ua.publishRaw([]byte(`{"test":123}`)); err != nil {
-			log.Printf("Failed to publish: %v", err)
-			http.Error(w, "MQTT publish failed", http.StatusInternalServerError)
-			return
-		}
-		log.Printf("MQTT client is connected: %v", ua.mClient.IsConnected())
-
-		w.WriteHeader(http.StatusAccepted)
+	switch servicePath {
+	case "start":
+		fmt.Fprintln(w, ua.StartStreamURL())
+	case "stream":
+		ua.StreamTo(w, r)
 	default:
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
+		http.Error(w, "Invalid service request", http.StatusBadRequest)
 	}
 }

@@ -12,7 +12,7 @@ As with the other systems, this is a prototype that shows that the mbaigo librar
 ## Compiling
 To compile the code, one needs to get the AiGo module
 ```go get github.com/vanDeventer/mbaigo```
-and initialize the *go.mod* file with ``` go mod init github.com/vanDeventer/arrowsys/inflxer``` before running *go mod tidy*.
+and initialize the *go.mod* file with ``` go mod init github.com/vanDeventer/arrowsys/collector``` before running *go mod tidy*.
 
 The reason the *go.mod* file is not included in the repository is that when developing the mbaigo module, a replace statement needs to be included to point to the development code.
 

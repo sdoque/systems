@@ -189,35 +189,15 @@ func resolveLocalOntologies(localOntologies map[string]string, dir string, baseU
 // assembles ontologies gets the list of systems from the lead registrar and then the ontology of each system
 func (ua *UnitAsset) assembleOntologies(w http.ResponseWriter) {
 	// Look for leading service registrar
-	var leadingRegistrar *components.CoreSystem
-	for _, cSys := range ua.Owner.CoreS {
-		core := cSys
-		if core.Name == "serviceregistrar" {
-			resp, err := http.Get(core.Url + "/status")
-			if err != nil {
-				fmt.Println("Error checking service registrar status:", err)
-				continue
-			}
-			bodyBytes, err := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			if err != nil {
-				fmt.Println("Error reading service registrar response body:", err)
-				continue
-			}
-			if strings.HasPrefix(string(bodyBytes), "lead Service Registrar since") {
-				leadingRegistrar = core
-			}
-		}
-	}
 
-	if leadingRegistrar == nil {
-		fmt.Printf("no service registrar found\n")
-		http.Error(w, "Internal Server Error: no service registrar found", http.StatusInternalServerError)
+	leadingRegistrarURL, err := components.GetRunningCoreSystemURL(ua.Owner, "serviceregistrar")
+	if err != nil {
+		log.Printf("Error getting the leading service registrar URL: %s\n", err)
+		http.Error(w, "Internal Server Error: unable to get leading service registrar URL", http.StatusInternalServerError)
 		return
 	}
-
-	// request list of systems in the cloud
-	leadUrl := leadingRegistrar.Url + "/syslist"
+	// request list of systems in the cloud from the leading service registrar
+	leadUrl := leadingRegistrarURL + "/syslist"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

@@ -27,6 +27,7 @@ Many of the testing is done with the Raspberry Pi (3, 4, &5) with [GPIO](https:/
 - 20103  Orchestrator
 - 20104  Authorizer
 - 20105  Modeler (local cloud semantics with GraphDB)
+- 20106  Messenger
 - 20150  ds18b20 (1-wire sensor)
 - 20151  Parallax (PWM)
 - 20152  Thermostat

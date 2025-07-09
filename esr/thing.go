@@ -311,6 +311,7 @@ func (ua *UnitAsset) serviceRegistryHandler() {
 
 		case "delete":
 			// Handle delete record
+			ua.sched.RemoveTask(int(request.Id))
 			delete(ua.serviceRegistry, int(request.Id))
 			if _, exists := ua.serviceRegistry[int(request.Id)]; !exists {
 				log.Printf("The service with ID %d has been deleted.", request.Id)

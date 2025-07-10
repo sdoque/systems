@@ -158,7 +158,8 @@ func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
 // - servLoc: A byte slice containing the service location in JSON format.
 // - err: An error if any issues occur during the process.
 func (ua *UnitAsset) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []byte, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second) // Create a new context, with a 2-second timeout
+	// ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second) // Create a new context, with a 2-second timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second) // Create a new context, with a 2-second timeout
 	defer cancel()
 	sys := ua.Owner
 	if ua.leadingRegistrar != nil {
@@ -233,8 +234,8 @@ func (ua *UnitAsset) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []by
 	req = req.WithContext(ctx)                // associate the cancellable context with the request
 
 	// forward the request to the leading Service Registrar/////////////////////////////////
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	// client := &http.Client{}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		ua.leadingRegistrar = nil
 		return servLoc, err

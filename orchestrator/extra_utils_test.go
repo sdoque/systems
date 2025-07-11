@@ -2,12 +2,10 @@ package main
 
 import (
 	"context"
-	"encoding/xml"
 	"fmt"
 	"net/http"
 
 	"github.com/sdoque/mbaigo/components"
-	"github.com/sdoque/mbaigo/forms"
 )
 
 // mockTransport is used for replacing the default network Transport (used by
@@ -41,6 +39,54 @@ func (t *mockTransport) RoundTrip(req *http.Request) (resp *http.Response, err e
 	resp.Request = req
 	return resp, nil
 }
+
+func createSystemWithUnitAsset(url string) components.System {
+	ctx := context.Background()
+	sys := components.NewSystem("testSystem", ctx)
+
+	leadingRegistrar := &components.CoreSystem{
+		Name: components.ServiceRegistrarName,
+		Url:  "https://leadingregistrar",
+	}
+	sys.CoreS = []*components.CoreSystem{
+		leadingRegistrar,
+	}
+	return sys
+}
+
+func createUnitAsset(url string) *UnitAsset {
+	// Define the services that expose the capabilities of the unit asset(s)
+	squest := components.Service{
+		Definition:  "squest",
+		SubPath:     "squest",
+		Details:     map[string][]string{"DefaultForm": {"ServiceRecord_v1"}, "Location": {"LocalCloud"}},
+		Description: "looks for the desired service described in a quest form (POST)",
+	}
+
+	assetTraits := Traits{
+		leadingRegistrar: &components.CoreSystem{
+			Name: components.ServiceRegistrarName,
+			Url:  url,
+		},
+	}
+
+	// create the unit asset template
+	uat := &UnitAsset{
+		Name:    "orchestration",
+		Details: map[string][]string{"Platform": {"Independent"}},
+		Traits:  assetTraits,
+		ServicesMap: components.Services{
+			squest.SubPath: &squest, // Inline assignment of the temperature service
+		},
+	}
+
+	sys := createSystemWithUnitAsset(url)
+	uat.Owner = &sys
+
+	return uat
+}
+
+/*
 
 // A mocked UnitAsset used for testing
 type mockUnitAsset struct {
@@ -88,6 +134,34 @@ func (f mockForm) FormVersion() string {
 	return f.Version
 }
 
+*/
+
+type errorReader struct{}
+
+func (errorReader) Read(p []byte) (int, error) {
+	return 0, fmt.Errorf("forced read error")
+}
+
+type mockResponseWriter struct {
+	http.ResponseWriter
+}
+
+func (e *mockResponseWriter) Write(b []byte) (int, error) {
+	return 0, fmt.Errorf("Forced write error")
+}
+
+func (e *mockResponseWriter) WriteHeader(statusCode int) {}
+
+func (e *mockResponseWriter) Header() http.Header {
+	return make(http.Header)
+}
+
+var brokenUrl = string(rune(0))
+
+var errHTTP error = fmt.Errorf("bad http request")
+
+/*
+
 // Create a error reader to break json.Unmarshal()
 type errReader int
 
@@ -101,8 +175,6 @@ func (errReader) Close() error {
 }
 
 // Variables used in testing
-var brokenUrl = string(rune(0))
-var errHTTP error = fmt.Errorf("bad http request")
 
 // Help function to create a test system
 func createTestSystem(broken bool) (sys components.System) {
@@ -187,3 +259,5 @@ func createTestSystem(broken bool) (sys components.System) {
 	}
 	return
 }
+
+*/

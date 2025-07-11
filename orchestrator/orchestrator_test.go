@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"io"
 	"log"
@@ -10,65 +9,54 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sdoque/mbaigo/components"
 	"github.com/sdoque/mbaigo/forms"
 )
 
-/*
-type servingTestStruct struct {
-	servicePath string
-	testName    string
-}
-
-var servingTestParams = []servingTestStruct{
-	{"squest", "Good case, the service path is squest"},
-	{"", "Bad case, the service path is not squest"},
-}
-
 func TestServing(t *testing.T) {
+	inputW := httptest.NewRecorder()
+	inputR := httptest.NewRequest(http.MethodPost, "/test123", io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))))
+	inputR.Header.Set("Content-Type", "application/json")
+	newMockTransport(createMultiHTTPResponse(2, false, string(createTestServiceRecordListForm())), 0, nil)
+	mua := createUnitAsset("https://leadingregistrar")
+	mua.Serving(inputW, inputR, "squest")
 
-}
-*/
+	var expectedOutput = string(createTestServicePointForm())
 
-func createUnitAsset() *UnitAsset {
-	// Define the services that expose the capabilities of the unit asset(s)
-	squest := components.Service{
-		Definition:  "squest",
-		SubPath:     "squest",
-		Details:     map[string][]string{"DefaultForm": {"ServiceRecord_v1"}, "Location": {"LocalCloud"}},
-		Description: "looks for the desired service described in a quest form (POST)",
+	if inputW.Body.String() != expectedOutput || inputW.Code != 200 {
+		t.Errorf("Expected %s and code %d, got: %s and code %d",
+			expectedOutput, 200, inputW.Body.String(), inputW.Code)
 	}
 
-	assetTraits := Traits{
-		leadingRegistrar: &components.CoreSystem{
-			Name: components.ServiceRegistrarName,
-			Url:  "https://leadingregistrar",
-		},
-	}
+	inputW = httptest.NewRecorder()
+	inputR = httptest.NewRequest(http.MethodPost, "/test123", io.NopCloser(strings.NewReader("")))
+	inputR.Header.Set("Content-Type", "application/json")
+	newMockTransport(createMultiHTTPResponse(2, false, string(createTestServiceRecordListForm())), 0, nil)
+	mua = createUnitAsset("https://leadingregistrar")
+	mua.Serving(inputW, inputR, "wrong")
 
-	// create the unit asset template
-	uat := &UnitAsset{
-		Name:    "orchestration",
-		Details: map[string][]string{"Platform": {"Independent"}},
-		Traits:  assetTraits,
-		ServicesMap: components.Services{
-			squest.SubPath: &squest, // Inline assignment of the temperature service
-		},
+	if inputW.Code == 200 {
+		t.Errorf("Expected the error code to not be 200 when having servicePath not be squest")
 	}
-	return uat
 }
 
-func createMultiHTTPResponse() func() *http.Response {
+func createMultiHTTPResponse(limit int, writeError bool, body string) func() *http.Response {
 	count := 0
 	return func() *http.Response {
 		count++
-		if count == 2 {
-			f := createTestServiceRecordListForm()
+		if count == limit && writeError == true {
 			return &http.Response{
 				Status:     "200 OK",
 				StatusCode: 200,
 				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       io.NopCloser(bytes.NewReader(f)),
+				Body:       io.NopCloser(errorReader{}),
+			}
+		}
+		if count == limit {
+			return &http.Response{
+				Status:     "200 OK",
+				StatusCode: 200,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(body)),
 			}
 		}
 		return &http.Response{
@@ -120,32 +108,56 @@ func createTestServiceRecordListForm() []byte {
 	return fakebody
 }
 
+var getServiceURLErrorMessage = "core system 'serviceregistrar' not found: verifying core URL: Get " +
+	"\"https://leadingregistrar/status\": http: RoundTripper implementation (*main.mockTransport) returned a nil " +
+	"*Response with a nil error\n"
+
 type orchestrateTestStruct struct {
-	inputW         http.ResponseWriter
-	inputBody      string
-	expectedErr    bool
-	expectedOutput string
-	testName       string
+	inputW           http.ResponseWriter
+	inputBody        io.ReadCloser
+	httpMethod       string
+	contentType      string
+	mockTransportErr int
+	expectedCode     int
+	expectedOutput   string
+	testName         string
 }
 
 var orchestrateTestParams = []orchestrateTestStruct{
-	{httptest.NewRecorder(), string(createTestServiceQuestForm()),
-		false, string(createTestServicePointForm()), "Best case, everything passes"},
+	{httptest.NewRecorder(), io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
+		"application/json", 3, 200, string(createTestServicePointForm()), "Best case, everything passes"},
+	{httptest.NewRecorder(), io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
+		"", 3, 200, "", "Bad case, header content type is wrong"},
+	{httptest.NewRecorder(), io.NopCloser(errorReader{}), "POST",
+		"application/json", 3, 200, "", "Bad case, ReadAll on header body fails"},
+	{httptest.NewRecorder(), io.NopCloser(strings.NewReader(string("hej hej"))), "POST",
+		"text/plain", 3, 200, "", "Bad case, Unpack and type assertion to ServiceQuest_v1 fails"},
+	{httptest.NewRecorder(), io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
+		"application/json", 1, 503, getServiceURLErrorMessage, "Bad case, getServiceURL fails"},
+	{&mockResponseWriter{}, io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
+		"application/json", 3, 0, "", "Bad case, write fails"},
+	{httptest.NewRecorder(), io.NopCloser(strings.NewReader(string(""))), "PUT",
+		"", 0, 404, "Method is not supported.\n", "Bad case, wrong http method"},
 }
 
 func TestOrchestrate(t *testing.T) {
 	for _, testCase := range orchestrateTestParams {
-		inputR := httptest.NewRequest(http.MethodPost, "/test123", io.NopCloser(strings.NewReader(testCase.inputBody)))
-		inputR.Header.Set("Content-Type", "application/json")
-		mua := createUnitAsset()
-		newMockTransport(createMultiHTTPResponse(), 3, nil)
+		inputR := httptest.NewRequest(testCase.httpMethod, "/test123", testCase.inputBody)
+		inputR.Header.Set("Content-Type", testCase.contentType)
+		mua := createUnitAsset("https://leadingregistrar")
+		newMockTransport(createMultiHTTPResponse(2, false, string(createTestServiceRecordListForm())),
+			testCase.mockTransportErr, nil)
 		mua.orchestrate(testCase.inputW, inputR)
 
 		recorder, ok := testCase.inputW.(*httptest.ResponseRecorder)
 		if ok {
-			if recorder.Body.String() != testCase.expectedOutput {
+			if recorder.Body.String() != testCase.expectedOutput || recorder.Code != testCase.expectedCode {
 				t.Errorf("In test case: %s: Expected %s, got: %s",
 					testCase.testName, testCase.expectedOutput, recorder.Body.String())
+			}
+		} else {
+			if _, ok := testCase.inputW.(*mockResponseWriter); !ok {
+				t.Errorf("Expected inputW to be of type mockResponseWriter")
 			}
 		}
 	}

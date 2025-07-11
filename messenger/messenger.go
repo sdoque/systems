@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/x509/pkix"
 	"encoding/json"
-	"log"
 	"net/http"
 	"time"
 
@@ -36,18 +35,18 @@ func main() {
 	sys.UAssets[assetTemplate.GetName()] = &assetTemplate
 	rawResources, err := usecases.Configure(&sys)
 	if err != nil {
-		log.Fatalf("configuration error: %v\n", err)
+		usecases.LogInfo(&sys, "configuration error: %v", err)
 	}
 
 	sys.UAssets = make(map[string]*components.UnitAsset)
 	for _, raw := range rawResources {
 		var uac usecases.ConfigurableAsset
 		if err := json.Unmarshal(raw, &uac); err != nil {
-			log.Fatalf("resource configuration error: %+v\n", err)
+			usecases.LogError(&sys, "resource configuration error: %+v", err)
 		}
 		ua, cleanup, err := newResource(uac, &sys)
 		if err != nil {
-			log.Fatalf("new resource: %v\n", err)
+			usecases.LogError(&sys, "new resource: %v", err)
 		}
 		defer cleanup()
 		sys.UAssets[ua.GetName()] = &ua
@@ -57,7 +56,7 @@ func main() {
 	usecases.RegisterServices(&sys)
 	go usecases.SetoutServers(&sys)
 	<-sys.Sigs
-	log.Println("shuting down", sys.Name)
+	usecases.LogInfo(&sys, "shuting down %s", sys.Name)
 	cancel()
 	time.Sleep(2 * time.Second)
 }

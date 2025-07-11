@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -125,7 +124,7 @@ func (ua *UnitAsset) runBeacon() {
 	for {
 		s, err := ua.fetchSystems()
 		if err != nil {
-			log.Printf("error fetching system list: %s\n", err)
+			usecases.LogWarn(ua.Owner, "error fetching system list: %s", err)
 		}
 		ua.notifySystems(s)
 		select {

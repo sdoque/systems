@@ -43,7 +43,7 @@ func main() {
 	// instantiate the System
 	sys := components.NewSystem("serviceregistrar", ctx)
 
-	// Instatiate the Capusle
+	// Instantiate the Capsule
 	sys.Husk = &components.Husk{
 		Description: "is an Arrowhead mandatory core system that keeps track of the currently available services.",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
@@ -206,15 +206,15 @@ func (ua *UnitAsset) queryDB(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte(text))
 			text = "<p>The local cloud's currently available services are:</p><ul>"
 			w.Write([]byte(text))
-			for _, serRec := range servvicesList {
+			for _, servRec := range servvicesList {
 				metaservice := ""
-				for key, values := range serRec.Details {
+				for key, values := range servRec.Details {
 					metaservice += key + ": " + fmt.Sprintf("%v", values) + " "
 				}
-				hyperlink := "http://" + serRec.IPAddresses[0] + ":" + strconv.Itoa(int(serRec.ProtoPort["http"])) + "/" + serRec.SystemName + "/" + serRec.SubPath
-				parts := strings.Split(serRec.SubPath, "/")
+				hyperlink := "http://" + servRec.IPAddresses[0] + ":" + strconv.Itoa(int(servRec.ProtoPort["http"])) + "/" + servRec.SystemName + "/" + servRec.SubPath
+				parts := strings.Split(servRec.SubPath, "/")
 				uaName := parts[0]
-				sLine := "<p>Service ID: " + strconv.Itoa(int(serRec.Id)) + " with definition <b><a href=\"" + hyperlink + "\">" + serRec.ServiceDefinition + "</b></a> from the <b>" + serRec.SystemName + "/" + uaName + "</b> with details " + metaservice + " will expire at: " + serRec.EndOfValidity + "</p>"
+				sLine := "<p>Service ID: " + strconv.Itoa(int(servRec.Id)) + " with definition <b><a href=\"" + hyperlink + "\">" + servRec.ServiceDefinition + "</b></a> from the <b>" + servRec.SystemName + "/" + uaName + "</b> with details " + metaservice + " will expire at: " + servRec.EndOfValidity + "</p>"
 				w.Write([]byte(fmt.Sprintf("<li>%s</li>", sLine)))
 			}
 			text = "</ul></body></html>"

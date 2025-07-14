@@ -116,7 +116,7 @@ func newRegMsg(sys *components.System) ([]byte, error) {
 	return usecases.Pack(forms.Form(&m), "application/json")
 }
 
-const timeoutUpdate int = 60
+const timeoutUpdate int = 30
 
 // runBeacon runs periodically in the background (in a goroutine at startup).
 // It fetches a list of systems and then sends out a MessengerRegistration to each.

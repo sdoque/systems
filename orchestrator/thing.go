@@ -23,7 +23,6 @@ import (
 	"net/http"
 	"strconv"
 
-	//"strings"
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
@@ -163,60 +162,6 @@ func (ua *UnitAsset) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []by
 	// ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second) // Create a new context, with a 2-second timeout
 	defer cancel()
 	sys := ua.Owner
-	/*
-		if ua.leadingRegistrar != nil {
-
-			// verify that this leading registrar is still leading
-			resp, errs := http.Get(ua.leadingRegistrar.Url + "/status")
-			if errs != nil {
-				log.Println("lost leading registrar status:", errs)
-				ua.leadingRegistrar = nil
-				err = errs
-				return // Skip to the next iteration of the loop
-			}
-
-			// Read from status resp.Body and then close it directly after
-			bodyBytes, errs := io.ReadAll(resp.Body)
-			defer resp.Body.Close() // Close the body directly after reading from it
-			if errs != nil {
-				log.Println("\rError reading response from leading registrar:", errs)
-				ua.leadingRegistrar = nil
-				err = errs
-				return // Skip to the next iteration of the loop
-			}
-
-			// reset the pointer if the registrar lost its leading status
-			if !strings.HasPrefix(string(bodyBytes), "lead Service Registrar since") {
-				ua.leadingRegistrar = nil
-				log.Println("lost previous leading registrar")
-			}
-		} else {
-			for _, cSys := range sys.CoreS {
-				core := cSys
-				if core.Name == "serviceregistrar" {
-					resp, err := http.Get(core.Url + "/status")
-					if err != nil {
-						fmt.Println("Error checking service registrar status:", err)
-						ua.leadingRegistrar = nil // clear the leading registrar record
-						continue                  // Skip to the next iteration of the loop
-					}
-
-					// Read from resp.Body and then close it directly after
-					bodyBytes, err := io.ReadAll(resp.Body)
-					defer resp.Body.Close() // Close the body directly after reading from it
-					if err != nil {
-						fmt.Println("Error reading service registrar response body:", err)
-						continue // Skip to the next iteration of the loop
-					}
-
-					if strings.HasPrefix(string(bodyBytes), "lead Service Registrar since") {
-						ua.leadingRegistrar = core
-						fmt.Printf("\nlead registrar found at: %s\n", ua.leadingRegistrar.Url)
-					}
-				}
-			}
-		}
-	*/
 	ua.leadingRegistrar.Url, err = components.GetRunningCoreSystemURL(sys, ua.leadingRegistrar.Name)
 	if err != nil {
 		return servLoc, err

@@ -13,6 +13,24 @@ import (
 	"github.com/sdoque/mbaigo/usecases"
 )
 
+func TestInitTemplate(t *testing.T) {
+	expectedServices := []string{"squest"}
+
+	ua := initTemplate()
+	services := ua.GetServices()
+
+	// Check if expected name and services are present
+	if ua.GetName() != "orchestration" {
+		t.Errorf("Name mismatch expected 'registry', got: %s", ua.GetName())
+	}
+
+	for _, s := range expectedServices {
+		if _, ok := services[s]; !ok {
+			t.Errorf("Expected service '%s' to be present", s)
+		}
+	}
+}
+
 func createTestServiceQuest() forms.ServiceQuest_v1 {
 	var ServiceQuest_v1 forms.ServiceQuest_v1
 	ServiceQuest_v1.NewForm()

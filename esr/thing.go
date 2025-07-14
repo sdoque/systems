@@ -396,14 +396,13 @@ func getUniqueSystems(ua *UnitAsset) (*forms.SystemRecordList_v1, error) {
 
 	ua.mu.Lock() // Ensure thread safety
 	defer ua.mu.Unlock()
-
 	for _, record := range ua.serviceRegistry {
 		var sAddress string
 
 		// Check for HTTPS
-		if port, exists := record.ProtoPort["https"]; exists && port != 0 {
+		if port := record.ProtoPort["https"]; port != 0 {
 			sAddress = "https://" + record.IPAddresses[0] + ":" + strconv.Itoa(port) + "/" + record.SystemName
-		} else if port, exists := record.ProtoPort["http"]; exists && port != 0 { // Check for HTTP
+		} else if port := record.ProtoPort["http"]; port != 0 { // Check for HTTP
 			sAddress = "http://" + record.IPAddresses[0] + ":" + strconv.Itoa(port) + "/" + record.SystemName
 		} else {
 			fmt.Printf("Warning: %s cannot be modeled\n", record.SystemName)

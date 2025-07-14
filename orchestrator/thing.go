@@ -87,6 +87,12 @@ func initTemplate() components.UnitAsset {
 		Details:     map[string][]string{"DefaultForm": {"ServiceRecord_v1"}, "Location": {"LocalCloud"}},
 		Description: "looks for the desired service described in a quest form (POST)",
 	}
+	squests := components.Service{
+		Definition:  "squests",
+		SubPath:     "squests",
+		Details:     map[string][]string{"DefaultForm": {"ServiceRecord_v1"}, "Location": {"LocalCloud"}},
+		Description: "looks for the desired services described in a quest form (POST)",
+	}
 
 	assetTraits := Traits{
 		leadingRegistrar: nil, // Initialize the leading registrar to nil
@@ -98,7 +104,8 @@ func initTemplate() components.UnitAsset {
 		Details: map[string][]string{"Platform": {"Independent"}},
 		Traits:  assetTraits,
 		ServicesMap: components.Services{
-			squest.SubPath: &squest, // Inline assignment of the temperature service
+			squest.SubPath:  &squest, // Inline assignment of the temperature service
+			squests.SubPath: &squests,
 		},
 	}
 	return uat
@@ -158,8 +165,8 @@ func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
 // - servLoc: A byte slice containing the service location in JSON format.
 // - err: An error if any issues occur during the process.
 func (ua *UnitAsset) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []byte, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second) // Create a new context, with a 2-second timeout
-	// ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second) // Create a new context, with a 2-second timeout
+	// ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second) // Create a new context, with a 2-second timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second) // Create a new context, with a 2-second timeout
 	defer cancel()
 	sys := ua.Owner
 	ua.leadingRegistrar.Url, err = components.GetRunningCoreSystemURL(sys, ua.leadingRegistrar.Name)
@@ -233,4 +240,70 @@ func selectService(serviceList forms.ServiceRecordList_v1) (sp forms.ServicePoin
 	sp.ServLocation = "http://" + rec.IPAddresses[0] + ":" + strconv.Itoa(rec.ProtoPort["http"]) + "/" + rec.SystemName + "/" + rec.SubPath
 	sp.ServNode = rec.ServiceNode
 	return
+}
+
+func (ua *UnitAsset) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []byte, err error) {
+	// ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second) // Create a new context, with a 2-second timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second) // Create a new context, with a 2-second timeout
+	defer cancel()
+	sys := ua.Owner
+	ua.leadingRegistrar.Url, err = components.GetRunningCoreSystemURL(sys, ua.leadingRegistrar.Name)
+	if err != nil {
+		return servLoc, err
+	}
+
+	// Create a new HTTP request to the the Service Registrar
+
+	// Create buffer to save a copy of the request body
+	mediaType := "application/json"
+	jsonQF, err := usecases.Pack(&newQuest, mediaType)
+	if err != nil {
+		log.Printf("problem encountered when marshalling the service quest\n")
+		return servLoc, err
+	}
+
+	srURL := ua.leadingRegistrar.Url + "/query"
+	req, err := http.NewRequest(http.MethodPost, srURL, bytes.NewBuffer(jsonQF))
+	if err != nil {
+		return servLoc, err
+	}
+	req.Header.Set("Content-Type", mediaType) // set the Content-Type header
+	req = req.WithContext(ctx)                // associate the cancellable context with the request
+
+	// forward the request to the leading Service Registrar/////////////////////////////////
+	// client := &http.Client{}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		ua.leadingRegistrar = nil
+		return servLoc, err
+	}
+	defer resp.Body.Close()
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("Error reading discovery response body: %v", err)
+		return servLoc, err
+	}
+	fmt.Printf("\n%v\n", string(respBytes))
+	serviceListf, err := usecases.Unpack(respBytes, mediaType)
+	if err != nil {
+		log.Print("Error extracting discovery reply ", err)
+		return servLoc, err
+	}
+
+	// Perform a type assertion to convert the returned Form to SignalA_v1a
+	serviceList, ok := serviceListf.(*forms.ServiceRecordList_v1)
+	if !ok {
+		log.Println("problem asserting the type of the service list form")
+		return
+	}
+
+	if len(serviceList.List) == 0 {
+		err = fmt.Errorf("unable to locate any such service: %s", newQuest.ServiceDefinition)
+		return
+	}
+
+	fmt.Printf("/n the length of the service list is: %d\n", len(serviceList.List))
+	payload, err := json.MarshalIndent(serviceList, "", "  ")
+	fmt.Printf("the service location is %+v\n", serviceList)
+	return payload, err
 }

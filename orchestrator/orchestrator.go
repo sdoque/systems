@@ -96,7 +96,8 @@ func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath
 	switch servicePath {
 	case "squest":
 		ua.orchestrate(w, r)
-
+	case "squests":
+		ua.orchestrateMultiple(w, r)
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}
@@ -132,6 +133,53 @@ func (ua *UnitAsset) orchestrate(w http.ResponseWriter, r *http.Request) {
 		}
 
 		servLocation, err := ua.getServiceURL(*qf)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, err = w.Write(servLocation) // respond with the selected service location
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+	}
+}
+
+func (ua *UnitAsset) orchestrateMultiple(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "POST":
+		contentType := r.Header.Get("Content-Type")
+		mediaType, _, err := mime.ParseMediaType(contentType)
+		if err != nil {
+			fmt.Println("Error parsing media type:", err)
+			return
+		}
+
+		defer r.Body.Close()
+		bodyBytes, err := io.ReadAll(r.Body) // Use io.ReadAll instead of ioutil.ReadAll
+		if err != nil {
+			log.Printf("error reading discovery request body: %v\n", err)
+			return
+		}
+
+		questForm, err := usecases.Unpack(bodyBytes, mediaType)
+		if err != nil {
+			log.Printf("error extracting the discovery request %v\n", err)
+		}
+		// Perform a type assertion to convert the returned Form to SignalA_v1a
+		qf, ok := questForm.(*forms.ServiceQuest_v1)
+		if !ok {
+			fmt.Println("Problem unpacking the service discovery request form")
+			return
+		}
+
+		servLocation, err := ua.getServicesURL(*qf)
 		if err != nil {
 			log.Println(err)
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)

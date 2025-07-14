@@ -32,9 +32,11 @@ func TestInitTemplate(t *testing.T) {
 }
 
 func createTestServiceQuest() forms.ServiceQuest_v1 {
-	var ServiceQuest_v1 forms.ServiceQuest_v1
-	ServiceQuest_v1.NewForm()
-	return ServiceQuest_v1
+	var ServiceQuest_v1_temperature forms.ServiceQuest_v1
+	ServiceQuest_v1_temperature.NewForm()
+	ServiceQuest_v1_temperature.ServiceDefinition = "temperature"
+	ServiceQuest_v1_temperature.Details = map[string][]string{"Unit": {"Celsius"}}
+	return ServiceQuest_v1_temperature
 }
 
 func (ua *UnitAsset) createDelayedBrokenURL(limit int) func() *http.Response {
@@ -87,8 +89,6 @@ type getServiceURLTestStruct struct {
 var getServiceURLTestParams = []getServiceURLTestStruct{
 	{createTestServiceQuest(), string(createTestServiceRecordListForm()), "https://leadingregistrar", false, false,
 		0, nil, string(createTestServicePointForm()), false, "Good case, everything passes"},
-	// {createTestServiceQuest(), string(createTestServiceRecordListForm()), "https://leadingregistrar", true, false,
-	//	0, nil, "", true, "Bad case, creating a new http request fails"},
 	{createTestServiceQuest(), string(createTestServiceRecordListForm()), "https://leadingregistrar", false, false,
 		2, errHTTP, "", true, "Bad case, DefaultClient.Do fails"},
 	{createTestServiceQuest(), string(createTestServiceRecordListForm()), "https://leadingregistrar", false, true,
@@ -144,5 +144,128 @@ func TestSelectService(t *testing.T) {
 
 	if string(expectedService) != string(receivedService) {
 		t.Errorf("Expected: %v, got: %v", expectedService, receivedService)
+	}
+}
+
+func createTestServiceRecordListFormWithSeveral() []byte {
+	var serviceRecordFormTemperature forms.ServiceRecord_v1
+	serviceRecordFormTemperature.NewForm()
+	serviceRecordFormTemperature.IPAddresses = []string{"123.456.789"}
+	serviceRecordFormTemperature.ProtoPort = map[string]int{"http": 123}
+	serviceRecordFormTemperature.ServiceDefinition = "temperature"
+	var serviceRecordFormRotation forms.ServiceRecord_v1
+	serviceRecordFormRotation.NewForm()
+	serviceRecordFormRotation.IPAddresses = []string{"123.456.789"}
+	serviceRecordFormRotation.ProtoPort = map[string]int{"http": 123}
+	serviceRecordFormRotation.ServiceDefinition = "rotation"
+	var ServiceRecordListFormWithSeveral forms.ServiceRecordList_v1
+	ServiceRecordListFormWithSeveral.NewForm()
+	ServiceRecordListFormWithSeveral.List = []forms.ServiceRecord_v1{serviceRecordFormTemperature,
+		serviceRecordFormRotation}
+	fakebody, err := json.MarshalIndent(ServiceRecordListFormWithSeveral, "", "  ")
+	if err != nil {
+		log.Fatalf("Fail marshal at start of test: %v", err)
+	}
+	return fakebody
+}
+
+func createTestServiceRecordListFormWithDefinition() []byte {
+	var serviceRecordFormWithDefinition forms.ServiceRecord_v1
+	serviceRecordFormWithDefinition.NewForm()
+	serviceRecordFormWithDefinition.IPAddresses = []string{"123.456.789"}
+	serviceRecordFormWithDefinition.ProtoPort = map[string]int{"http": 123}
+	serviceRecordFormWithDefinition.ServiceDefinition = "temperature"
+	var serviceRecordListFormWithDefintion forms.ServiceRecordList_v1
+	serviceRecordListFormWithDefintion.NewForm()
+	serviceRecordListFormWithDefintion.List = []forms.ServiceRecord_v1{serviceRecordFormWithDefinition}
+	fakebody, err := json.MarshalIndent(serviceRecordListFormWithDefintion, "", "  ")
+	if err != nil {
+		log.Fatalf("Fail marshal at start of test: %v", err)
+	}
+	return fakebody
+}
+
+func createTestServiceRecordListFormWithDetails() []byte {
+	var serviceRecordFormWithDetails forms.ServiceRecord_v1
+	serviceRecordFormWithDetails.NewForm()
+	serviceRecordFormWithDetails.IPAddresses = []string{"123.456.789"}
+	serviceRecordFormWithDetails.ProtoPort = map[string]int{"http": 123}
+	serviceRecordFormWithDetails.Details = map[string][]string{"Location": {"Kitchen"}}
+	var serviceRecordListFormWithDetails forms.ServiceRecordList_v1
+	serviceRecordListFormWithDetails.NewForm()
+	serviceRecordListFormWithDetails.List = []forms.ServiceRecord_v1{serviceRecordFormWithDetails}
+	fakebody, err := json.MarshalIndent(serviceRecordListFormWithDetails, "", "  ")
+	if err != nil {
+		log.Fatalf("Fail marshal at start of test: %v", err)
+	}
+	return fakebody
+}
+
+type getServicesURLTestStruct struct {
+	inputForm           forms.ServiceQuest_v1
+	inputBody           string
+	leadingRegistrarUrl string
+	brokenUrl           bool
+	writeError          bool
+	mockTransportErr    int
+	errHTTP             error
+	expectedOutput      string
+	expectedErr         bool
+	testName            string
+}
+
+var getServicesURLTestParams = []getServicesURLTestStruct{
+	{createTestServiceQuest(), string(createTestServiceRecordListFormWithSeveral()),
+		"http://localhost:20102/serviceregistrar", false, false, 0, nil,
+		string(createTestServiceRecordListFormWithSeveral()), false,
+		"Good case, everything passes with several services"},
+	{createTestServiceQuest(), string(createTestServiceRecordListFormWithDefinition()),
+		"http://localhost:20102/serviceregistrar", false, false, 0, nil,
+		string(createTestServiceRecordListFormWithDefinition()), false,
+		"Good case, everything passes with one service definition"},
+	{createTestServiceQuest(), string(createTestServiceRecordListFormWithDetails()),
+		"http://localhost:20102/serviceregistrar", false, false, 0, nil,
+		string(createTestServiceRecordListFormWithDetails()), false,
+		"Good case, everything passes with one service details"},
+	{createTestServiceQuest(), string(createTestServiceRecordListForm()),
+		"http://localhost:20102/serviceregistrar", false, false, 2, errHTTP,
+		"", true,
+		"Bad case, DefaultClient.Do fails"},
+	{createTestServiceQuest(), string(createTestServiceRecordListForm()),
+		"http://localhost:20102/serviceregistrar", false, true, 0, nil,
+		"", true,
+		"Bad case, ReadAll fails"},
+	{createTestServiceQuest(), "hej hej",
+		"http://localhost:20102/serviceregistrar", false, false, 0, nil,
+		"", true,
+		"Bad case, Unpack fails"},
+	{createTestServiceQuest(), string(createTestServicePointForm()),
+		"http://localhost:20102/serviceregistrar", false, false, 0, nil,
+		"", false,
+		"Bad case, type assertion fails"},
+	{createTestServiceQuest(), string(createEmptyServiceRecordListForm()),
+		"http://localhost:20102/serviceregistrar", false, false, 0, nil,
+		"", true,
+		"Bad case, the service record list is empty"},
+}
+
+func TestGetServicesURL(t *testing.T) {
+	for _, testCase := range getServicesURLTestParams {
+		mua := createUnitAsset(testCase.leadingRegistrarUrl)
+		if mua == nil {
+			t.Fatalf("UAssets[\"Orchestration\"] is nil")
+		}
+		if testCase.brokenUrl == true {
+			newMockTransport(mua.createDelayedBrokenURL(2), testCase.mockTransportErr, testCase.errHTTP)
+		} else {
+			newMockTransport(createMultiHTTPResponse(2, testCase.writeError, testCase.inputBody),
+				testCase.mockTransportErr, testCase.errHTTP)
+		}
+		servLoc, err := mua.getServicesURL(testCase.inputForm)
+		if string(servLoc) != testCase.expectedOutput || (err == nil && testCase.expectedErr == true) ||
+			(err != nil && testCase.expectedErr == false) {
+			t.Errorf("In test case: %s: Expected %s and error %t, got: %s and %v",
+				testCase.testName, testCase.expectedOutput, testCase.expectedErr, string(servLoc), err)
+		}
 	}
 }

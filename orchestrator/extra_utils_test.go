@@ -46,7 +46,7 @@ func createSystemWithUnitAsset(url string) components.System {
 
 	leadingRegistrar := &components.CoreSystem{
 		Name: components.ServiceRegistrarName,
-		Url:  "https://leadingregistrar",
+		Url:  "http://localhost:20102/serviceregistrar/registry",
 	}
 	sys.CoreS = []*components.CoreSystem{
 		leadingRegistrar,

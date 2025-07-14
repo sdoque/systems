@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -321,6 +322,15 @@ func (ua *UnitAsset) serviceRegistryHandler() {
 	}
 }
 
+func compareDetails(reqDetails []string, availDetails []string) bool {
+	for _, requiredValue := range reqDetails {
+		if slices.Contains(availDetails, requiredValue) {
+			return true
+		}
+	}
+	return false
+}
+
 // FilterByServiceDefinitionAndDetails returns a list of services with the given service definition and details TODO: protocols
 func (ua *UnitAsset) FilterByServiceDefinitionAndDetails(desiredDefinition string, requiredDetails map[string][]string) []forms.ServiceRecord_v1 {
 	ua.mu.Lock() // Ensure thread safety
@@ -341,20 +351,7 @@ func (ua *UnitAsset) FilterByServiceDefinitionAndDetails(desiredDefinition strin
 				}
 
 				// Ensure at least one value in requiredDetails matches record.Details
-				valueMatch := false
-				for _, requiredValue := range values {
-					for _, recordValue := range recordValues {
-						if recordValue == requiredValue {
-							valueMatch = true
-							break
-						}
-					}
-					if valueMatch {
-						break
-					}
-				}
-
-				if !valueMatch {
+				if !compareDetails(values, recordValues) {
 					matchesAllDetails = false
 					break
 				}

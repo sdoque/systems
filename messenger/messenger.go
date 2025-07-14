@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/x509/pkix"
 	"encoding/json"
+	"io"
+	"log"
 	"net/http"
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
+	"github.com/sdoque/mbaigo/forms"
 	"github.com/sdoque/mbaigo/usecases"
 )
 
@@ -35,7 +38,8 @@ func main() {
 	sys.UAssets[assetTemplate.GetName()] = &assetTemplate
 	rawResources, err := usecases.Configure(&sys)
 	if err != nil {
-		usecases.LogInfo(&sys, "configuration error: %v", err)
+		usecases.LogWarn(&sys, "configuration error: %v", err)
+		return
 	}
 
 	sys.UAssets = make(map[string]*components.UnitAsset)
@@ -43,6 +47,7 @@ func main() {
 		var uac usecases.ConfigurableAsset
 		if err := json.Unmarshal(raw, &uac); err != nil {
 			usecases.LogError(&sys, "resource configuration error: %+v", err)
+			return
 		}
 		ua, cleanup, err := newResource(uac, &sys)
 		if err != nil {
@@ -63,7 +68,39 @@ func main() {
 
 func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
+	case "message":
+		ua.handleNewMessage(w, r)
 	default:
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 	}
+}
+
+func (ua *UnitAsset) handleNewMessage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
+	b, err := io.ReadAll(r.Body)
+	if err != nil {
+		usecases.LogError(ua.Owner, "read request body: %v", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError),
+			http.StatusInternalServerError)
+		return
+	}
+	defer r.Body.Close()
+
+	f, err := usecases.Unpack(b, r.Header.Get("Content-Type"))
+	if err != nil {
+		usecases.LogWarn(ua.Owner, "unpack: %v", err)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+	msg, ok := f.(*forms.SystemMessage_v1)
+	if !ok {
+		usecases.LogWarn(ua.Owner, "form is not a SystemMessage_v1")
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("%s: %s\n", msg.System, msg.String())
 }

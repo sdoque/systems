@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
+	"github.com/sdoque/mbaigo/components"
 	"github.com/sdoque/mbaigo/forms"
+	"github.com/sdoque/mbaigo/usecases"
 )
 
 // ----------------------------------------------------- //
@@ -29,18 +33,87 @@ func TestInitTemplate(t *testing.T) {
 	}
 }
 
-// --------------------------------------------- //
-// Help functions and structs to test ***
-// --------------------------------------------- //
+// ------------------------------------------------ //
+// Help functions and structs to test newResource()
+// ------------------------------------------------ //
 
-// newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {...}
-func TestNewResource(t *testing.T) {}
+// Create a error reader to break json.Unmarshal()
+type errReader int
 
-// UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {}
-func TestUnmarshalTraits(t *testing.T) {}
+var errBodyRead error = fmt.Errorf("bad body read")
 
-// (ua *UnitAsset) serviceRegistryHandler() {}
-func TestServiceRegistryHandler(t *testing.T) {}
+func (errReader) Read(p []byte) (n int, err error) {
+	return 0, errBodyRead
+}
+func (errReader) Close() error {
+	return nil
+}
+
+func createConfAssetBrokenTraits() usecases.ConfigurableAsset {
+	brokenTrait, _ := json.Marshal(errReader(0))
+	uac := usecases.ConfigurableAsset{
+		Name:     "testRegistrar",
+		Details:  map[string][]string{"testDetail": {"detail1", "detail2"}},
+		Services: []components.Service{},
+		Traits:   []json.RawMessage{json.RawMessage(brokenTrait)},
+	}
+	return uac
+}
+
+func createConfAssetMultipleTraits() usecases.ConfigurableAsset {
+	uac := usecases.ConfigurableAsset{
+		Name:     "testRegistrar",
+		Details:  map[string][]string{"testDetail": {"detail1", "detail2"}},
+		Services: []components.Service{},
+		Traits:   []json.RawMessage{json.RawMessage(`{"recCount": 0}`), json.RawMessage(`{"leading": false}`)},
+	}
+	return uac
+}
+
+func createTestSystem() components.System {
+	ctx := context.Background()
+	sys := components.NewSystem("testsys", ctx)
+	sys.Husk = &components.Husk{
+		Description: " is for testing purposes",
+		Certificate: "ABCD",
+		Details:     map[string][]string{"Developer": {"Arrowhead"}},
+		ProtoPort:   map[string]int{"https": 0, "http": 8870, "coap": 0},
+		InfoLink:    "https://for.testing.purposes",
+	}
+	return sys
+}
+
+type newResourceParams struct {
+	setup     func() components.System
+	confAsset func() usecases.ConfigurableAsset
+	testCase  string
+}
+
+func TestNewResource(t *testing.T) {
+	params := []newResourceParams{
+		{
+			func() (sys components.System) { return createTestSystem() },
+			func() (confAsset usecases.ConfigurableAsset) { return createConfAssetBrokenTraits() },
+			"Case: unmarshal traits fails",
+		},
+		{
+			func() (sys components.System) { return createTestSystem() },
+			func() (confAsset usecases.ConfigurableAsset) { return createConfAssetMultipleTraits() },
+			"Case: confAsset has multiple traits",
+		},
+	}
+
+	for _, c := range params {
+		sys := c.setup()
+		uac := c.confAsset()
+
+		ua, shutdown := newResource(uac, &sys)
+		shutdown()
+		if ua.GetName() != "testRegistrar" {
+			t.Errorf("Name mismatch, expected '%s' got '%s'", uac.Name, ua.GetName())
+		}
+	}
+}
 
 // ------------------------------------------------------------------------ //
 // Help functions and structs to test FilterByServiceDefinitionAndDetails()

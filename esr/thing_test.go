@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"testing"
 
 	"github.com/sdoque/mbaigo/forms"
@@ -47,15 +46,18 @@ func TestServiceRegistryHandler(t *testing.T) {}
 // Help functions and structs to test FilterByServiceDefinitionAndDetails()
 // ------------------------------------------------------------------------ //
 
-func createAssetWithServices() (ua *UnitAsset, err error) {
+// Creates an asset multiple services in its registry
+func createRegistryWithServices(broken bool) (ua *UnitAsset, err error) {
 	initTemp := initTemplate()
 	ua, ok := initTemp.(*UnitAsset)
 	if !ok {
 		return nil, fmt.Errorf("Failed while typecasting to local UnitAsset")
 	}
-	locations := []string{"Kitchen", "Bathroom"}
+	var locations []string
+	locations = []string{"Kitchen", "Bathroom", "Livingroom"}
+
 	ua.serviceRegistry = make(map[int]forms.ServiceRecord_v1)
-	for i, l := range locations {
+	for i, location := range locations {
 		var form forms.ServiceRecord_v1
 		form.ServiceDefinition = "testDef"
 		form.SystemName = fmt.Sprintf("testSystem%d", i)
@@ -63,27 +65,55 @@ func createAssetWithServices() (ua *UnitAsset, err error) {
 		form.IPAddresses = []string{fmt.Sprintf("999.999.%d.999", i)}
 		form.EndOfValidity = "2026-01-02T15:04:05Z"
 		form.Details = make(map[string][]string)
-		form.Details = map[string][]string{"Location": {l}}
+		if !broken {
+			form.Details = map[string][]string{"Location": {location}}
+		}
 		ua.serviceRegistry[i] = form
 	}
 	return ua, nil
 }
 
+type filterByServDefAndDetailsParams struct {
+	expectMatch bool
+	setup       func() (*UnitAsset, error)
+	testCase    string
+}
+
 func TestFilterByServiceDefAndDetails(t *testing.T) {
-	ua, err := createAssetWithServices()
-	if err != nil {
-		t.Errorf("failed while creating asset at startup")
+	params := []filterByServDefAndDetailsParams{
+		{
+			true,
+			func() (ua *UnitAsset, err error) { return createRegistryWithServices(false) },
+			"Best case",
+		},
+		{
+			false,
+			func() (ua *UnitAsset, err error) { return createRegistryWithServices(true) },
+			"Bad case, key doesn't exist",
+		},
 	}
-	a := map[string][]string{"Location": {"Bathroom"}}
-	lst := ua.FilterByServiceDefinitionAndDetails("testDef", a)
-	log.Printf("LST: %+v", lst)
+
+	for _, c := range params {
+		ua, err := c.setup()
+		if err != nil {
+			t.Errorf("Failed during setup in '%s'", c.testCase)
+		}
+		checkLoc := map[string][]string{"Location": {"Livingroom"}}
+		lst := ua.FilterByServiceDefinitionAndDetails("testDef", checkLoc)
+		if (c.expectMatch == true) && (len(lst) < 1) {
+			t.Errorf("Expected atleast 1 service")
+		}
+		if (c.expectMatch == false) && (len(lst) > 0) {
+			t.Errorf("Expected no matches")
+		}
+	}
 }
 
 // ---------------------------------------------------- //
 // Help functions and structs to test checkExpiration()
 // ---------------------------------------------------- //
 
-func createAssetWithService(year any) (ua *UnitAsset, err error) {
+func createRegistryWithService(year any) (ua *UnitAsset, err error) {
 	initTemp := initTemplate()
 	ua, ok := initTemp.(*UnitAsset)
 	if !ok {
@@ -109,17 +139,17 @@ func TestCheckExpiration(t *testing.T) {
 	params := []checkExpirationParams{
 		{
 			true,
-			func() (ua *UnitAsset, err error) { return createAssetWithService(2026) },
+			func() (ua *UnitAsset, err error) { return createRegistryWithService(2026) },
 			"Best case, service not past expiration",
 		},
 		{
 			false,
-			func() (ua *UnitAsset, err error) { return createAssetWithService(2006) },
+			func() (ua *UnitAsset, err error) { return createRegistryWithService(2006) },
 			"Bad case, service past expiration",
 		},
 		{
 			true,
-			func() (ua *UnitAsset, err error) { return createAssetWithService("faulty") },
+			func() (ua *UnitAsset, err error) { return createRegistryWithService("faulty") },
 			"Bad case, time parsing problem",
 		},
 	}
@@ -221,7 +251,6 @@ func TestGetUniqueSystems(t *testing.T) {
 			t.Errorf("Failed during setup in '%s' with error: %v", c.testCase, err)
 		}
 		_, err = getUniqueSystems(ua)
-		//log.Printf("sys: %+v", sys)
 		if c.expectError == false && err != nil {
 			t.Errorf("Failed while getting unique systems in '%s': %v", c.testCase, err)
 		}

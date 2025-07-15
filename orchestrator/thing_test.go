@@ -45,7 +45,7 @@ func (ua *UnitAsset) createDelayedBrokenURL(limit int) func() *http.Response {
 		count++
 		if count == limit {
 			f := createTestServiceRecordListForm()
-			ua.leadingRegistrar.Url = brokenUrl
+			ua.leadingRegistrar = brokenUrl
 			return &http.Response{
 				Status:     "200 OK",
 				StatusCode: 200,

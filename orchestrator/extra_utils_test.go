@@ -64,10 +64,7 @@ func createUnitAsset(url string) *UnitAsset {
 	}
 
 	assetTraits := Traits{
-		leadingRegistrar: &components.CoreSystem{
-			Name: components.ServiceRegistrarName,
-			Url:  url,
-		},
+		leadingRegistrar: "",
 	}
 
 	// create the unit asset template

@@ -34,7 +34,7 @@ import (
 
 // Traits are Asset-specific configurable parameters and variables
 type Traits struct {
-	leadingRegistrar *components.CoreSystem
+	leadingRegistrar string
 }
 
 // UnitAsset type models the unit asset (interface) of the system.
@@ -95,7 +95,7 @@ func initTemplate() components.UnitAsset {
 	}
 
 	assetTraits := Traits{
-		leadingRegistrar: nil, // Initialize the leading registrar to nil
+		leadingRegistrar: "", // Initialize the leading registrar to nil
 	}
 
 	// create the unit asset template
@@ -169,9 +169,11 @@ func (ua *UnitAsset) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []by
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second) // Create a new context, with a 2-second timeout
 	defer cancel()
 	sys := ua.Owner
-	ua.leadingRegistrar.Url, err = components.GetRunningCoreSystemURL(sys, ua.leadingRegistrar.Name)
-	if err != nil {
-		return servLoc, err
+	if ua.leadingRegistrar == "" {
+		ua.leadingRegistrar, err = components.GetRunningCoreSystemURL(sys, "serviceregistrar")
+		if err != nil {
+			return servLoc, err
+		}
 	}
 
 	// Create a new HTTP request to the the Service Registrar
@@ -184,7 +186,7 @@ func (ua *UnitAsset) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []by
 		return servLoc, err
 	}
 
-	srURL := ua.leadingRegistrar.Url + "/query"
+	srURL := ua.leadingRegistrar + "/query"
 	req, err := http.NewRequest(http.MethodPost, srURL, bytes.NewBuffer(jsonQF))
 	if err != nil {
 		return servLoc, err
@@ -196,7 +198,7 @@ func (ua *UnitAsset) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []by
 	// client := &http.Client{}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		ua.leadingRegistrar = nil
+		ua.leadingRegistrar = ""
 		return servLoc, err
 	}
 	defer resp.Body.Close()
@@ -247,9 +249,11 @@ func (ua *UnitAsset) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []b
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second) // Create a new context, with a 2-second timeout
 	defer cancel()
 	sys := ua.Owner
-	ua.leadingRegistrar.Url, err = components.GetRunningCoreSystemURL(sys, ua.leadingRegistrar.Name)
-	if err != nil {
-		return servLoc, err
+	if ua.leadingRegistrar == "" {
+		ua.leadingRegistrar, err = components.GetRunningCoreSystemURL(sys, "serviceregistrar")
+		if err != nil {
+			return servLoc, err
+		}
 	}
 
 	// Create a new HTTP request to the the Service Registrar
@@ -262,7 +266,7 @@ func (ua *UnitAsset) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []b
 		return servLoc, err
 	}
 
-	srURL := ua.leadingRegistrar.Url + "/query"
+	srURL := ua.leadingRegistrar + "/query"
 	req, err := http.NewRequest(http.MethodPost, srURL, bytes.NewBuffer(jsonQF))
 	if err != nil {
 		return servLoc, err
@@ -274,7 +278,7 @@ func (ua *UnitAsset) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []b
 	// client := &http.Client{}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		ua.leadingRegistrar = nil
+		ua.leadingRegistrar = ""
 		return servLoc, err
 	}
 	defer resp.Body.Close()

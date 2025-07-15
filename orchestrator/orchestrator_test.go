@@ -129,7 +129,7 @@ func createTestServiceRecordListForm() []byte {
 	return fakebody
 }
 
-var getServiceURLErrorMessage = "core system 'serviceregistrar' not found: verifying core URL: Get " +
+var getServiceURLErrorMessage = "core system 'serviceregistrar' not found: verifying registrar: Get " +
 	"\"http://localhost:20102/serviceregistrar/registry/status\": http: RoundTripper implementation " +
 	"(*main.mockTransport) returned a nil *Response with a nil error\n"
 

@@ -2,13 +2,16 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
+	_ "embed"
 	"fmt"
+	"html/template"
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
@@ -16,10 +19,27 @@ import (
 	"github.com/sdoque/mbaigo/usecases"
 )
 
-type Traits struct {
-	regMsg  []byte   // Cached MessengerRegistration form
-	systems []string // All systems this messenger is registered with
+//go:embed dashboard.html
+var tmplDashboard string
+
+type message struct {
+	time   time.Time
+	level  forms.MessageLevel
+	system string
+	body   string
 }
+
+func (m message) String() string {
+	return fmt.Sprintf("%s - %s - %s: %s",
+		m.system,
+		m.time.Format("2006-01-02 15:04:05"),
+		forms.LevelToString(m.level),
+		m.body,
+	)
+}
+
+// type Traits struct {
+// }
 
 type UnitAsset struct {
 	Name        string              `json:"name"`
@@ -27,7 +47,12 @@ type UnitAsset struct {
 	Details     map[string][]string `json:"details"`
 	ServicesMap components.Services `json:"-"`
 	CervicesMap components.Cervices `json:"-"`
-	Traits
+	// Traits
+
+	regMsg        []byte // Cached MessengerRegistration form
+	messages      map[string][]message
+	mutex         sync.RWMutex
+	tmplDashboard *template.Template
 }
 
 // TODO: check if pointer is necessary??
@@ -39,7 +64,7 @@ func (ua *UnitAsset) GetCervices() components.Cervices { return ua.CervicesMap }
 
 func (ua *UnitAsset) GetDetails() map[string][]string { return ua.Details }
 
-func (ua *UnitAsset) GetTraits() any { return ua.Traits }
+// func (ua *UnitAsset) GetTraits() any { return ua.Traits }
 
 var _ components.UnitAsset = (*UnitAsset)(nil)
 
@@ -64,12 +89,20 @@ func newResource(ca usecases.ConfigurableAsset, sys *components.System) (compone
 		Owner:       sys,
 		Details:     ca.Details,
 		ServicesMap: usecases.MakeServiceMap(ca.Services),
+		messages:    make(map[string][]message),
 	}
-	traits, err := unmarshalTraits(ca.Traits)
+	// traits, err := unmarshalTraits(ca.Traits)
+	// if err != nil {
+	// 	return nil, nil, err
+	// }
+	// ua.Traits = traits[0]
+
+	var err error
+	ua.tmplDashboard, err = template.New("dashboard").Parse(tmplDashboard)
 	if err != nil {
 		return nil, nil, err
 	}
-	ua.Traits = traits[0]
+
 	ua.regMsg, err = newRegMsg(sys)
 	if err != nil {
 		return nil, nil, err
@@ -79,17 +112,17 @@ func newResource(ca usecases.ConfigurableAsset, sys *components.System) (compone
 	return ua, f, nil
 }
 
-func unmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
-	var traitsList []Traits
-	for _, raw := range rawTraits {
-		var t Traits
-		if err := json.Unmarshal(raw, &t); err != nil {
-			return nil, fmt.Errorf("unmarshal trait: %w", err)
-		}
-		traitsList = append(traitsList, t)
-	}
-	return traitsList, nil
-}
+// func unmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
+// 	var traitsList []Traits
+// 	for _, raw := range rawTraits {
+// 		var t Traits
+// 		if err := json.Unmarshal(raw, &t); err != nil {
+// 			return nil, fmt.Errorf("unmarshal trait: %w", err)
+// 		}
+// 		traitsList = append(traitsList, t)
+// 	}
+// 	return traitsList, nil
+// }
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -188,4 +221,55 @@ func (ua *UnitAsset) notifySystems(list []string) {
 		// Don't care about any errors or any systems that don't want to talk with us
 		_, _ = sendRequest("POST", sys+"/msg", ua.regMsg)
 	}
+}
+
+const maxMessages int = 10
+
+func (ua *UnitAsset) addMessage(m forms.SystemMessage_v1) {
+	ua.mutex.Lock()
+	defer ua.mutex.Unlock()
+
+	ua.messages[m.System] = append(ua.messages[m.System], message{
+		time:   time.Now(),
+		level:  m.Level,
+		system: m.System,
+		body:   m.Body,
+	})
+	if len(ua.messages[m.System]) > maxMessages {
+		ua.messages[m.System] = ua.messages[m.System][1:]
+	}
+}
+
+func (ua *UnitAsset) latestWarnings() (errors, warnings map[string]message) {
+	errors = make(map[string]message)
+	warnings = make(map[string]message)
+	ua.mutex.RLock()
+	defer ua.mutex.RUnlock()
+
+	for system := range ua.messages {
+		for _, m := range ua.messages[system] {
+			switch m.level {
+			case forms.LevelError:
+				errors[system] = m
+			case forms.LevelWarn:
+				warnings[system] = m
+			}
+		}
+	}
+	return
+}
+
+func (ua *UnitAsset) latestLogs() (logs []message) {
+	ua.mutex.RLock()
+	defer ua.mutex.RUnlock()
+
+	for system := range ua.messages {
+		for _, m := range ua.messages[system] {
+			logs = append(logs, m)
+		}
+	}
+	sort.Slice(logs, func(i, j int) bool {
+		return logs[i].time.After(logs[j].time)
+	})
+	return
 }

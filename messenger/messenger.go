@@ -1,11 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509/pkix"
 	"encoding/json"
 	"io"
-	"log"
 	"net/http"
 	"time"
 
@@ -52,6 +52,7 @@ func main() {
 		ua, cleanup, err := newResource(uac, &sys)
 		if err != nil {
 			usecases.LogError(&sys, "new resource: %v", err)
+			return
 		}
 		defer cleanup()
 		sys.UAssets[ua.GetName()] = &ua
@@ -70,6 +71,8 @@ func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath
 	switch servicePath {
 	case "message":
 		ua.handleNewMessage(w, r)
+	case "dashboard":
+		ua.handleDashboard(w, r)
 	default:
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 	}
@@ -101,6 +104,22 @@ func (ua *UnitAsset) handleNewMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
+	ua.addMessage(*msg) // Don't want to have to deal with pointers, hence the *
+}
 
-	log.Printf("%s: %s\n", msg.System, msg.String())
+func (ua *UnitAsset) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	errors, warnings := ua.latestWarnings()
+	data := map[string]any{
+		"Errors":   errors,
+		"Warnings": warnings,
+		"Logs":     ua.latestLogs(),
+	}
+
+	buf := &bytes.Buffer{}
+	if err := ua.tmplDashboard.Execute(buf, data); err != nil {
+		usecases.LogError(ua.Owner, "execute dashboard: %s", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	buf.WriteTo(w) // Ignoring errors, can't do much with them anyways if the transfer fails
 }

@@ -80,6 +80,18 @@ func createTestSystem() components.System {
 		ProtoPort:   map[string]int{"https": 0, "http": 8870, "coap": 0},
 		InfoLink:    "https://for.testing.purposes",
 	}
+	leadingRegistrar := &components.CoreSystem{
+		Name: components.ServiceRegistrarName,
+		Url:  "https://leadingregistrar:1234",
+	}
+	orchestrator := &components.CoreSystem{
+		Name: "orchestrator",
+		Url:  "https://orchestator:1234",
+	}
+	sys.CoreS = []*components.CoreSystem{
+		leadingRegistrar,
+		orchestrator,
+	}
 	return sys
 }
 

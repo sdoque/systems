@@ -1,13 +1,16 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
+	"github.com/sdoque/mbaigo/forms"
 )
 
 // ----------------------------------------------- //
@@ -175,11 +178,80 @@ func TestPeersList(t *testing.T) {
 			t.Errorf("Expected errors in '%s'", c.testCase)
 		}
 	}
-
 }
 
 // ----------------------------------------------- //
 // Help functions and structs to test systemList()
 // ----------------------------------------------- //
 
-// func (ua *UnitAsset) systemList(w http.ResponseWriter, r *http.Request) {
+func createFilledRegistrar() UnitAsset {
+	ua := createLeadingRegistrar()
+	ua.serviceRegistry = make(map[int]forms.ServiceRecord_v1)
+	var serviceAmount int
+	for x := range 5 {
+		serviceAmount++
+		ua.serviceRegistry[x] = forms.ServiceRecord_v1{Id: x, SystemName: fmt.Sprintf("testSys%d", x),
+			IPAddresses: []string{"localhost"}, ProtoPort: map[string]int{"http": 1234}}
+	}
+	return ua
+}
+
+type expectedBody struct {
+	List    []string `json:"systemurl"`
+	Version string   `json:"version"`
+}
+
+type systemListParams struct {
+	expectedStatuscode int
+	setup              func() UnitAsset
+	request            *http.Request
+	testCase           string
+}
+
+func TestSystemList(t *testing.T) {
+	params := []systemListParams{
+		{
+			200,
+			func() UnitAsset { return createFilledRegistrar() },
+			httptest.NewRequest(http.MethodGet, "http://localhost", nil),
+			"Best case",
+		},
+		{
+			405,
+			func() UnitAsset { return createFilledRegistrar() },
+			httptest.NewRequest(http.MethodPost, "http://localhost", nil),
+			"Bad case, unsupported http method",
+		},
+	}
+
+	for _, c := range params {
+		ua := c.setup()
+		w := httptest.NewRecorder()
+		r := c.request
+
+		ua.systemList(w, r)
+		res := w.Result()
+		data, err := io.ReadAll(res.Body)
+		if err != nil {
+			t.Errorf("Failed while reading response body")
+		}
+
+		var jsonData expectedBody
+		// Only unmarshal the data if it's a successful request
+		if res.StatusCode == 200 {
+			err = json.Unmarshal(data, &jsonData)
+			if err != nil {
+				t.Errorf("Failed while unmarshalling data")
+			}
+		}
+
+		if (res.StatusCode == 200) && (len(jsonData.List) != 5) {
+			t.Errorf("Expected status code '%d' got '%d', and length of list '%d' got '%d'",
+				c.expectedStatuscode, res.StatusCode, 5, len(jsonData.List))
+		}
+
+		if c.expectedStatuscode == 405 && res.Status != "405 Method Not Allowed" {
+			t.Errorf("Expected '405 Method Not Allowed' as Status, got: %v", res.Status)
+		}
+	}
+}

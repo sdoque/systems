@@ -17,8 +17,8 @@ import (
 // Help functions and structs to test roleStatus()
 // ----------------------------------------------- //
 
-func createLeadingRegistrar() UnitAsset {
-	uac := UnitAsset{
+func createLeadingRegistrar() *UnitAsset {
+	uac := &UnitAsset{
 		Name:        "testRegistrar",
 		Details:     map[string][]string{"testDetail": {"detail1", "detail2"}},
 		ServicesMap: components.Services{},
@@ -30,8 +30,8 @@ func createLeadingRegistrar() UnitAsset {
 	return uac
 }
 
-func createNonLeadingRegistrar() UnitAsset {
-	uac := UnitAsset{
+func createNonLeadingRegistrar() *UnitAsset {
+	uac := &UnitAsset{
 		Name:        "testRegistrar",
 		Details:     map[string][]string{"testDetail": {"detail1", "detail2"}},
 		ServicesMap: components.Services{},
@@ -43,8 +43,8 @@ func createNonLeadingRegistrar() UnitAsset {
 	return uac
 }
 
-func createServiceUnavailableRegistrar() UnitAsset {
-	uac := UnitAsset{
+func createServiceUnavailableRegistrar() *UnitAsset {
+	uac := &UnitAsset{
 		Name:        "testRegistrar",
 		Details:     map[string][]string{"testDetail": {"detail1", "detail2"}},
 		ServicesMap: components.Services{},
@@ -58,7 +58,7 @@ func createServiceUnavailableRegistrar() UnitAsset {
 
 type roleStatusParams struct {
 	expectedStatuscode int
-	setup              func() UnitAsset
+	setup              func() *UnitAsset
 	request            *http.Request
 	testCase           string
 }
@@ -67,25 +67,25 @@ func TestRoleStatus(t *testing.T) {
 	params := []roleStatusParams{
 		{
 			200,
-			func() UnitAsset { return createLeadingRegistrar() },
+			func() *UnitAsset { return createLeadingRegistrar() },
 			httptest.NewRequest(http.MethodGet, "http://localhost/test", nil),
 			"Good case, leading registrar",
 		},
 		{
 			503,
-			func() UnitAsset { return createNonLeadingRegistrar() },
+			func() *UnitAsset { return createNonLeadingRegistrar() },
 			httptest.NewRequest(http.MethodGet, "http://localhost/test", nil),
 			"Good case, leading registrar",
 		},
 		{
 			503,
-			func() UnitAsset { return createServiceUnavailableRegistrar() },
+			func() *UnitAsset { return createServiceUnavailableRegistrar() },
 			httptest.NewRequest(http.MethodGet, "http://localhost/test", nil),
 			"Bad case, service unavailable",
 		},
 		{
 			200,
-			func() UnitAsset { return UnitAsset{} },
+			func() *UnitAsset { return &UnitAsset{} },
 			httptest.NewRequest(http.MethodPost, "http://localhost/test", nil),
 			"Bad case, unsupported http method",
 		},
@@ -184,7 +184,7 @@ func TestPeersList(t *testing.T) {
 // Help functions and structs to test systemList()
 // ----------------------------------------------- //
 
-func createFilledRegistrar() UnitAsset {
+func createFilledRegistrar() *UnitAsset {
 	ua := createLeadingRegistrar()
 	ua.serviceRegistry = make(map[int]forms.ServiceRecord_v1)
 	var serviceAmount int
@@ -203,7 +203,7 @@ type expectedBody struct {
 
 type systemListParams struct {
 	expectedStatuscode int
-	setup              func() UnitAsset
+	setup              func() *UnitAsset
 	request            *http.Request
 	testCase           string
 }
@@ -212,13 +212,13 @@ func TestSystemList(t *testing.T) {
 	params := []systemListParams{
 		{
 			200,
-			func() UnitAsset { return createFilledRegistrar() },
+			func() *UnitAsset { return createFilledRegistrar() },
 			httptest.NewRequest(http.MethodGet, "http://localhost", nil),
 			"Best case",
 		},
 		{
 			405,
-			func() UnitAsset { return createFilledRegistrar() },
+			func() *UnitAsset { return createFilledRegistrar() },
 			httptest.NewRequest(http.MethodPost, "http://localhost", nil),
 			"Bad case, unsupported http method",
 		},
@@ -246,8 +246,8 @@ func TestSystemList(t *testing.T) {
 		}
 
 		if (res.StatusCode == 200) && (len(jsonData.List) != 5) {
-			t.Errorf("Expected status code '%d' got '%d', and length of list '%d' got '%d'",
-				c.expectedStatuscode, res.StatusCode, 5, len(jsonData.List))
+			t.Errorf("Expected status code '%d' and length of list '%d' got: '%d' and '%d'",
+				c.expectedStatuscode, 5, res.StatusCode, len(jsonData.List))
 		}
 
 		if c.expectedStatuscode == 405 && res.Status != "405 Method Not Allowed" {

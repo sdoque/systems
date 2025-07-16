@@ -312,11 +312,13 @@ func (ua *UnitAsset) serviceRegistryHandler() {
 
 		case "delete":
 			// Handle delete record
+			ua.mu.Lock()
 			ua.sched.RemoveTask(int(request.Id))
 			delete(ua.serviceRegistry, int(request.Id))
 			if _, exists := ua.serviceRegistry[int(request.Id)]; !exists {
 				log.Printf("The service with ID %d has been deleted.", request.Id)
 			}
+			ua.mu.Unlock()
 			request.Error <- nil // Send success response
 		}
 	}
@@ -368,6 +370,8 @@ func (ua *UnitAsset) FilterByServiceDefinitionAndDetails(desiredDefinition strin
 
 // checkExpiration checks if a service has expired and deletes it if it has.
 func checkExpiration(ua *UnitAsset, servId int) {
+	ua.mu.Lock()
+	defer ua.mu.Unlock()
 	dbRec := ua.serviceRegistry[servId]
 	expiration, err := time.Parse(time.RFC3339, dbRec.EndOfValidity)
 	if err != nil {

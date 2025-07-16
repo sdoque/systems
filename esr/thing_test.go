@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/sdoque/mbaigo/components"
 	"github.com/sdoque/mbaigo/forms"
@@ -125,6 +126,36 @@ func TestNewResource(t *testing.T) {
 			t.Errorf("Name mismatch, expected '%s' got '%s'", uac.Name, ua.GetName())
 		}
 	}
+}
+
+// ----------------------------------------------------------- //
+// Help functions and structs to test serviceRegistryHandler()
+// ----------------------------------------------------------- //
+
+func sendAddRequests(num int64, ua *UnitAsset, shutdown func()) {
+	for x := range num {
+		ua.mu.Lock()
+		ua.requests <- ServiceRegistryRequest{
+			Action: "add",
+			Record: &forms.ServiceRecord_v1{Id: int(x), ServiceDefinition: fmt.Sprintf("Service%d", x),
+				EndOfValidity: fmt.Sprintf("%v", time.Now().Add(1*time.Hour))},
+			Id: 0,
+		}
+		ua.mu.Unlock()
+	}
+}
+
+func TestServiceRegistryHandler(t *testing.T) {
+	// Setup
+	temp := createConfAssetMultipleTraits()
+	sys := createTestSystem()
+	res, shutdown := newResource(temp, &sys)
+	ua, _ := res.(*UnitAsset)
+	time.Sleep(1 * time.Second)
+	sendAddRequests(1, ua, shutdown)
+	time.Sleep(1 * time.Second)
+	shutdown()
+	time.Sleep(1 * time.Second)
 }
 
 // ------------------------------------------------------------------------ //

@@ -138,8 +138,8 @@ func createRegistryWithServices(broken bool) (ua *UnitAsset, err error) {
 	if !ok {
 		return nil, fmt.Errorf("Failed while typecasting to local UnitAsset")
 	}
-	var locations []string
-	locations = []string{"Kitchen", "Bathroom", "Livingroom"}
+
+	var locations = []string{"Kitchen", "Bathroom", "Livingroom"}
 
 	ua.serviceRegistry = make(map[int]forms.ServiceRecord_v1)
 	for i, location := range locations {

@@ -140,24 +140,39 @@ func (errorReader) Read(p []byte) (int, error) {
 }
 
 type mockResponseWriter struct {
-	http.ResponseWriter
+	headers    http.Header
+	body       []byte
+	status     int
+	writeError bool
 }
 
 func (e *mockResponseWriter) Write(b []byte) (int, error) {
-	return 0, fmt.Errorf("Forced write error")
+	if e.writeError {
+		return 0, fmt.Errorf("Forced write error")
+	}
+	e.body = append(e.body, b...)
+	return len(b), nil
 }
 
-func (e *mockResponseWriter) WriteHeader(statusCode int) {}
+func (e *mockResponseWriter) WriteHeader(statusCode int) {
+	e.status = statusCode
+}
 
 func (e *mockResponseWriter) Header() http.Header {
-	return make(http.Header)
+	return e.headers
+}
+
+func newMockResponseWriter() *mockResponseWriter {
+	return &mockResponseWriter{
+		headers:    make(http.Header),
+		status:     http.StatusOK,
+		writeError: true,
+	}
 }
 
 var brokenUrl = string(rune(0))
 
 var errHTTP error = fmt.Errorf("bad http request")
-
-/*
 
 // Create a error reader to break json.Unmarshal()
 type errReader int
@@ -211,7 +226,7 @@ func createTestSystem(broken bool) (sys components.System) {
 		setTest.SubPath: setTest,
 	}
 	assetTraits := Traits{
-		leadingRegistrar: nil,
+		leadingRegistrar: "",
 	}
 	mua := &UnitAsset{
 		Name:        "testUnitAsset",
@@ -256,5 +271,3 @@ func createTestSystem(broken bool) (sys components.System) {
 	}
 	return
 }
-
-*/

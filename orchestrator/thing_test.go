@@ -9,12 +9,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sdoque/mbaigo/components"
 	"github.com/sdoque/mbaigo/forms"
 	"github.com/sdoque/mbaigo/usecases"
 )
 
 func TestInitTemplate(t *testing.T) {
-	expectedServices := []string{"squest"}
+	expectedServices := []string{"squest", "squests"}
 
 	ua := initTemplate()
 	services := ua.GetServices()
@@ -27,6 +28,59 @@ func TestInitTemplate(t *testing.T) {
 	for _, s := range expectedServices {
 		if _, ok := services[s]; !ok {
 			t.Errorf("Expected service '%s' to be present", s)
+		}
+	}
+}
+
+func createConfAssetBrokenTraits() usecases.ConfigurableAsset {
+	brokenTrait, _ := json.Marshal(errReader(0))
+	uac := usecases.ConfigurableAsset{
+		Name:     "testOrchestrator",
+		Details:  map[string][]string{"testDetail": {"detail1", "detail2"}},
+		Services: []components.Service{},
+		Traits:   []json.RawMessage{json.RawMessage(brokenTrait)},
+	}
+	return uac
+}
+
+func createConfAssetMultipleTraits() usecases.ConfigurableAsset {
+	uac := usecases.ConfigurableAsset{
+		Name:     "testOrchestrator",
+		Details:  map[string][]string{"testDetail": {"detail1", "detail2"}},
+		Services: []components.Service{},
+		Traits:   []json.RawMessage{json.RawMessage(`{"recCount": 0}`), json.RawMessage(`{"leading": false}`)},
+	}
+	return uac
+}
+
+type newResourceParams struct {
+	setup     func() components.System
+	confAsset func() usecases.ConfigurableAsset
+	testCase  string
+}
+
+func TestNewResource(t *testing.T) {
+	params := []newResourceParams{
+		{
+			func() (sys components.System) { return createTestSystem(false) },
+			func() (confAsset usecases.ConfigurableAsset) { return createConfAssetBrokenTraits() },
+			"Case: unmarshal traits fails",
+		},
+		{
+			func() (sys components.System) { return createTestSystem(false) },
+			func() (confAsset usecases.ConfigurableAsset) { return createConfAssetMultipleTraits() },
+			"Case: confAsset has multiple traits",
+		},
+	}
+
+	for _, c := range params {
+		sys := c.setup()
+		uac := c.confAsset()
+
+		ua, shutdown := newResource(uac, &sys)
+		shutdown()
+		if ua.GetName() != "testOrchestrator" {
+			t.Errorf("Name mismatch, expected '%s' got '%s'", uac.Name, ua.GetName())
 		}
 	}
 }

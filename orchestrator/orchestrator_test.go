@@ -155,8 +155,8 @@ var orchestrateTestParams = []orchestrateTestStruct{
 		"text/plain", 3, 200, "", "Bad case, Unpack and type assertion to ServiceQuest_v1 fails"},
 	{httptest.NewRecorder(), io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
 		"application/json", 1, 503, getServiceURLErrorMessage, "Bad case, getServiceURL fails"},
-	{&mockResponseWriter{}, io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
-		"application/json", 3, 0, "", "Bad case, write fails"},
+	{newMockResponseWriter(), io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
+		"application/json", 3, 500, "", "Bad case, write fails"},
 	{httptest.NewRecorder(), io.NopCloser(strings.NewReader(string(""))), "PUT",
 		"", 0, 404, "Method is not supported.\n", "Bad case, wrong http method"},
 }
@@ -168,6 +168,7 @@ func TestOrchestrate(t *testing.T) {
 		mua := createUnitAsset("http://localhost:20102/serviceregistrar/registry")
 		newMockTransport(createMultiHTTPResponse(2, false, string(createTestServiceRecordListForm())),
 			testCase.mockTransportErr, nil)
+		testCase.inputW.Header()
 		mua.orchestrate(testCase.inputW, inputR)
 
 		recorder, ok := testCase.inputW.(*httptest.ResponseRecorder)
@@ -177,7 +178,11 @@ func TestOrchestrate(t *testing.T) {
 					testCase.testName, testCase.expectedOutput, recorder.Body.String())
 			}
 		} else {
-			if _, ok := testCase.inputW.(*mockResponseWriter); !ok {
+			if recorder, ok := testCase.inputW.(*mockResponseWriter); ok {
+				if recorder.status != testCase.expectedCode {
+					t.Errorf("Expected status %d, got %d", testCase.expectedCode, recorder.status)
+				}
+			} else {
 				t.Errorf("Expected inputW to be of type mockResponseWriter")
 			}
 		}
@@ -206,7 +211,7 @@ var orchestrateMultipleTestParams = []orchestrateMultipleTestStruct{
 		"text/plain", 3, 200, "", "Bad case, Unpack and type assertion to ServiceQuest_v1 fails"},
 	{httptest.NewRecorder(), io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
 		"application/json", 1, 503, getServiceURLErrorMessage, "Bad case, getServiceURL fails"},
-	{&mockResponseWriter{}, io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
+	{newMockResponseWriter(), io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
 		"application/json", 3, 0, "", "Bad case, write fails"},
 	{httptest.NewRecorder(), io.NopCloser(strings.NewReader(string(""))), "PUT",
 		"", 0, 404, "Method is not supported.\n", "Bad case, wrong http method"},

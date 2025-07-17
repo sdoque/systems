@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -128,34 +129,354 @@ func TestNewResource(t *testing.T) {
 	}
 }
 
-// ----------------------------------------------------------- //
-// Help functions and structs to test serviceRegistryHandler()
-// ----------------------------------------------------------- //
+// --------------------------------------------------------------------------- //
+// Help functions and structs to test the add part of serviceRegistryHandler()
+// --------------------------------------------------------------------------- //
 
-func sendAddRequests(num int64, ua *UnitAsset, shutdown func()) {
-	for x := range num {
-		ua.mu.Lock()
-		ua.requests <- ServiceRegistryRequest{
-			Action: "add",
-			Record: &forms.ServiceRecord_v1{Id: int(x), ServiceDefinition: fmt.Sprintf("Service%d", x),
-				EndOfValidity: fmt.Sprintf("%v", time.Now().Add(1*time.Hour))},
-			Id: 0,
-		}
-		ua.mu.Unlock()
+func createNewSys() components.System {
+	// prepare for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background()) // create a context that can be cancelled
+	defer cancel()                                          // make sure all paths cancel the context to avoid context leak
+
+	// instantiate the System
+	sys := components.NewSystem("serviceregistrar", ctx)
+
+	// Instantiate the Capsule
+	sys.Husk = &components.Husk{
+		Description: "is an Arrowhead mandatory core system that keeps track of the currently available services.",
+		Details:     map[string][]string{"Developer": {"Synecdoque"}},
+		ProtoPort:   map[string]int{"https": 0, "http": 20102, "coap": 0},
+		InfoLink:    "https://github.com/sdoque/systems/tree/main/esr",
+		DName: pkix.Name{
+			CommonName:         sys.Name,
+			Organization:       []string{"Synecdoque"},
+			OrganizationalUnit: []string{"Systems"},
+			Locality:           []string{"Luleå"},
+			Province:           []string{"Norrbotten"},
+			Country:            []string{"SE"},
+		},
+	}
+
+	// instantiate a template unit asset
+	assetTemplate := initTemplate()
+	assetName := assetTemplate.GetName()
+	sys.UAssets[assetName] = &assetTemplate
+	return sys
+}
+
+func sendAddRequest(id int64, def string, subPath string, created string, ch chan ServiceRegistryRequest) error {
+	rec := &forms.ServiceRecord_v1{
+		Id:                int(id),
+		ServiceDefinition: def,
+		SystemName:        "System",
+		ServiceNode:       "node",
+		IPAddresses:       []string{"123.456.789.012"},
+		ProtoPort:         map[string]int{"http": 1234},
+		Details:           map[string][]string{"details": {}},
+		Certificate:       "ABCD",
+		SubPath:           subPath,
+		RegLife:           25,
+		Version:           "SignalA_v1a",
+		Created:           created,
+		Updated:           time.Now().String(),
+		EndOfValidity:     time.Now().Add(25 * time.Second).String(),
+		SubscribeAble:     false,
+		ACost:             float64(id),
+		CUnit:             "",
+	}
+
+	req := ServiceRegistryRequest{
+		Action: "add",
+		Record: rec,
+		Error:  make(chan error),
+	}
+
+	ch <- req
+	select {
+	case err := <-req.Error:
+		return err
 	}
 }
 
-func TestServiceRegistryHandler(t *testing.T) {
-	// Setup
-	temp := createConfAssetMultipleTraits()
-	sys := createTestSystem()
-	res, shutdown := newResource(temp, &sys)
-	ua, _ := res.(*UnitAsset)
-	time.Sleep(1 * time.Second)
-	sendAddRequests(1, ua, shutdown)
-	time.Sleep(1 * time.Second)
-	shutdown()
-	time.Sleep(1 * time.Second)
+func sendBrokenAddRequest(num int64, ch chan ServiceRegistryRequest) error {
+	rec := &forms.SignalA_v1a{}
+	req := ServiceRegistryRequest{
+		Action: "add",
+		Record: rec,
+		Id:     num,
+		Error:  make(chan error),
+	}
+	ch <- req
+	select {
+	case err := <-req.Error:
+		return err
+	}
+}
+
+type serviceRegistryHandlerParams struct {
+	expectError bool
+	request     func(*UnitAsset) error
+	testCase    string
+}
+
+func TestServiceRegistryHandlerAdd(t *testing.T) {
+	params := []serviceRegistryHandlerParams{
+		{
+			false,
+			func(ua *UnitAsset) error {
+				return sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
+			},
+			"Best case, successful request",
+		},
+		{
+			true,
+			func(ua *UnitAsset) error { return sendBrokenAddRequest(0, ua.requests) },
+			"Bad case, unable to convert to correct form",
+		},
+		{
+			true,
+			func(ua *UnitAsset) error {
+				return sendAddRequest(1, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
+			},
+			"Bad case, service doesn't exist in registry",
+		},
+		{
+			true,
+			func(ua *UnitAsset) error {
+				sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
+				err := sendAddRequest(1, "testDef2", "subP", time.Now().Format(time.RFC3339), ua.requests)
+				return err
+			},
+			"Bad case, exists with different service definition",
+		},
+		{
+			true,
+			func(ua *UnitAsset) error {
+				sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
+				err := sendAddRequest(1, "testDef", "subPa", time.Now().Format(time.RFC3339), ua.requests)
+				return err
+			},
+			"Bad case, exists with different subpath",
+		},
+		{
+			true,
+			func(ua *UnitAsset) error {
+				sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
+				err := sendAddRequest(1, "testDef", "subP", "", ua.requests)
+				return err
+			},
+			"Bad case, exists different creation time in updated record",
+		},
+		{
+			true,
+			func(ua *UnitAsset) error {
+				ch := ua.requests
+				sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
+				err := sendAddRequest(1, "testDef", "subP", time.Now().Add(1*time.Hour).Format(time.RFC3339), ch)
+				return err
+			},
+			"Bad case, mismatch between db- and received created field",
+		},
+		{
+			false,
+			func(ua *UnitAsset) error {
+				ch := ua.requests
+				sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
+				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
+				return err
+			},
+			"Bad case, recCount has looped back to 0",
+		},
+		{
+			false,
+			func(ua *UnitAsset) error {
+				ch := ua.requests
+				sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
+				err := sendAddRequest(1, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
+				return err
+			},
+			"Good case, updated db record",
+		},
+	}
+
+	for _, c := range params {
+		// Setup
+		temp := createConfAssetMultipleTraits()
+		sys := createNewSys()
+		res, shutdown := newResource(temp, &sys)
+		ua, _ := res.(*UnitAsset)
+
+		// Test and check
+		err := c.request(ua)
+		if c.expectError == false && err != nil {
+			t.Errorf("Expected no errors in '%s': %v", c.testCase, err)
+		}
+		if c.expectError == true && err == nil {
+			t.Errorf("Expected errors in '%s'", c.testCase)
+		}
+		shutdown()
+	}
+}
+
+// --------------------------------------------------------------------------- //
+// Help functions and structs to test the read part of serviceRegistryHandler()
+// --------------------------------------------------------------------------- //
+
+func sendAddRequestWithDetails(id int64, def string, subPath string, created string, ch chan ServiceRegistryRequest) error {
+	rec := &forms.ServiceRecord_v1{
+		Id:                0,
+		ServiceDefinition: def,
+		SystemName:        "System",
+		ServiceNode:       "node",
+		IPAddresses:       []string{"123.456.789.012"},
+		ProtoPort:         map[string]int{"http": 1234},
+		Details:           map[string][]string{"details": {}},
+		Certificate:       "ABCD",
+		SubPath:           subPath,
+		RegLife:           25,
+		Version:           "SignalA_v1a",
+		Created:           created,
+		Updated:           time.Now().String(),
+		EndOfValidity:     time.Now().Add(25 * time.Second).String(),
+		SubscribeAble:     false,
+		ACost:             float64(id),
+		CUnit:             "",
+	}
+
+	for x := range id {
+		rec.Details["details"] = append(rec.Details["details"], fmt.Sprintf("detail%d", x+1))
+	}
+
+	req := ServiceRegistryRequest{
+		Action: "add",
+		Record: rec,
+		Error:  make(chan error),
+	}
+
+	ch <- req
+	select {
+	case err := <-req.Error:
+		return err
+	}
+}
+
+// id 0 will return all items in service registry, any other will return items depending on details & definition
+func sendReadRequest(id int64, def string, details []string, ch chan ServiceRegistryRequest) ([]forms.ServiceRecord_v1, error) {
+	rec := &forms.ServiceQuest_v1{
+		SysId:             999,
+		RequesterName:     "requester",
+		ServiceDefinition: def,
+		Protocol:          "",
+		Details:           map[string][]string{"details": details},
+		Version:           "",
+	}
+	var req ServiceRegistryRequest
+	if id == 0 {
+		// Returns a specific
+		req = ServiceRegistryRequest{
+			Action: "read",
+			Record: nil,
+			Result: make(chan []forms.ServiceRecord_v1),
+			Error:  make(chan error),
+		}
+	} else {
+		// Returns full list of services
+		req = ServiceRegistryRequest{
+			Action: "read",
+			Record: rec,
+			Result: make(chan []forms.ServiceRecord_v1),
+			Error:  make(chan error),
+		}
+	}
+
+	ch <- req
+	select {
+	case err := <-req.Error:
+		return nil, err
+	case lst := <-req.Result:
+		return lst, nil
+	}
+}
+
+func sendBrokenReadRequest(ch chan ServiceRegistryRequest) ([]forms.ServiceRecord_v1, error) {
+	rec := &forms.SignalA_v1a{}
+	var req ServiceRegistryRequest
+
+	req = ServiceRegistryRequest{
+		Action: "read",
+		Record: rec,
+		Result: make(chan []forms.ServiceRecord_v1),
+		Error:  make(chan error),
+	}
+
+	ch <- req
+	select {
+	case err := <-req.Error:
+		return nil, err
+	case lst := <-req.Result:
+		return lst, nil
+	}
+}
+
+type serviceRegistryHandlerReadParams struct {
+	expectError bool
+	expectedLen int
+	request     func(ua *UnitAsset) ([]forms.ServiceRecord_v1, error)
+	testCase    string
+}
+
+func TestServiceRegistryHandlerRead(t *testing.T) {
+	params := []serviceRegistryHandlerReadParams{
+		{
+			false,
+			1,
+			func(ua *UnitAsset) ([]forms.ServiceRecord_v1, error) {
+				return sendReadRequest(0, "", []string{""}, ua.requests)
+			},
+			"Best case, successful read request returning all items",
+		},
+		{
+			false,
+			1,
+			func(ua *UnitAsset) ([]forms.ServiceRecord_v1, error) {
+				return sendReadRequest(1, "test", []string{"detail6"}, ua.requests)
+			},
+			"Best case, successful read request returning specific items",
+		},
+		{
+			true,
+			0,
+			func(ua *UnitAsset) ([]forms.ServiceRecord_v1, error) {
+				return sendBrokenReadRequest(ua.requests)
+			},
+			"Bad case, wrong form",
+		},
+	}
+
+	for _, c := range params {
+		// Setup
+		temp := createConfAssetMultipleTraits()
+		sys := createNewSys()
+		res, shutdown := newResource(temp, &sys)
+		ua, _ := res.(*UnitAsset)
+		time.Sleep(25 * time.Millisecond)
+		// Add some services to the serviceregistrar with details: detail1 detail2 ... detailN
+		sendAddRequestWithDetails(1, "test", "sub1", time.Now().Format(time.RFC3339), ua.requests)
+		sendAddRequestWithDetails(4, "test", "sub2", time.Now().Format(time.RFC3339), ua.requests)
+		sendAddRequestWithDetails(8, "test", "sub3", time.Now().Format(time.RFC3339), ua.requests)
+
+		lst, err := c.request(ua)
+
+		if c.expectError == false && err != nil && len(lst) != c.expectedLen {
+			t.Errorf("Expected no errors in '%s', got: %v, with length of list: %d got %d",
+				c.testCase, err, c.expectedLen, len(lst))
+		}
+		if c.expectError == true && err == nil {
+			t.Errorf("Expected errors in '%s'", c.testCase)
+		}
+
+		shutdown()
+	}
 }
 
 // ------------------------------------------------------------------------ //

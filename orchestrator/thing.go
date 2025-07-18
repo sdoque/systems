@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strconv"
 
@@ -108,7 +107,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 
 	return ua, func() {
-		log.Println("Ending orchestration services")
+		// Do nothing
 	}
 }
 
@@ -142,7 +141,6 @@ func (ua *UnitAsset) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []by
 	mediaType := "application/json"
 	jsonQF, err := usecases.Pack(&newQuest, mediaType)
 	if err != nil {
-		log.Printf("problem encountered when marshalling the service quest\n")
 		return servLoc, err
 	}
 
@@ -162,24 +160,20 @@ func (ua *UnitAsset) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []by
 	defer resp.Body.Close()
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("Error reading discovery response body: %v", err)
 		return servLoc, err
 	}
 	serviceListf, err := usecases.Unpack(respBytes, mediaType)
 	if err != nil {
-		log.Print("Error extracting discovery reply ", err)
 		return servLoc, err
 	}
 
 	serviceList, ok := serviceListf.(*forms.ServiceRecordList_v1)
 	if !ok {
-		log.Println("problem asserting the type of the service list form")
-		return
+		return nil, fmt.Errorf("problem asserting the type of the service list form")
 	}
 
 	if len(serviceList.List) == 0 {
-		err = fmt.Errorf("unable to locate any such service: %s", newQuest.ServiceDefinition)
-		return
+		return nil, fmt.Errorf("unable to locate any such service: %s", newQuest.ServiceDefinition)
 	}
 
 	serviceLocation := selectService(*serviceList)
@@ -213,7 +207,6 @@ func (ua *UnitAsset) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []b
 	mediaType := "application/json"
 	jsonQF, err := usecases.Pack(&newQuest, mediaType)
 	if err != nil {
-		log.Printf("problem encountered when marshalling the service quest\n")
 		return servLoc, err
 	}
 
@@ -233,24 +226,20 @@ func (ua *UnitAsset) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []b
 	defer resp.Body.Close()
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("Error reading discovery response body: %v", err)
 		return servLoc, err
 	}
 	serviceListf, err := usecases.Unpack(respBytes, mediaType)
 	if err != nil {
-		log.Print("Error extracting discovery reply ", err)
 		return servLoc, err
 	}
 
 	serviceList, ok := serviceListf.(*forms.ServiceRecordList_v1)
 	if !ok {
-		log.Println("problem asserting the type of the service list form")
-		return
+		return nil, fmt.Errorf("problem asserting the type of the service list form")
 	}
 
 	if len(serviceList.List) == 0 {
-		err = fmt.Errorf("unable to locate any such service: %s", newQuest.ServiceDefinition)
-		return
+		return nil, fmt.Errorf("unable to locate any such service: %s", newQuest.ServiceDefinition)
 	}
 
 	payload, err := json.MarshalIndent(serviceList, "", "  ")

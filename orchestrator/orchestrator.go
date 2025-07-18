@@ -17,7 +17,6 @@ import (
 	"context"
 	"crypto/x509/pkix"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"mime"
@@ -86,7 +85,7 @@ func main() {
 
 	// wait for shutdown signal, and gracefully close properly goroutines with context
 	<-sys.Sigs // wait for a SIGINT (Ctrl+C) signal
-	fmt.Println("\nshuting down system", sys.Name)
+	log.Println("shutting down system", sys.Name)
 	cancel() // signal the goroutines to stop
 	// allow the go routines to be executed, which might take more time than the main routine to end
 	time.Sleep(2 * time.Second)
@@ -111,7 +110,7 @@ func (ua *UnitAsset) orchestrate(w http.ResponseWriter, r *http.Request) {
 		contentType := r.Header.Get("Content-Type")
 		mediaType, _, err := mime.ParseMediaType(contentType)
 		if err != nil {
-			fmt.Println("Error parsing media type:", err)
+			log.Println("Error parsing media type:", err)
 			return
 		}
 
@@ -128,7 +127,7 @@ func (ua *UnitAsset) orchestrate(w http.ResponseWriter, r *http.Request) {
 		}
 		qf, ok := questForm.(*forms.ServiceQuest_v1)
 		if !ok {
-			fmt.Println("Problem unpacking the service discovery request form")
+			log.Println("Problem unpacking the service discovery request form")
 			return
 		}
 
@@ -157,7 +156,7 @@ func (ua *UnitAsset) orchestrateMultiple(w http.ResponseWriter, r *http.Request)
 		contentType := r.Header.Get("Content-Type")
 		mediaType, _, err := mime.ParseMediaType(contentType)
 		if err != nil {
-			fmt.Println("Error parsing media type:", err)
+			log.Println("Error parsing media type:", err)
 			return
 		}
 
@@ -174,7 +173,7 @@ func (ua *UnitAsset) orchestrateMultiple(w http.ResponseWriter, r *http.Request)
 		}
 		qf, ok := questForm.(*forms.ServiceQuest_v1)
 		if !ok {
-			fmt.Println("Problem unpacking the service discovery request form")
+			log.Println("Problem unpacking the service discovery request form")
 			return
 		}
 

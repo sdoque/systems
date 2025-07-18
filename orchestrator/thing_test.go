@@ -149,7 +149,7 @@ var getServiceURLTestParams = []getServiceURLTestStruct{
 	{createTestServiceQuest(), "hej hej", false, false,
 		0, nil, "", true, "Bad case, Unpack fails"},
 	{createTestServiceQuest(), string(createTestServicePointForm()), false, false,
-		0, nil, "", false, "Bad case, type assertion fails"},
+		0, nil, "", true, "Bad case, type assertion fails"},
 	{createTestServiceQuest(), string(createEmptyServiceRecordListForm()), false, false,
 		0, nil, "", true, "Bad case, the service record list is empty"},
 }
@@ -286,7 +286,7 @@ var getServicesURLTestParams = []getServicesURLTestStruct{
 		"", true,
 		"Bad case, Unpack fails"},
 	{createTestServiceQuest(), string(createTestServicePointForm()), false, false, 0, nil,
-		"", false,
+		"", true,
 		"Bad case, type assertion fails"},
 	{createTestServiceQuest(), string(createEmptyServiceRecordListForm()), false, false, 0, nil,
 		"", true,

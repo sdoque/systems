@@ -228,10 +228,10 @@ func createTestServiceRecordListFormWithDefinition() []byte {
 	serviceRecordFormWithDefinition.IPAddresses = []string{"123.456.789"}
 	serviceRecordFormWithDefinition.ProtoPort = map[string]int{"http": 123}
 	serviceRecordFormWithDefinition.ServiceDefinition = "temperature"
-	var serviceRecordListFormWithDefintion forms.ServiceRecordList_v1
-	serviceRecordListFormWithDefintion.NewForm()
-	serviceRecordListFormWithDefintion.List = []forms.ServiceRecord_v1{serviceRecordFormWithDefinition}
-	fakebody, err := json.MarshalIndent(serviceRecordListFormWithDefintion, "", "  ")
+	var serviceRecordListFormWithDefinition forms.ServiceRecordList_v1
+	serviceRecordListFormWithDefinition.NewForm()
+	serviceRecordListFormWithDefinition.List = []forms.ServiceRecord_v1{serviceRecordFormWithDefinition}
+	fakebody, err := json.MarshalIndent(serviceRecordListFormWithDefinition, "", "  ")
 	if err != nil {
 		log.Fatalf("Fail marshal at start of test: %v", err)
 	}

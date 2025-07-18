@@ -128,36 +128,35 @@ func createEmptyServiceRecordListForm() []byte {
 }
 
 type getServiceURLTestStruct struct {
-	inputForm           forms.ServiceQuest_v1
-	inputBody           string
-	leadingRegistrarUrl string
-	brokenUrl           bool
-	writeError          bool
-	mockTransportErr    int
-	errHTTP             error
-	expectedOutput      string
-	expectedErr         bool
-	testName            string
+	inputForm        forms.ServiceQuest_v1
+	inputBody        string
+	brokenUrl        bool
+	writeError       bool
+	mockTransportErr int
+	errHTTP          error
+	expectedOutput   string
+	expectedErr      bool
+	testName         string
 }
 
 var getServiceURLTestParams = []getServiceURLTestStruct{
-	{createTestServiceQuest(), string(createTestServiceRecordListForm()), "https://leadingregistrar", false, false,
+	{createTestServiceQuest(), string(createTestServiceRecordListForm()), false, false,
 		0, nil, string(createTestServicePointForm()), false, "Good case, everything passes"},
-	{createTestServiceQuest(), string(createTestServiceRecordListForm()), "https://leadingregistrar", false, false,
+	{createTestServiceQuest(), string(createTestServiceRecordListForm()), false, false,
 		2, errHTTP, "", true, "Bad case, DefaultClient.Do fails"},
-	{createTestServiceQuest(), string(createTestServiceRecordListForm()), "https://leadingregistrar", false, true,
+	{createTestServiceQuest(), string(createTestServiceRecordListForm()), false, true,
 		0, nil, "", true, "Bad case, ReadAll fails"},
-	{createTestServiceQuest(), "hej hej", "https://leadingregistrar", false, false,
+	{createTestServiceQuest(), "hej hej", false, false,
 		0, nil, "", true, "Bad case, Unpack fails"},
-	{createTestServiceQuest(), string(createTestServicePointForm()), "https://leadingregistrar", false, false,
+	{createTestServiceQuest(), string(createTestServicePointForm()), false, false,
 		0, nil, "", false, "Bad case, type assertion fails"},
-	{createTestServiceQuest(), string(createEmptyServiceRecordListForm()), "https://leadingregistrar", false, false,
+	{createTestServiceQuest(), string(createEmptyServiceRecordListForm()), false, false,
 		0, nil, "", true, "Bad case, the service record list is empty"},
 }
 
 func TestGetServiceURL(t *testing.T) {
 	for _, testCase := range getServiceURLTestParams {
-		mua := createUnitAsset(testCase.leadingRegistrarUrl)
+		mua := createUnitAsset()
 		if mua == nil {
 			t.Fatalf("UAssets[\"Orchestration\"] is nil")
 		}
@@ -256,56 +255,47 @@ func createTestServiceRecordListFormWithDetails() []byte {
 }
 
 type getServicesURLTestStruct struct {
-	inputForm           forms.ServiceQuest_v1
-	inputBody           string
-	leadingRegistrarUrl string
-	brokenUrl           bool
-	writeError          bool
-	mockTransportErr    int
-	errHTTP             error
-	expectedOutput      string
-	expectedErr         bool
-	testName            string
+	inputForm        forms.ServiceQuest_v1
+	inputBody        string
+	brokenUrl        bool
+	writeError       bool
+	mockTransportErr int
+	errHTTP          error
+	expectedOutput   string
+	expectedErr      bool
+	testName         string
 }
 
 var getServicesURLTestParams = []getServicesURLTestStruct{
-	{createTestServiceQuest(), string(createTestServiceRecordListFormWithSeveral()),
-		"http://localhost:20102/serviceregistrar", false, false, 0, nil,
+	{createTestServiceQuest(), string(createTestServiceRecordListFormWithSeveral()), false, false, 0, nil,
 		string(createTestServiceRecordListFormWithSeveral()), false,
 		"Good case, everything passes with several services"},
-	{createTestServiceQuest(), string(createTestServiceRecordListFormWithDefinition()),
-		"http://localhost:20102/serviceregistrar", false, false, 0, nil,
+	{createTestServiceQuest(), string(createTestServiceRecordListFormWithDefinition()), false, false, 0, nil,
 		string(createTestServiceRecordListFormWithDefinition()), false,
 		"Good case, everything passes with one service definition"},
-	{createTestServiceQuest(), string(createTestServiceRecordListFormWithDetails()),
-		"http://localhost:20102/serviceregistrar", false, false, 0, nil,
+	{createTestServiceQuest(), string(createTestServiceRecordListFormWithDetails()), false, false, 0, nil,
 		string(createTestServiceRecordListFormWithDetails()), false,
 		"Good case, everything passes with one service details"},
-	{createTestServiceQuest(), string(createTestServiceRecordListForm()),
-		"http://localhost:20102/serviceregistrar", false, false, 2, errHTTP,
+	{createTestServiceQuest(), string(createTestServiceRecordListForm()), false, false, 2, errHTTP,
 		"", true,
 		"Bad case, DefaultClient.Do fails"},
-	{createTestServiceQuest(), string(createTestServiceRecordListForm()),
-		"http://localhost:20102/serviceregistrar", false, true, 0, nil,
+	{createTestServiceQuest(), string(createTestServiceRecordListForm()), false, true, 0, nil,
 		"", true,
 		"Bad case, ReadAll fails"},
-	{createTestServiceQuest(), "hej hej",
-		"http://localhost:20102/serviceregistrar", false, false, 0, nil,
+	{createTestServiceQuest(), "hej hej", false, false, 0, nil,
 		"", true,
 		"Bad case, Unpack fails"},
-	{createTestServiceQuest(), string(createTestServicePointForm()),
-		"http://localhost:20102/serviceregistrar", false, false, 0, nil,
+	{createTestServiceQuest(), string(createTestServicePointForm()), false, false, 0, nil,
 		"", false,
 		"Bad case, type assertion fails"},
-	{createTestServiceQuest(), string(createEmptyServiceRecordListForm()),
-		"http://localhost:20102/serviceregistrar", false, false, 0, nil,
+	{createTestServiceQuest(), string(createEmptyServiceRecordListForm()), false, false, 0, nil,
 		"", true,
 		"Bad case, the service record list is empty"},
 }
 
 func TestGetServicesURL(t *testing.T) {
 	for _, testCase := range getServicesURLTestParams {
-		mua := createUnitAsset(testCase.leadingRegistrarUrl)
+		mua := createUnitAsset()
 		if mua == nil {
 			t.Fatalf("UAssets[\"Orchestration\"] is nil")
 		}

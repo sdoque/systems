@@ -40,7 +40,7 @@ func (t *mockTransport) RoundTrip(req *http.Request) (resp *http.Response, err e
 	return resp, nil
 }
 
-func createSystemWithUnitAsset(url string) components.System {
+func createSystemWithUnitAsset() components.System {
 	ctx := context.Background()
 	sys := components.NewSystem("testSystem", ctx)
 
@@ -54,7 +54,7 @@ func createSystemWithUnitAsset(url string) components.System {
 	return sys
 }
 
-func createUnitAsset(url string) *UnitAsset {
+func createUnitAsset() *UnitAsset {
 	// Define the services that expose the capabilities of the unit asset(s)
 	squest := components.Service{
 		Definition:  "squest",
@@ -77,7 +77,7 @@ func createUnitAsset(url string) *UnitAsset {
 		},
 	}
 
-	sys := createSystemWithUnitAsset(url)
+	sys := createSystemWithUnitAsset()
 	uat.Owner = &sys
 
 	return uat

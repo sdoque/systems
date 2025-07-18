@@ -18,7 +18,7 @@ func TestServing(t *testing.T) {
 		io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))))
 	inputR.Header.Set("Content-Type", "application/json")
 	newMockTransport(createMultiHTTPResponse(2, false, string(createTestServiceRecordListForm())), 0, nil)
-	mua := createUnitAsset("http://localhost:20102/serviceregistrar")
+	mua := createUnitAsset()
 	mua.Serving(inputW, inputR, "squest")
 
 	var expectedOutput = string(createTestServicePointForm())
@@ -33,7 +33,7 @@ func TestServing(t *testing.T) {
 		io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))))
 	inputR.Header.Set("Content-Type", "application/json")
 	newMockTransport(createMultiHTTPResponse(2, false, string(createTestServiceRecordListForm())), 0, nil)
-	mua = createUnitAsset("http://localhost:20102/serviceregistrar")
+	mua = createUnitAsset()
 	mua.Serving(inputW, inputR, "squests")
 
 	expectedOutput = string(createTestServiceRecordListForm())
@@ -47,7 +47,7 @@ func TestServing(t *testing.T) {
 	inputR = httptest.NewRequest(http.MethodPost, "/test123", io.NopCloser(strings.NewReader("")))
 	inputR.Header.Set("Content-Type", "application/json")
 	newMockTransport(createMultiHTTPResponse(2, false, string(createTestServiceRecordListForm())), 0, nil)
-	mua = createUnitAsset("http://localhost:20102/serviceregistrar")
+	mua = createUnitAsset()
 	mua.Serving(inputW, inputR, "wrong")
 
 	if inputW.Code == 200 {
@@ -165,7 +165,7 @@ func TestOrchestrate(t *testing.T) {
 	for _, testCase := range orchestrateTestParams {
 		inputR := httptest.NewRequest(testCase.httpMethod, "/test123", testCase.inputBody)
 		inputR.Header.Set("Content-Type", testCase.contentType)
-		mua := createUnitAsset("http://localhost:20102/serviceregistrar/registry")
+		mua := createUnitAsset()
 		newMockTransport(createMultiHTTPResponse(2, false, string(createTestServiceRecordListForm())),
 			testCase.mockTransportErr, nil)
 		testCase.inputW.Header()
@@ -221,7 +221,7 @@ func TestOrchestrateMultiple(t *testing.T) {
 	for _, testCase := range orchestrateMultipleTestParams {
 		inputR := httptest.NewRequest(testCase.httpMethod, "/test123", testCase.inputBody)
 		inputR.Header.Set("Content-Type", testCase.contentType)
-		mua := createUnitAsset("http://localhost:20102/serviceregistrar/registry")
+		mua := createUnitAsset()
 		newMockTransport(createMultiHTTPResponse(2, false, string(createTestServiceRecordListForm())),
 			testCase.mockTransportErr, nil)
 		mua.orchestrateMultiple(testCase.inputW, inputR)

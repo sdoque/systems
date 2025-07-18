@@ -79,56 +79,6 @@ func createUnitAsset() *UnitAsset {
 	return uat
 }
 
-/*
-
-// A mocked UnitAsset used for testing
-type mockUnitAsset struct {
-	Name        string              `json:"name"`    // Must be a unique name, ie. a sensor ID
-	Owner       *components.System  `json:"-"`       // The parent system this UA is part of
-	Details     map[string][]string `json:"details"` // Metadata or details about this UA
-	ServicesMap components.Services `json:"-"`
-	CervicesMap components.Cervices `json:"-"`
-}
-
-func (mua mockUnitAsset) GetName() string {
-	return mua.Name
-}
-
-func (mua mockUnitAsset) GetServices() components.Services {
-	return mua.ServicesMap
-}
-
-func (mua mockUnitAsset) GetCervices() components.Cervices {
-	return mua.CervicesMap
-}
-
-func (mua mockUnitAsset) GetDetails() map[string][]string {
-	return mua.Details
-}
-
-func (mua mockUnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {}
-
-// A mocked form used for testing
-type mockForm struct {
-	XMLName xml.Name `json:"-" xml:"testName"`
-	Value   any      `json:"value" xml:"value"`
-	Unit    string   `json:"unit" xml:"unit"`
-	Version string   `json:"version" xml:"version"`
-}
-
-// NewForm creates a new form
-func (f mockForm) NewForm() forms.Form {
-	f.Version = "testVersion"
-	return f
-}
-
-// FormVersion returns the version of the form
-func (f mockForm) FormVersion() string {
-	return f.Version
-}
-
-*/
-
 type errorReader struct{}
 
 func (errorReader) Read(p []byte) (int, error) {

@@ -31,8 +31,8 @@ import (
 
 func main() {
 	// prepare for graceful shutdown
-	ctx, cancel := context.WithCancel(context.Background()) // create a context that can be cancelled
-	defer cancel()                                          // make sure all paths cancel the context to avoid context leak
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// instantiate the System
 	sys := components.NewSystem("orchestrator", ctx)
@@ -87,8 +87,9 @@ func main() {
 	// wait for shutdown signal, and gracefully close properly goroutines with context
 	<-sys.Sigs // wait for a SIGINT (Ctrl+C) signal
 	fmt.Println("\nshuting down system", sys.Name)
-	cancel()                    // cancel the context, signaling the goroutines to stop
-	time.Sleep(2 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
+	cancel() // signal the goroutines to stop
+	// allow the go routines to be executed, which might take more time than the main routine to end
+	time.Sleep(2 * time.Second)
 }
 
 // Serving handles the resources services. NOTE: it expects those names from the request URL path
@@ -115,7 +116,7 @@ func (ua *UnitAsset) orchestrate(w http.ResponseWriter, r *http.Request) {
 		}
 
 		defer r.Body.Close()
-		bodyBytes, err := io.ReadAll(r.Body) // Use io.ReadAll instead of ioutil.ReadAll
+		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
 			log.Printf("error reading discovery request body: %v\n", err)
 			return
@@ -125,7 +126,6 @@ func (ua *UnitAsset) orchestrate(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Printf("error extracting the discovery request %v\n", err)
 		}
-		// Perform a type assertion to convert the returned Form to SignalA_v1a
 		qf, ok := questForm.(*forms.ServiceQuest_v1)
 		if !ok {
 			fmt.Println("Problem unpacking the service discovery request form")
@@ -162,7 +162,7 @@ func (ua *UnitAsset) orchestrateMultiple(w http.ResponseWriter, r *http.Request)
 		}
 
 		defer r.Body.Close()
-		bodyBytes, err := io.ReadAll(r.Body) // Use io.ReadAll instead of ioutil.ReadAll
+		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
 			log.Printf("error reading discovery request body: %v\n", err)
 			return
@@ -172,7 +172,6 @@ func (ua *UnitAsset) orchestrateMultiple(w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			log.Printf("error extracting the discovery request %v\n", err)
 		}
-		// Perform a type assertion to convert the returned Form to SignalA_v1a
 		qf, ok := questForm.(*forms.ServiceQuest_v1)
 		if !ok {
 			fmt.Println("Problem unpacking the service discovery request form")

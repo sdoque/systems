@@ -32,21 +32,14 @@ import (
 
 //-------------------------------------Define the Thing's resource
 
-// Traits are Asset-specific configurable parameters and variables
-// type Traits struct {
-//	 leadingRegistrar string
-// }
-
 // UnitAsset type models the unit asset (interface) of the system.
 type UnitAsset struct {
-	Name        string              `json:"name"`
-	Owner       *components.System  `json:"-"`
-	Details     map[string][]string `json:"details"`
-	ServicesMap components.Services `json:"-"`
-	CervicesMap components.Cervices `json:"-"`
-	//
+	Name             string              `json:"name"`
+	Owner            *components.System  `json:"-"`
+	Details          map[string][]string `json:"details"`
+	ServicesMap      components.Services `json:"-"`
+	CervicesMap      components.Cervices `json:"-"`
 	leadingRegistrar string
-	// Traits
 }
 
 // GetName returns the name of the Resource.
@@ -69,13 +62,6 @@ func (ua *UnitAsset) GetDetails() map[string][]string {
 	return ua.Details
 }
 
-// GetTraits returns the traits of the Resource.
-/*
-func (ua *UnitAsset) GetTraits() any {
-	return ua.Traits
-}
-*/
-
 // ensure UnitAsset implements components.UnitAsset (this check is done at during the compilation)
 var _ components.UnitAsset = (*UnitAsset)(nil)
 
@@ -97,20 +83,13 @@ func initTemplate() components.UnitAsset {
 		Description: "looks for the desired services described in a quest form (POST)",
 	}
 
-	/*
-		assetTraits := Traits{
-			leadingRegistrar: "", // Initialize the leading registrar to nil
-		}
-	*/
-
 	// create the unit asset template
 	uat := &UnitAsset{
 		Name:             "orchestration",
 		Details:          map[string][]string{"Platform": {"Independent"}},
 		leadingRegistrar: "",
-		//Traits:  assetTraits,
 		ServicesMap: components.Services{
-			squest.SubPath:  &squest, // Inline assignment of the temperature service
+			squest.SubPath:  &squest,
 			squests.SubPath: &squests,
 		},
 	}
@@ -121,7 +100,6 @@ func initTemplate() components.UnitAsset {
 
 // newResource creates the Resource resource with its pointers and channels based on the configuration using the template
 func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {
-	// var ua components.UnitAsset // this is an interface, which we then initialize
 	ua := &UnitAsset{ // this is an interface, which we then initialize
 		Name:        configuredAsset.Name,
 		Owner:       sys,
@@ -129,44 +107,19 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
 	}
 
-	/*
-		traits, err := UnmarshalTraits(configuredAsset.Traits)
-		if err != nil {
-			log.Println("Warning: could not unmarshal traits:", err)
-		} else if len(traits) > 0 {
-			ua.Traits = traits[0] // or handle multiple traits if needed
-		}
-	*/
-
-	// start the unit asset(s)
-	// no need to start the algorithm asset
-
 	return ua, func() {
 		log.Println("Ending orchestration services")
 	}
 }
 
-/*
-// UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
-func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
-	var traitsList []Traits
-	for _, raw := range rawTraits {
-		var t Traits
-		if err := json.Unmarshal(raw, &t); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
-		}
-		traitsList = append(traitsList, t)
-	}
-	return traitsList, nil
-}
-*/
-
 //-------------------------------------Thing's resource functions
 
 // getServiceURL retrieves the service URL for a given ServiceQuest_v1.
 // It first checks if the leading registrar is still valid and updates it if necessary.
-// If no leading registrar is found, it iterates through the system's core services to find one.
-// Once a valid registrar is found, it sends a query to the registrar to get the service URL.
+// If no leading registrar is found, it iterates through the system's core services
+// to find one.
+// Once a valid registrar is found, it sends a query to the registrar to get the
+// service URL.
 //
 // Parameters:
 // - newQuest: The ServiceQuest_v1 containing the service request details.
@@ -175,7 +128,7 @@ func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
 // - servLoc: A byte slice containing the service location in JSON format.
 // - err: An error if any issues occur during the process.
 func (ua *UnitAsset) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []byte, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second) // Create a new context, with a 2-second timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	sys := ua.Owner
 	if ua.leadingRegistrar == "" {
@@ -186,8 +139,6 @@ func (ua *UnitAsset) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []by
 	}
 
 	// Create a new HTTP request to the the Service Registrar
-
-	// Create buffer to save a copy of the request body
 	mediaType := "application/json"
 	jsonQF, err := usecases.Pack(&newQuest, mediaType)
 	if err != nil {
@@ -200,10 +151,9 @@ func (ua *UnitAsset) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []by
 	if err != nil {
 		return servLoc, err
 	}
-	req.Header.Set("Content-Type", mediaType) // set the Content-Type header
-	req = req.WithContext(ctx)                // associate the cancellable context with the request
+	req.Header.Set("Content-Type", mediaType)
+	req = req.WithContext(ctx)
 
-	// forward the request to the leading Service Registrar/////////////////////////////////
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		ua.leadingRegistrar = ""
@@ -221,7 +171,6 @@ func (ua *UnitAsset) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []by
 		return servLoc, err
 	}
 
-	// Perform a type assertion to convert the returned Form to SignalA_v1a
 	serviceList, ok := serviceListf.(*forms.ServiceRecordList_v1)
 	if !ok {
 		log.Println("problem asserting the type of the service list form")
@@ -250,7 +199,7 @@ func selectService(serviceList forms.ServiceRecordList_v1) (sp forms.ServicePoin
 }
 
 func (ua *UnitAsset) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []byte, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second) // Create a new context, with a 2-second timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	sys := ua.Owner
 	if ua.leadingRegistrar == "" {
@@ -261,8 +210,6 @@ func (ua *UnitAsset) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []b
 	}
 
 	// Create a new HTTP request to the the Service Registrar
-
-	// Create buffer to save a copy of the request body
 	mediaType := "application/json"
 	jsonQF, err := usecases.Pack(&newQuest, mediaType)
 	if err != nil {
@@ -275,10 +222,9 @@ func (ua *UnitAsset) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []b
 	if err != nil {
 		return servLoc, err
 	}
-	req.Header.Set("Content-Type", mediaType) // set the Content-Type header
-	req = req.WithContext(ctx)                // associate the cancellable context with the request
+	req.Header.Set("Content-Type", mediaType)
+	req = req.WithContext(ctx)
 
-	// forward the request to the leading Service Registrar/////////////////////////////////
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		ua.leadingRegistrar = ""
@@ -296,7 +242,6 @@ func (ua *UnitAsset) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []b
 		return servLoc, err
 	}
 
-	// Perform a type assertion to convert the returned Form to SignalA_v1a
 	serviceList, ok := serviceListf.(*forms.ServiceRecordList_v1)
 	if !ok {
 		log.Println("problem asserting the type of the service list form")

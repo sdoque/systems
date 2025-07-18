@@ -33,9 +33,9 @@ import (
 //-------------------------------------Define the Thing's resource
 
 // Traits are Asset-specific configurable parameters and variables
-type Traits struct {
-	leadingRegistrar string
-}
+// type Traits struct {
+//	 leadingRegistrar string
+// }
 
 // UnitAsset type models the unit asset (interface) of the system.
 type UnitAsset struct {
@@ -45,7 +45,8 @@ type UnitAsset struct {
 	ServicesMap components.Services `json:"-"`
 	CervicesMap components.Cervices `json:"-"`
 	//
-	Traits
+	leadingRegistrar string
+	// Traits
 }
 
 // GetName returns the name of the Resource.
@@ -69,9 +70,11 @@ func (ua *UnitAsset) GetDetails() map[string][]string {
 }
 
 // GetTraits returns the traits of the Resource.
+/*
 func (ua *UnitAsset) GetTraits() any {
 	return ua.Traits
 }
+*/
 
 // ensure UnitAsset implements components.UnitAsset (this check is done at during the compilation)
 var _ components.UnitAsset = (*UnitAsset)(nil)
@@ -94,15 +97,18 @@ func initTemplate() components.UnitAsset {
 		Description: "looks for the desired services described in a quest form (POST)",
 	}
 
-	assetTraits := Traits{
-		leadingRegistrar: "", // Initialize the leading registrar to nil
-	}
+	/*
+		assetTraits := Traits{
+			leadingRegistrar: "", // Initialize the leading registrar to nil
+		}
+	*/
 
 	// create the unit asset template
 	uat := &UnitAsset{
-		Name:    "orchestration",
-		Details: map[string][]string{"Platform": {"Independent"}},
-		Traits:  assetTraits,
+		Name:             "orchestration",
+		Details:          map[string][]string{"Platform": {"Independent"}},
+		leadingRegistrar: "",
+		//Traits:  assetTraits,
 		ServicesMap: components.Services{
 			squest.SubPath:  &squest, // Inline assignment of the temperature service
 			squests.SubPath: &squests,
@@ -123,12 +129,14 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
 	}
 
-	traits, err := UnmarshalTraits(configuredAsset.Traits)
-	if err != nil {
-		log.Println("Warning: could not unmarshal traits:", err)
-	} else if len(traits) > 0 {
-		ua.Traits = traits[0] // or handle multiple traits if needed
-	}
+	/*
+		traits, err := UnmarshalTraits(configuredAsset.Traits)
+		if err != nil {
+			log.Println("Warning: could not unmarshal traits:", err)
+		} else if len(traits) > 0 {
+			ua.Traits = traits[0] // or handle multiple traits if needed
+		}
+	*/
 
 	// start the unit asset(s)
 	// no need to start the algorithm asset
@@ -138,6 +146,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 }
 
+/*
 // UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
 func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
 	var traitsList []Traits
@@ -150,6 +159,7 @@ func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
 	}
 	return traitsList, nil
 }
+*/
 
 //-------------------------------------Thing's resource functions
 
@@ -165,8 +175,7 @@ func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
 // - servLoc: A byte slice containing the service location in JSON format.
 // - err: An error if any issues occur during the process.
 func (ua *UnitAsset) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []byte, err error) {
-	// ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second) // Create a new context, with a 2-second timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second) // Create a new context, with a 2-second timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second) // Create a new context, with a 2-second timeout
 	defer cancel()
 	sys := ua.Owner
 	if ua.leadingRegistrar == "" {
@@ -195,7 +204,6 @@ func (ua *UnitAsset) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []by
 	req = req.WithContext(ctx)                // associate the cancellable context with the request
 
 	// forward the request to the leading Service Registrar/////////////////////////////////
-	// client := &http.Client{}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		ua.leadingRegistrar = ""
@@ -207,7 +215,6 @@ func (ua *UnitAsset) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []by
 		log.Printf("Error reading discovery response body: %v", err)
 		return servLoc, err
 	}
-	fmt.Printf("\n%v\n", string(respBytes))
 	serviceListf, err := usecases.Unpack(respBytes, mediaType)
 	if err != nil {
 		log.Print("Error extracting discovery reply ", err)
@@ -226,10 +233,8 @@ func (ua *UnitAsset) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []by
 		return
 	}
 
-	fmt.Printf("/n the length of the service list is: %d\n", len(serviceList.List))
 	serviceLocation := selectService(*serviceList)
 	payload, err := json.MarshalIndent(serviceLocation, "", "  ")
-	fmt.Printf("the service location is %+v\n", serviceLocation)
 	return payload, err
 }
 
@@ -245,8 +250,7 @@ func selectService(serviceList forms.ServiceRecordList_v1) (sp forms.ServicePoin
 }
 
 func (ua *UnitAsset) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []byte, err error) {
-	// ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second) // Create a new context, with a 2-second timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second) // Create a new context, with a 2-second timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second) // Create a new context, with a 2-second timeout
 	defer cancel()
 	sys := ua.Owner
 	if ua.leadingRegistrar == "" {
@@ -275,7 +279,6 @@ func (ua *UnitAsset) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []b
 	req = req.WithContext(ctx)                // associate the cancellable context with the request
 
 	// forward the request to the leading Service Registrar/////////////////////////////////
-	// client := &http.Client{}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		ua.leadingRegistrar = ""
@@ -287,7 +290,6 @@ func (ua *UnitAsset) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []b
 		log.Printf("Error reading discovery response body: %v", err)
 		return servLoc, err
 	}
-	fmt.Printf("\n%v\n", string(respBytes))
 	serviceListf, err := usecases.Unpack(respBytes, mediaType)
 	if err != nil {
 		log.Print("Error extracting discovery reply ", err)
@@ -306,8 +308,6 @@ func (ua *UnitAsset) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []b
 		return
 	}
 
-	fmt.Printf("/n the length of the service list is: %d\n", len(serviceList.List))
 	payload, err := json.MarshalIndent(serviceList, "", "  ")
-	fmt.Printf("the service location is %+v\n", serviceList)
 	return payload, err
 }

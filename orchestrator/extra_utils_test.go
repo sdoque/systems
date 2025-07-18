@@ -63,15 +63,11 @@ func createUnitAsset() *UnitAsset {
 		Description: "looks for the desired service described in a quest form (POST)",
 	}
 
-	assetTraits := Traits{
-		leadingRegistrar: "",
-	}
-
 	// create the unit asset template
 	uat := &UnitAsset{
-		Name:    "orchestration",
-		Details: map[string][]string{"Platform": {"Independent"}},
-		Traits:  assetTraits,
+		Name:             "orchestration",
+		Details:          map[string][]string{"Platform": {"Independent"}},
+		leadingRegistrar: "",
 		ServicesMap: components.Services{
 			squest.SubPath: &squest, // Inline assignment of the temperature service
 		},
@@ -225,15 +221,13 @@ func createTestSystem(broken bool) (sys components.System) {
 	ServicesMap := &components.Services{
 		setTest.SubPath: setTest,
 	}
-	assetTraits := Traits{
-		leadingRegistrar: "",
-	}
+
 	mua := &UnitAsset{
-		Name:        "testUnitAsset",
-		Details:     map[string][]string{"Test": {"Test"}},
-		Traits:      assetTraits,
-		ServicesMap: *ServicesMap,
-		CervicesMap: *CervicesMap,
+		Name:             "testUnitAsset",
+		Details:          map[string][]string{"Test": {"Test"}},
+		leadingRegistrar: "",
+		ServicesMap:      *ServicesMap,
+		CervicesMap:      *CervicesMap,
 	}
 
 	sys.UAssets = make(map[string]*components.UnitAsset)

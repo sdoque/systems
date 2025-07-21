@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -83,7 +84,7 @@ func createTestServiceQuestForm() []byte {
 	serviceQuestForm.NewForm()
 	fakebody, err := json.Marshal(serviceQuestForm)
 	if err != nil {
-		t.Fatalf("Fail marshal at start of test: %v", err)
+		panic(fmt.Sprintf("Fail marshal at start of test: %v", err))
 	}
 	return fakebody
 }
@@ -95,7 +96,7 @@ func createTestServicePointForm() []byte {
 	servicePointForm.ServLocation = "http://123.456.789:123//"
 	fakebody, err := json.MarshalIndent(servicePointForm, "", "  ")
 	if err != nil {
-		t.Fatalf("Fail marshal at start of test: %v", err)
+		panic(fmt.Sprintf("Fail marshal at start of test: %v", err))
 	}
 	return fakebody
 }
@@ -117,7 +118,7 @@ func createTestServiceRecordListForm() []byte {
 	serviceRecordListForm.List = []forms.ServiceRecord_v1{serviceRecordForm, serviceRecord2Form}
 	fakebody, err := json.MarshalIndent(serviceRecordListForm, "", "  ")
 	if err != nil {
-		t.Fatalf("Fail marshal at start of test: %v", err)
+		panic(fmt.Sprintf("Fail marshal at start of test: %v", err))
 	}
 	return fakebody
 }

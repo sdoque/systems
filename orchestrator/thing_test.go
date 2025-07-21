@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -11,8 +12,6 @@ import (
 	"github.com/sdoque/mbaigo/forms"
 	"github.com/sdoque/mbaigo/usecases"
 )
-
-var t *testing.T
 
 func createTestServiceQuest() forms.ServiceQuest_v1 {
 	var ServiceQuest_v1_temperature forms.ServiceQuest_v1
@@ -49,7 +48,7 @@ func createEmptyServiceRecordListForm() []byte {
 	emptyServiceRecordListForm.NewForm()
 	fakebody, err := json.Marshal(emptyServiceRecordListForm)
 	if err != nil {
-		t.Fatalf("Fail marshal at start of test: %v", err)
+		panic(fmt.Sprintf("Fail marshal at start of test: %v", err))
 	}
 	return fakebody
 }
@@ -144,7 +143,7 @@ func createTestServiceRecordListFormWithSeveral() []byte {
 		serviceRecordFormRotation}
 	fakebody, err := json.MarshalIndent(ServiceRecordListFormWithSeveral, "", "  ")
 	if err != nil {
-		t.Fatalf("Fail marshal at start of test: %v", err)
+		panic(fmt.Sprintf("Fail marshal at start of test: %v", err))
 	}
 	return fakebody
 }
@@ -160,7 +159,7 @@ func createTestServiceRecordListFormWithDefinition() []byte {
 	serviceRecordListFormWithDefinition.List = []forms.ServiceRecord_v1{serviceRecordFormWithDefinition}
 	fakebody, err := json.MarshalIndent(serviceRecordListFormWithDefinition, "", "  ")
 	if err != nil {
-		t.Fatalf("Fail marshal at start of test: %v", err)
+		panic(fmt.Sprintf("Fail marshal at start of test: %v", err))
 	}
 	return fakebody
 }
@@ -176,7 +175,7 @@ func createTestServiceRecordListFormWithDetails() []byte {
 	serviceRecordListFormWithDetails.List = []forms.ServiceRecord_v1{serviceRecordFormWithDetails}
 	fakebody, err := json.MarshalIndent(serviceRecordListFormWithDetails, "", "  ")
 	if err != nil {
-		t.Fatalf("Fail marshal at start of test: %v", err)
+		panic(fmt.Sprintf("Fail marshal at start of test: %v", err))
 	}
 	return fakebody
 }

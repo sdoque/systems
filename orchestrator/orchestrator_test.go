@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"io"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -58,29 +57,23 @@ func TestServing(t *testing.T) {
 func createMultiHTTPResponse(limit int, writeError bool, body string) func() *http.Response {
 	count := 0
 	return func() *http.Response {
-		count++
-		if count == limit && writeError == true {
-			return &http.Response{
-				Status:     "200 OK",
-				StatusCode: 200,
-				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       io.NopCloser(errorReader{}),
-			}
-		}
-		if count == limit {
-			return &http.Response{
-				Status:     "200 OK",
-				StatusCode: 200,
-				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       io.NopCloser(strings.NewReader(body)),
-			}
-		}
-		return &http.Response{
+		resp := &http.Response{
 			Status:     "200 OK",
 			StatusCode: 200,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(string("lead Service Registrar since"))),
+			Body:       nil,
 		}
+		count++
+		if count == limit && writeError == true {
+			resp.Body = io.NopCloser(errorReader{})
+			return resp
+		}
+		if count == limit {
+			resp.Body = io.NopCloser(strings.NewReader(body))
+			return resp
+		}
+		resp.Body = io.NopCloser(strings.NewReader(string("lead Service Registrar since")))
+		return resp
 	}
 }
 
@@ -90,7 +83,7 @@ func createTestServiceQuestForm() []byte {
 	serviceQuestForm.NewForm()
 	fakebody, err := json.Marshal(serviceQuestForm)
 	if err != nil {
-		log.Fatalf("Fail marshal at start of test: %v", err)
+		t.Fatalf("Fail marshal at start of test: %v", err)
 	}
 	return fakebody
 }
@@ -102,7 +95,7 @@ func createTestServicePointForm() []byte {
 	servicePointForm.ServLocation = "http://123.456.789:123//"
 	fakebody, err := json.MarshalIndent(servicePointForm, "", "  ")
 	if err != nil {
-		log.Fatalf("Fail marshal at start of test: %v", err)
+		t.Fatalf("Fail marshal at start of test: %v", err)
 	}
 	return fakebody
 }
@@ -124,7 +117,7 @@ func createTestServiceRecordListForm() []byte {
 	serviceRecordListForm.List = []forms.ServiceRecord_v1{serviceRecordForm, serviceRecord2Form}
 	fakebody, err := json.MarshalIndent(serviceRecordListForm, "", "  ")
 	if err != nil {
-		log.Fatalf("Fail marshal at start of test: %v", err)
+		t.Fatalf("Fail marshal at start of test: %v", err)
 	}
 	return fakebody
 }
@@ -134,7 +127,6 @@ var getServiceURLErrorMessage = "core system 'serviceregistrar' not found: verif
 	"(*main.mockTransport) returned a nil *Response with a nil error\n"
 
 type orchestrateTestStruct struct {
-	inputW           http.ResponseWriter
 	inputBody        io.ReadCloser
 	httpMethod       string
 	contentType      string
@@ -145,19 +137,17 @@ type orchestrateTestStruct struct {
 }
 
 var orchestrateTestParams = []orchestrateTestStruct{
-	{httptest.NewRecorder(), io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
+	{io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
 		"application/json", 3, 200, string(createTestServicePointForm()), "Best case, everything passes"},
-	{httptest.NewRecorder(), io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
+	{io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
 		"", 3, 200, "", "Bad case, header content type is wrong"},
-	{httptest.NewRecorder(), io.NopCloser(errorReader{}), "POST",
+	{io.NopCloser(errorReader{}), "POST",
 		"application/json", 3, 200, "", "Bad case, ReadAll on header body fails"},
-	{httptest.NewRecorder(), io.NopCloser(strings.NewReader(string("hej hej"))), "POST",
+	{io.NopCloser(strings.NewReader(string("hej hej"))), "POST",
 		"text/plain", 3, 200, "", "Bad case, Unpack and type assertion to ServiceQuest_v1 fails"},
-	{httptest.NewRecorder(), io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
+	{io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
 		"application/json", 1, 503, getServiceURLErrorMessage, "Bad case, getServiceURL fails"},
-	{newMockResponseWriter(), io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
-		"application/json", 3, 500, "", "Bad case, write fails"},
-	{httptest.NewRecorder(), io.NopCloser(strings.NewReader(string(""))), "PUT",
+	{io.NopCloser(strings.NewReader(string(""))), "PUT",
 		"", 0, 404, "Method is not supported.\n", "Bad case, wrong http method"},
 }
 
@@ -168,29 +158,33 @@ func TestOrchestrate(t *testing.T) {
 		mua := createUnitAsset()
 		newMockTransport(createMultiHTTPResponse(2, false, string(createTestServiceRecordListForm())),
 			testCase.mockTransportErr, nil)
-		testCase.inputW.Header()
-		mua.orchestrate(testCase.inputW, inputR)
 
-		recorder, ok := testCase.inputW.(*httptest.ResponseRecorder)
-		if ok {
-			if recorder.Body.String() != testCase.expectedOutput || recorder.Code != testCase.expectedCode {
-				t.Errorf("In test case: %s: Expected %s, got: %s",
-					testCase.testName, testCase.expectedOutput, recorder.Body.String())
-			}
-		} else {
-			if recorder, ok := testCase.inputW.(*mockResponseWriter); ok {
-				if recorder.status != testCase.expectedCode {
-					t.Errorf("Expected status %d, got %d", testCase.expectedCode, recorder.status)
-				}
-			} else {
-				t.Errorf("Expected inputW to be of type mockResponseWriter")
-			}
+		inputW := httptest.NewRecorder()
+		inputW.Header()
+		mua.orchestrate(inputW, inputR)
+
+		if inputW.Body.String() != testCase.expectedOutput || inputW.Result().StatusCode != testCase.expectedCode {
+			t.Errorf("In test case: %s: Expected %s, got: %s",
+				testCase.testName, testCase.expectedOutput, inputW.Body.String())
 		}
+	}
+
+	// Special case
+	inputR := httptest.NewRequest(http.MethodPost, "/test123",
+		io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))))
+	inputR.Header.Set("content-Type", "application/json")
+	mua := createUnitAsset()
+	newMockTransport(createMultiHTTPResponse(2, false, string(createTestServiceRecordListForm())), 3, nil)
+	inputW := newMockResponseWriter()
+	mua.orchestrate(inputW, inputR)
+
+	if inputW.ResponseRecorder.Body.String() != "" || inputW.ResponseRecorder.Code != 500 {
+		t.Errorf("In test case: Bad case, write fails: Expected: , and: 500, got: %s, and: %d",
+			inputW.ResponseRecorder.Body.String(), inputW.ResponseRecorder.Code)
 	}
 }
 
 type orchestrateMultipleTestStruct struct {
-	inputW           http.ResponseWriter
 	inputBody        io.ReadCloser
 	httpMethod       string
 	contentType      string
@@ -201,19 +195,17 @@ type orchestrateMultipleTestStruct struct {
 }
 
 var orchestrateMultipleTestParams = []orchestrateMultipleTestStruct{
-	{httptest.NewRecorder(), io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
+	{io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
 		"application/json", 3, 200, string(createTestServiceRecordListForm()), "Best case, everything passes"},
-	{httptest.NewRecorder(), io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
+	{io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
 		"", 3, 200, "", "Bad case, header content type is wrong"},
-	{httptest.NewRecorder(), io.NopCloser(errorReader{}), "POST",
+	{io.NopCloser(errorReader{}), "POST",
 		"application/json", 3, 200, "", "Bad case, ReadAll on header body fails"},
-	{httptest.NewRecorder(), io.NopCloser(strings.NewReader(string("hej hej"))), "POST",
+	{io.NopCloser(strings.NewReader(string("hej hej"))), "POST",
 		"text/plain", 3, 200, "", "Bad case, Unpack and type assertion to ServiceQuest_v1 fails"},
-	{httptest.NewRecorder(), io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
+	{io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
 		"application/json", 1, 503, getServiceURLErrorMessage, "Bad case, getServiceURL fails"},
-	{newMockResponseWriter(), io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
-		"application/json", 3, 0, "", "Bad case, write fails"},
-	{httptest.NewRecorder(), io.NopCloser(strings.NewReader(string(""))), "PUT",
+	{io.NopCloser(strings.NewReader(string(""))), "PUT",
 		"", 0, 404, "Method is not supported.\n", "Bad case, wrong http method"},
 }
 
@@ -224,18 +216,27 @@ func TestOrchestrateMultiple(t *testing.T) {
 		mua := createUnitAsset()
 		newMockTransport(createMultiHTTPResponse(2, false, string(createTestServiceRecordListForm())),
 			testCase.mockTransportErr, nil)
-		mua.orchestrateMultiple(testCase.inputW, inputR)
+		inputW := httptest.NewRecorder()
+		mua.orchestrateMultiple(inputW, inputR)
 
-		recorder, ok := testCase.inputW.(*httptest.ResponseRecorder)
-		if ok {
-			if recorder.Body.String() != testCase.expectedOutput || recorder.Code != testCase.expectedCode {
-				t.Errorf("In test case: %s: Expected %s, got: %s",
-					testCase.testName, testCase.expectedOutput, recorder.Body.String())
-			}
-		} else {
-			if _, ok := testCase.inputW.(*mockResponseWriter); !ok {
-				t.Errorf("Expected inputW to be of type mockResponseWriter")
-			}
+		if inputW.Body.String() != testCase.expectedOutput || inputW.Code != testCase.expectedCode {
+			t.Errorf("In test case: %s: Expected %s, got: %s",
+				testCase.testName, testCase.expectedOutput, inputW.Body.String())
 		}
+	}
+
+	// Special case, write fails
+
+	inputR := httptest.NewRequest(http.MethodPost, "/test123",
+		io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))))
+	inputR.Header.Set("content-Type", "application/json")
+	mua := createUnitAsset()
+	newMockTransport(createMultiHTTPResponse(2, false, string(createTestServiceRecordListForm())), 3, nil)
+	inputW := newMockResponseWriter()
+	mua.orchestrateMultiple(inputW, inputR)
+
+	if inputW.ResponseRecorder.Body.String() != "" || inputW.ResponseRecorder.Code != 500 {
+		t.Errorf("In test case: Bad case, write fails: Expected: , and: 500, got: %s, and: %d",
+			inputW.ResponseRecorder.Body.String(), inputW.ResponseRecorder.Code)
 	}
 }

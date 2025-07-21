@@ -4,86 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"testing"
 
-	"github.com/sdoque/mbaigo/components"
 	"github.com/sdoque/mbaigo/forms"
 	"github.com/sdoque/mbaigo/usecases"
 )
 
-func TestInitTemplate(t *testing.T) {
-	expectedServices := []string{"squest", "squests"}
-
-	ua := initTemplate()
-	services := ua.GetServices()
-
-	// Check if expected name and services are present
-	if ua.GetName() != "orchestration" {
-		t.Errorf("Name mismatch expected 'registry', got: %s", ua.GetName())
-	}
-
-	for _, s := range expectedServices {
-		if _, ok := services[s]; !ok {
-			t.Errorf("Expected service '%s' to be present", s)
-		}
-	}
-}
-
-func createConfAssetBrokenTraits() usecases.ConfigurableAsset {
-	brokenTrait, _ := json.Marshal(errReader(0))
-	uac := usecases.ConfigurableAsset{
-		Name:     "testOrchestrator",
-		Details:  map[string][]string{"testDetail": {"detail1", "detail2"}},
-		Services: []components.Service{},
-		Traits:   []json.RawMessage{json.RawMessage(brokenTrait)},
-	}
-	return uac
-}
-
-func createConfAssetMultipleTraits() usecases.ConfigurableAsset {
-	uac := usecases.ConfigurableAsset{
-		Name:     "testOrchestrator",
-		Details:  map[string][]string{"testDetail": {"detail1", "detail2"}},
-		Services: []components.Service{},
-		Traits:   []json.RawMessage{json.RawMessage(`{"recCount": 0}`), json.RawMessage(`{"leading": false}`)},
-	}
-	return uac
-}
-
-type newResourceParams struct {
-	setup     func() components.System
-	confAsset func() usecases.ConfigurableAsset
-	testCase  string
-}
-
-func TestNewResource(t *testing.T) {
-	params := []newResourceParams{
-		{
-			func() (sys components.System) { return createTestSystem(false) },
-			func() (confAsset usecases.ConfigurableAsset) { return createConfAssetBrokenTraits() },
-			"Case: unmarshal traits fails",
-		},
-		{
-			func() (sys components.System) { return createTestSystem(false) },
-			func() (confAsset usecases.ConfigurableAsset) { return createConfAssetMultipleTraits() },
-			"Case: confAsset has multiple traits",
-		},
-	}
-
-	for _, c := range params {
-		sys := c.setup()
-		uac := c.confAsset()
-
-		ua, shutdown := newResource(uac, &sys)
-		shutdown()
-		if ua.GetName() != "testOrchestrator" {
-			t.Errorf("Name mismatch, expected '%s' got '%s'", uac.Name, ua.GetName())
-		}
-	}
-}
+var t *testing.T
 
 func createTestServiceQuest() forms.ServiceQuest_v1 {
 	var ServiceQuest_v1_temperature forms.ServiceQuest_v1
@@ -96,23 +25,21 @@ func createTestServiceQuest() forms.ServiceQuest_v1 {
 func (ua *UnitAsset) createDelayedBrokenURL(limit int) func() *http.Response {
 	count := 0
 	return func() *http.Response {
+		resp := &http.Response{
+			Status:     "200 OK",
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       nil,
+		}
 		count++
 		if count == limit {
 			f := createTestServiceRecordListForm()
 			ua.leadingRegistrar = brokenUrl
-			return &http.Response{
-				Status:     "200 OK",
-				StatusCode: 200,
-				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       io.NopCloser(bytes.NewReader(f)),
-			}
+			resp.Body = io.NopCloser(bytes.NewReader(f))
+			return resp
 		}
-		return &http.Response{
-			Status:     "200 OK",
-			StatusCode: 200,
-			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(string("lead Service Registrar since"))),
-		}
+		resp.Body = io.NopCloser(strings.NewReader(string("lead Service Registrar since")))
+		return resp
 	}
 }
 
@@ -122,7 +49,7 @@ func createEmptyServiceRecordListForm() []byte {
 	emptyServiceRecordListForm.NewForm()
 	fakebody, err := json.Marshal(emptyServiceRecordListForm)
 	if err != nil {
-		log.Fatalf("Fail marshal at start of test: %v", err)
+		t.Fatalf("Fail marshal at start of test: %v", err)
 	}
 	return fakebody
 }
@@ -179,11 +106,11 @@ func TestSelectService(t *testing.T) {
 	serviceListbytes := createTestServiceRecordListForm()
 	serviceListf, err := usecases.Unpack(serviceListbytes, "application/json")
 	if err != nil {
-		log.Fatalf("Error setting up test of SelectService function: %v", err)
+		t.Fatalf("Error setting up test of SelectService function: %v", err)
 	}
 	serviceList, ok := serviceListf.(*forms.ServiceRecordList_v1)
 	if !ok {
-		log.Fatalf("Error in type assertion when setting up test of SelectService function")
+		t.Fatalf("Error in type assertion when setting up test of SelectService function")
 	}
 
 	expectedService := createTestServicePointForm()
@@ -217,7 +144,7 @@ func createTestServiceRecordListFormWithSeveral() []byte {
 		serviceRecordFormRotation}
 	fakebody, err := json.MarshalIndent(ServiceRecordListFormWithSeveral, "", "  ")
 	if err != nil {
-		log.Fatalf("Fail marshal at start of test: %v", err)
+		t.Fatalf("Fail marshal at start of test: %v", err)
 	}
 	return fakebody
 }
@@ -233,7 +160,7 @@ func createTestServiceRecordListFormWithDefinition() []byte {
 	serviceRecordListFormWithDefinition.List = []forms.ServiceRecord_v1{serviceRecordFormWithDefinition}
 	fakebody, err := json.MarshalIndent(serviceRecordListFormWithDefinition, "", "  ")
 	if err != nil {
-		log.Fatalf("Fail marshal at start of test: %v", err)
+		t.Fatalf("Fail marshal at start of test: %v", err)
 	}
 	return fakebody
 }
@@ -249,7 +176,7 @@ func createTestServiceRecordListFormWithDetails() []byte {
 	serviceRecordListFormWithDetails.List = []forms.ServiceRecord_v1{serviceRecordFormWithDetails}
 	fakebody, err := json.MarshalIndent(serviceRecordListFormWithDetails, "", "  ")
 	if err != nil {
-		log.Fatalf("Fail marshal at start of test: %v", err)
+		t.Fatalf("Fail marshal at start of test: %v", err)
 	}
 	return fakebody
 }

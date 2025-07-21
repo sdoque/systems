@@ -151,7 +151,6 @@ func initTemplate() components.UnitAsset {
 func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {
 	// Start the registration expiration check scheduler
 	cleaningScheduler := NewScheduler()
-	go cleaningScheduler.run()
 
 	// Initialize the UnitAsset
 	ua := &UnitAsset{
@@ -176,9 +175,10 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		// Error:           make(chan error),                  // Initialize the error channel
 	}
 
-	ua.Traits = assetTraits // Assign the traits to the UnitAsset
+	ua.Traits = assetTraits 
 
-	ua.Role() // Start to repeatedly check which is the leading registrar
+	// Start to repeatedly check which is the leading registrar
+	ua.Role() 
 
 	// Start the service registry manager goroutine
 	go ua.serviceRegistryHandler()

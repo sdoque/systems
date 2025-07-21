@@ -399,8 +399,6 @@ func TestUpdateDB(t *testing.T) {
 				c.expectedStatuscode, w.Result().StatusCode, c.testCase)
 		}
 
-		log.Printf("%+v", w.Result())
-
 		shutdown()
 	}
 }
@@ -416,7 +414,127 @@ type queryDBParams struct {
 }
 
 func TestQueryDB(t *testing.T) {
+	params := []queryDBParams{
+		{
+			http.StatusOK,
+			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
+				ua.leading = true
 
+				w = httptest.NewRecorder()
+				body := io.NopCloser(strings.NewReader("{}"))
+				r = httptest.NewRequest(http.MethodGet, "http://localhost/reg", body)
+				r.Header = map[string][]string{"Content-Type": {"application/json"}}
+
+				return w, r
+			},
+			"Good case GET, everything passes",
+		},
+		{
+			http.StatusOK,
+			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
+				ua.leading = true
+
+				w = httptest.NewRecorder()
+				body := io.NopCloser(strings.NewReader("{}"))
+				r = httptest.NewRequest(http.MethodPost, "http://localhost/reg", body)
+				r.Header = map[string][]string{}
+
+				return w, r
+			},
+			"Bad case POST, can't parse Content-Type from header",
+		},
+		{
+			http.StatusOK,
+			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
+				ua.leading = true
+
+				w = httptest.NewRecorder()
+				body := io.NopCloser(errReader(0))
+				r = httptest.NewRequest(http.MethodPost, "http://localhost/reg", body)
+				r.Header = map[string][]string{"Content-Type": {"application/json"}}
+
+				return w, r
+			},
+			"Bad case POST, error while reading body",
+		},
+		{
+			http.StatusOK,
+			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
+				ua.leading = true
+
+				w = httptest.NewRecorder()
+				body := io.NopCloser(strings.NewReader("{}"))
+				r = httptest.NewRequest(http.MethodPost, "http://localhost/reg", body)
+				r.Header = map[string][]string{"Content-Type": {"application/json"}}
+
+				return w, r
+			},
+			"Bad case POST, error while unpacking body",
+		},
+		{
+			http.StatusInternalServerError,
+			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
+				ua.leading = true
+
+				w = httptest.NewRecorder()
+				body := io.NopCloser(strings.NewReader(`{"id": 0, "version":"SignalA_v1.0"}`))
+				r = httptest.NewRequest(http.MethodPost, "http://localhost/reg", body)
+				r.Header = map[string][]string{"Content-Type": {"application/json"}}
+
+				return w, r
+			},
+			"Bad case POST, request returns error",
+		},
+		{
+			http.StatusOK,
+			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
+				ua.leading = true
+
+				w = httptest.NewRecorder()
+				body := io.NopCloser(strings.NewReader(`{"id": 0, "version":"ServiceQuest_v1"}`))
+				r = httptest.NewRequest(http.MethodPost, "http://localhost/reg", body)
+				r.Header = map[string][]string{"Content-Type": {"application/json"}}
+
+				return w, r
+			},
+			"Good case POST, request returns a result",
+		},
+		{
+			http.StatusMethodNotAllowed,
+			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
+				ua.leading = true
+
+				w = httptest.NewRecorder()
+				body := io.NopCloser(strings.NewReader(`{"id": 0, "version":"ServiceQuest_v1"}`))
+				r = httptest.NewRequest(http.MethodDelete, "http://localhost/reg", body)
+				r.Header = map[string][]string{"Content-Type": {"application/json"}}
+
+				return w, r
+			},
+			"Bad case default, unsupported http method",
+		},
+	}
+
+	for _, c := range params {
+		var ua *UnitAsset
+		sys := createTestSystem()
+		confAsset := createConfAssetMultipleTraits()
+		temp, shutdown := newResource(confAsset, &sys)
+		ua = temp.(*UnitAsset)
+		sendAddRequest(0, "test", "testPath", "", ua.requests)
+
+		w, r := c.setup(ua)
+
+		// Test and checks
+		ua.queryDB(w, r)
+
+		if w.Result().StatusCode != c.expectedStatuscode {
+			t.Errorf("Expected statuscode %d, got: %d in '%s'",
+				c.expectedStatuscode, w.Result().StatusCode, c.testCase)
+		}
+
+		shutdown()
+	}
 }
 
 // ----------------------------------------------- //
@@ -430,5 +548,55 @@ type cleanDBParams struct {
 }
 
 func TestCleanDB(t *testing.T) {
+	params := []cleanDBParams{
+		{
+			http.StatusBadRequest,
+			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
+				ua.leading = true
 
+				w = httptest.NewRecorder()
+				body := io.NopCloser(strings.NewReader(`{"id": 0, "version":"ServiceQuest_v1"}`))
+				r = httptest.NewRequest(http.MethodDelete, "http://localhost/reg/a", body)
+				r.Header = map[string][]string{"Content-Type": {"application/json"}}
+
+				return w, r
+			},
+			"Bad case DELETE, couldn't convert id to int",
+		},
+		{
+			200,
+			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
+				ua.leading = true
+
+				w = httptest.NewRecorder()
+				body := io.NopCloser(strings.NewReader(`{"id": 0, "version":"ServiceQuest_v1"}`))
+				r = httptest.NewRequest(http.MethodGet, "http://localhost/reg/a", body)
+				r.Header = map[string][]string{"Content-Type": {"application/json"}}
+
+				return w, r
+			},
+			"Bad case default, unsupported http method",
+		},
+	}
+
+	for _, c := range params {
+		var ua *UnitAsset
+		sys := createTestSystem()
+		confAsset := createConfAssetMultipleTraits()
+		temp, shutdown := newResource(confAsset, &sys)
+		ua = temp.(*UnitAsset)
+		sendAddRequest(0, "test", "testPath", "", ua.requests)
+
+		w, r := c.setup(ua)
+
+		// Test and checks
+		ua.cleanDB(w, r)
+
+		if w.Result().StatusCode != c.expectedStatuscode {
+			t.Errorf("Expected statuscode %d, got: %d in '%s'",
+				c.expectedStatuscode, w.Result().StatusCode, c.testCase)
+		}
+
+		shutdown()
+	}
 }

@@ -121,7 +121,7 @@ func (ua *UnitAsset) updateDB(w http.ResponseWriter, r *http.Request) {
 	if !ua.leading {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		if _, err := w.Write([]byte("Service Unavailable")); err != nil {
-			log.Printf("error occured while writing to responsewriter: %v", err)
+			log.Printf("error occurreded while writing to responsewriter: %v", err)
 		}
 		return
 	}
@@ -206,11 +206,11 @@ func (ua *UnitAsset) queryDB(w http.ResponseWriter, r *http.Request) {
 			// Build the HTML response
 			text := "<!DOCTYPE html><html><body>"
 			if _, err := w.Write([]byte(text)); err != nil {
-				log.Printf("error occured while writing to responsewriter: %v", err)
+				log.Printf("error occurreded while writing to responsewriter: %v", err)
 			}
 			text = "<p>The local cloud's currently available services are:</p><ul>"
 			if _, err := w.Write([]byte(text)); err != nil {
-				log.Printf("error occured while writing to responsewriter: %v", err)
+				log.Printf("error occurreded while writing to responsewriter: %v", err)
 			}
 			for _, servRec := range servvicesList {
 				metaservice := ""
@@ -222,12 +222,12 @@ func (ua *UnitAsset) queryDB(w http.ResponseWriter, r *http.Request) {
 				uaName := parts[0]
 				sLine := "<p>Service ID: " + strconv.Itoa(int(servRec.Id)) + " with definition <b><a href=\"" + hyperlink + "\">" + servRec.ServiceDefinition + "</b></a> from the <b>" + servRec.SystemName + "/" + uaName + "</b> with details " + metaservice + " will expire at: " + servRec.EndOfValidity + "</p>"
 				if _, err := w.Write([]byte(fmt.Sprintf("<li>%s</li>", sLine))); err != nil {
-					log.Printf("error occured while writing to responsewriter: %v", err)
+					log.Printf("error occurreded while writing to responsewriter: %v", err)
 				}
 			}
 			text = "</ul></body></html>"
 			if _, err := w.Write([]byte(text)); err != nil {
-				log.Printf("error occured while writing to responsewriter: %v", err)
+				log.Printf("error occurreded while writing to responsewriter: %v", err)
 			}
 		case <-time.After(5 * time.Second): // Optional timeout
 			http.Error(w, "Request timed out", http.StatusGatewayTimeout)
@@ -350,7 +350,7 @@ func (ua *UnitAsset) roleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
 		if _, err := w.Write([]byte("Service Unavailable")); err != nil {
-			log.Printf("error occured while writing to responsewriter: %v", err)
+			log.Printf("error occurreded while writing to responsewriter: %v", err)
 		}
 	default:
 		fmt.Fprintf(w, "unsupported http request method")

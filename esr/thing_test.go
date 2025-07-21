@@ -192,10 +192,12 @@ func sendAddRequest(id int64, def string, subPath string, created string, ch cha
 	}
 
 	ch <- req
-	select {
-	case err := <-req.Error:
+
+	if err := <-req.Error; err != nil {
 		return err
 	}
+
+	return nil
 }
 
 func sendBrokenAddRequest(num int64, ch chan ServiceRegistryRequest) error {
@@ -207,10 +209,12 @@ func sendBrokenAddRequest(num int64, ch chan ServiceRegistryRequest) error {
 		Error:  make(chan error),
 	}
 	ch <- req
-	select {
-	case err := <-req.Error:
+
+	if err := <-req.Error; err != nil {
 		return err
 	}
+
+	return nil
 }
 
 type serviceRegistryHandlerParams struct {
@@ -354,10 +358,11 @@ func sendAddRequestWithDetails(id int64, def string, subPath string, created str
 	}
 
 	ch <- req
-	select {
-	case err := <-req.Error:
+	if err := <-req.Error; err != nil {
 		return err
 	}
+
+	return nil
 }
 
 // id 0 will return all items in service registry, any other will return items depending on details & definition
@@ -400,9 +405,8 @@ func sendReadRequest(id int64, def string, details []string, ch chan ServiceRegi
 
 func sendBrokenReadRequest(ch chan ServiceRegistryRequest) ([]forms.ServiceRecord_v1, error) {
 	rec := &forms.SignalA_v1a{}
-	var req ServiceRegistryRequest
 
-	req = ServiceRegistryRequest{
+	var req = ServiceRegistryRequest{
 		Action: "read",
 		Record: rec,
 		Result: make(chan []forms.ServiceRecord_v1),

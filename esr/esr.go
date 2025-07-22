@@ -91,7 +91,7 @@ func main() {
 
 	// wait for shutdown signal, and gracefully close properly goroutines with context
 	<-sys.Sigs // wait for a SIGINT (Ctrl+C) signal
-	fmt.Println("\nshuting down system", sys.Name)
+	fmt.Println("\nShutting down system", sys.Name)
 	cancel() // cancel the context, signaling the goroutines to stop
 	// allow the go routines to be executed, which might take more time than the main routine to end
 	time.Sleep(3 * time.Second)
@@ -132,6 +132,7 @@ func (ua *UnitAsset) updateDB(w http.ResponseWriter, r *http.Request) {
 		mediaType, _, err := mime.ParseMediaType(contentType)
 		if err != nil {
 			log.Println("Error parsing media type:", err)
+			http.Error(w, "Error parsing media type", http.StatusBadRequest)
 			return
 		}
 
@@ -139,11 +140,13 @@ func (ua *UnitAsset) updateDB(w http.ResponseWriter, r *http.Request) {
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
 			log.Printf("Error reading registration request body: %v", err)
+			http.Error(w, "Error reading registration request body", http.StatusBadRequest)
 			return
 		}
 		record, err := usecases.Unpack(bodyBytes, mediaType)
 		if err != nil {
 			log.Printf("Error extracting the registration request %v\n", err)
+			http.Error(w, "Error extracting the registration request", http.StatusBadRequest)
 			return
 		}
 

@@ -23,14 +23,14 @@ type Scheduler struct {
 	taskMap map[int]*time.Timer // list elements has id, timer
 }
 
-// NewScheduler creates a new scheduler
+// Returns a scheduler with an empty task map
 func NewScheduler() *Scheduler {
 	return &Scheduler{
 		taskMap: make(map[int]*time.Timer),
 	}
 }
 
-// AddTask adds a task to the queue with its deadline
+// AddTask adds a task to the task map and starts a timer for its job, when timer is done it runs the job in a goroutine
 func (s *Scheduler) AddTask(deadline time.Time, job func(), id int) {
 	timer, exists := s.taskMap[id]
 	if exists {
@@ -40,7 +40,7 @@ func (s *Scheduler) AddTask(deadline time.Time, job func(), id int) {
 	s.taskMap[id] = t
 }
 
-// RemoveTask removes a scheduled task
+// RemoveTask removes a scheduled job and deletes the task from the task map
 func (s *Scheduler) RemoveTask(id int) {
 	timer, exists := s.taskMap[id]
 	if !exists {
@@ -50,6 +50,7 @@ func (s *Scheduler) RemoveTask(id int) {
 	delete(s.taskMap, id)
 }
 
+// Stop() loops through the task map and turns off the timer for each tasks job
 func (s *Scheduler) Stop() {
 	for _, value := range s.taskMap {
 		value.Stop()

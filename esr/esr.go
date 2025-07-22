@@ -92,8 +92,9 @@ func main() {
 	// wait for shutdown signal, and gracefully close properly goroutines with context
 	<-sys.Sigs // wait for a SIGINT (Ctrl+C) signal
 	fmt.Println("\nshuting down system", sys.Name)
-	cancel()                    // cancel the context, signaling the goroutines to stop
-	time.Sleep(3 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
+	cancel() // cancel the context, signaling the goroutines to stop
+	// allow the go routines to be executed, which might take more time than the main routine to end
+	time.Sleep(3 * time.Second)
 }
 
 // ---------------------------------------------------------------------------- end of main()
@@ -121,7 +122,7 @@ func (ua *UnitAsset) updateDB(w http.ResponseWriter, r *http.Request) {
 	if !ua.leading {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		if _, err := w.Write([]byte("Service Unavailable")); err != nil {
-			log.Printf("error occurreded while writing to responsewriter: %v", err)
+			log.Printf("error occurred while writing to responsewriter: %v", err)
 		}
 		return
 	}
@@ -130,19 +131,19 @@ func (ua *UnitAsset) updateDB(w http.ResponseWriter, r *http.Request) {
 		contentType := r.Header.Get("Content-Type")
 		mediaType, _, err := mime.ParseMediaType(contentType)
 		if err != nil {
-			fmt.Println("Error parsing media type:", err)
+			log.Println("Error parsing media type:", err)
 			return
 		}
 
 		defer r.Body.Close()
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
-			log.Printf("error reading registration request body: %v", err)
+			log.Printf("Error reading registration request body: %v", err)
 			return
 		}
 		record, err := usecases.Unpack(bodyBytes, mediaType)
 		if err != nil {
-			log.Printf("error extracting the registration request %v\n", err)
+			log.Printf("Error extracting the registration request %v\n", err)
 			return
 		}
 
@@ -158,14 +159,14 @@ func (ua *UnitAsset) updateDB(w http.ResponseWriter, r *http.Request) {
 		// Check the error back from the unit asset
 		err = <-addRecord.Error
 		if err != nil {
-			log.Printf("error adding the new service: %v", err)
+			log.Printf("Error adding the new service: %v", err)
 			http.Error(w, "Error registering service", http.StatusInternalServerError)
 			return
 		}
 		// fmt.Println(record)
 		updatedRecordBytes, err := usecases.Pack(record, mediaType)
 		if err != nil {
-			log.Printf("error confirming new service: %s", err)
+			log.Printf("Error confirming new service: %s", err)
 			http.Error(w, "Error registering service", http.StatusInternalServerError)
 		}
 		w.Header().Set("Content-Type", mediaType)
@@ -202,17 +203,17 @@ func (ua *UnitAsset) queryDB(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Error retrieving service records: %v", err)
 				http.Error(w, "Error retrieving service records", http.StatusInternalServerError)
 			}
-		case servvicesList := <-recordsRequest.Result:
+		case servicesList := <-recordsRequest.Result:
 			// Build the HTML response
 			text := "<!DOCTYPE html><html><body>"
 			if _, err := w.Write([]byte(text)); err != nil {
-				log.Printf("error occurreded while writing to responsewriter: %v", err)
+				log.Printf("Error occurred while writing to responsewriter: %v", err)
 			}
 			text = "<p>The local cloud's currently available services are:</p><ul>"
 			if _, err := w.Write([]byte(text)); err != nil {
-				log.Printf("error occurreded while writing to responsewriter: %v", err)
+				log.Printf("Error occurred while writing to responsewriter: %v", err)
 			}
-			for _, servRec := range servvicesList {
+			for _, servRec := range servicesList {
 				metaservice := ""
 				for key, values := range servRec.Details {
 					metaservice += key + ": " + fmt.Sprintf("%v", values) + " "
@@ -222,35 +223,38 @@ func (ua *UnitAsset) queryDB(w http.ResponseWriter, r *http.Request) {
 				uaName := parts[0]
 				sLine := "<p>Service ID: " + strconv.Itoa(int(servRec.Id)) + " with definition <b><a href=\"" + hyperlink + "\">" + servRec.ServiceDefinition + "</b></a> from the <b>" + servRec.SystemName + "/" + uaName + "</b> with details " + metaservice + " will expire at: " + servRec.EndOfValidity + "</p>"
 				if _, err := w.Write([]byte(fmt.Sprintf("<li>%s</li>", sLine))); err != nil {
-					log.Printf("error occurreded while writing to responsewriter: %v", err)
+					log.Printf("Error occurred while writing to responsewriter: %v", err)
 				}
 			}
 			text = "</ul></body></html>"
 			if _, err := w.Write([]byte(text)); err != nil {
-				log.Printf("error occurreded while writing to responsewriter: %v", err)
+				log.Printf("Error occurred while writing to responsewriter: %v", err)
 			}
 		case <-time.After(5 * time.Second): // Optional timeout
 			http.Error(w, "Request timed out", http.StatusGatewayTimeout)
 			log.Println("Failure to process service listing request")
 		}
 
-	case "POST": // from the orchesrator
+	case "POST": // from the orchestrator
 		contentType := r.Header.Get("Content-Type")
 		mediaType, _, err := mime.ParseMediaType(contentType)
 		if err != nil {
-			fmt.Println("Error parsing media type:", err)
+			log.Println("Error parsing media type:", err)
+			http.Error(w, "Error parsing media type", http.StatusBadRequest)
 			return
 		}
 
 		defer r.Body.Close()
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
-			log.Printf("error reading service discovery request body: %v", err)
+			log.Printf("Error reading service discovery request body: %v", err)
+			http.Error(w, "Error reading service discovery request body", http.StatusBadRequest)
 			return
 		}
 		record, err := usecases.Unpack(bodyBytes, mediaType)
 		if err != nil {
-			log.Printf("error extracting the service discovery request %v\n", err)
+			log.Printf("Error extracting the service discovery request %v\n", err)
+			http.Error(w, "Error extracting the service discovery request", http.StatusBadRequest)
 			return
 		}
 
@@ -273,11 +277,10 @@ func (ua *UnitAsset) queryDB(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "Error retrieving service records", http.StatusInternalServerError)
 				return
 			}
-		case servvicesList := <-readRecord.Result:
-			fmt.Println(servvicesList)
+		case servicesList := <-readRecord.Result:
 			var slForm forms.ServiceRecordList_v1
 			slForm.NewForm()
-			slForm.List = servvicesList
+			slForm.List = servicesList
 			updatedRecordBytes, err := usecases.Pack(&slForm, mediaType)
 			if err != nil {
 				log.Printf("error confirming new service: %s", err)
@@ -291,14 +294,13 @@ func (ua *UnitAsset) queryDB(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-time.After(5 * time.Second): // Optional timeout
-			http.Error(w, "Request timed out", http.StatusGatewayTimeout)
 			log.Println("Failure to process service discovery request")
+			http.Error(w, "Request timed out", http.StatusGatewayTimeout)
 			return
 		}
 	default:
 		http.Error(w, "Unsupported HTTP request method", http.StatusMethodNotAllowed)
 	}
-	// fmt.Println("Done querying the database")
 }
 
 // cleanDB deletes service records upon request (e.g., when a system shuts down)
@@ -325,7 +327,7 @@ func (ua *UnitAsset) cleanDB(w http.ResponseWriter, r *http.Request) {
 		// Check the error back from the unit asset
 		err = <-addRecord.Error
 		if err != nil {
-			log.Printf("error deleting the service with id: %d, %s\n", id, err)
+			log.Printf("Error deleting the service with id: %d, %s\n", id, err)
 			http.Error(w, "Error deleting service", http.StatusInternalServerError)
 			return
 		}
@@ -350,10 +352,10 @@ func (ua *UnitAsset) roleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
 		if _, err := w.Write([]byte("Service Unavailable")); err != nil {
-			log.Printf("error occurreded while writing to responsewriter: %v", err)
+			log.Printf("Error occurred while writing to responsewriter: %v", err)
 		}
 	default:
-		fmt.Fprintf(w, "unsupported http request method")
+		fmt.Fprintf(w, "Unsupported http request method")
 	}
 }
 
@@ -386,14 +388,14 @@ func (ua *UnitAsset) Role() {
 				case http.StatusServiceUnavailable:
 					// Service unavailable
 				default:
-					fmt.Printf("Received unexpected status code: %d\n", resp.StatusCode)
+					log.Printf("Received unexpected status code: %d\n", resp.StatusCode)
 				}
 			}
 			if !standby && !ua.leading {
 				ua.leading = true
 				ua.leadingSince = time.Now()
 				ua.leadingRegistrar = nil
-				fmt.Printf("taking the service registry lead at %s\n", ua.leadingSince)
+				log.Printf("Taking the service registry lead at %s\n", ua.leadingSince)
 			}
 			<-ticker.C
 		}
@@ -428,11 +430,11 @@ func (ua *UnitAsset) systemList(w http.ResponseWriter, r *http.Request) {
 	case "GET":
 		systemsList, err := getUniqueSystems(ua)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("system list error: %s", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("System list error: %s", err), http.StatusInternalServerError)
 			return
 		}
 		usecases.HTTPProcessGetRequest(w, r, systemsList)
 	default:
-		http.Error(w, "unsupported HTTP request method", http.StatusMethodNotAllowed)
+		http.Error(w, "Unsupported HTTP request method", http.StatusMethodNotAllowed)
 	}
 }

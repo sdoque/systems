@@ -175,17 +175,19 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		// Error:           make(chan error),                  // Initialize the error channel
 	}
 
-	ua.Traits = assetTraits 
+	ua.Traits = assetTraits
 
 	// Start to repeatedly check which is the leading registrar
-	ua.Role() 
+	ua.Role()
 
 	// Start the service registry manager goroutine
 	go ua.serviceRegistryHandler()
 
 	return ua, func() {
+		ua.mu.Lock()
 		close(ua.requests)       // Close channels before exiting (cleanup)
 		cleaningScheduler.Stop() // Gracefully stop the scheduler
+		ua.mu.Unlock()
 		log.Println("Closing the service registry database connection")
 	}
 }
@@ -279,7 +281,6 @@ func (ua *UnitAsset) serviceRegistryHandler() {
 				}
 				nextExpiration := now.Add(time.Duration(dbRec.RegLife) * time.Second).Format(time.RFC3339)
 				rec.EndOfValidity = nextExpiration
-				// log.Printf("Updated the record %s with next expiration date at %s", rec.ServiceDefinition, rec.EndOfValidity)
 			}
 			ua.sched.AddTask(now.Add(time.Duration(rec.RegLife)*time.Second), func() { checkExpiration(ua, rec.Id) }, rec.Id)
 			ua.serviceRegistry[rec.Id] = *rec // Add record to the registry
@@ -297,16 +298,14 @@ func (ua *UnitAsset) serviceRegistryHandler() {
 				}
 				ua.mu.Unlock() // Unlock access to the service registry map
 				request.Result <- result
-				// log.Println("complete listing sent from registry")
 				continue
 			}
 			qform, ok := request.Record.(*forms.ServiceQuest_v1)
 			if !ok {
-				fmt.Println("Problem unpacking the service quest request")
+				log.Println("Problem unpacking the service quest request")
 				request.Error <- fmt.Errorf("invalid record type")
 				continue
 			}
-			fmt.Printf("\nThe service quest form is %v\n\n", qform)
 			matchingRecords := ua.FilterByServiceDefinitionAndDetails(qform.ServiceDefinition, qform.Details)
 			request.Result <- matchingRecords
 
@@ -375,7 +374,7 @@ func checkExpiration(ua *UnitAsset, servId int) {
 	dbRec := ua.serviceRegistry[servId]
 	expiration, err := time.Parse(time.RFC3339, dbRec.EndOfValidity)
 	if err != nil {
-		log.Printf("time parsing problem when checking service expiration")
+		log.Printf("Time parsing problem when checking service expiration")
 		return
 	}
 

@@ -328,7 +328,7 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 
 func sendAddRequestWithDetails(id int64, def string, subPath string, created string, ch chan ServiceRegistryRequest) error {
 	rec := &forms.ServiceRecord_v1{
-		Id:                0,
+		Id:                int(id),
 		ServiceDefinition: def,
 		SystemName:        "System",
 		ServiceNode:       "node",
@@ -353,6 +353,7 @@ func sendAddRequestWithDetails(id int64, def string, subPath string, created str
 
 	req := ServiceRegistryRequest{
 		Action: "add",
+		Id:     0,
 		Record: rec,
 		Error:  make(chan error),
 	}
@@ -481,6 +482,32 @@ func TestServiceRegistryHandlerRead(t *testing.T) {
 
 		shutdown()
 	}
+}
+
+// ------------------------------------------------------------------------ //
+// Help functions and structs to test delete in serviceRegistryHandler()
+// ------------------------------------------------------------------------ //
+
+func sendDeleteRequest(id int, ch chan ServiceRegistryRequest) {
+	ch <- ServiceRegistryRequest{
+		Action: "delete",
+		Id:     int64(id),
+	}
+}
+
+func TestServiceRegistryHandlerDelete(t *testing.T) {
+	// Setup
+	temp := createConfAssetMultipleTraits()
+	sys := createNewSys()
+	res, shutdown := newResource(temp, &sys)
+	ua, _ := res.(*UnitAsset)
+	time.Sleep(25 * time.Millisecond)
+	// Add a services to the serviceregistrar
+	sendAddRequestWithDetails(1, "test", "sub1", time.Now().Format(time.RFC3339), ua.requests)
+
+	sendDeleteRequest(0, ua.requests)
+
+	shutdown()
 }
 
 // ------------------------------------------------------------------------ //

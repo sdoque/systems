@@ -62,7 +62,7 @@ func main() {
 	usecases.RegisterServices(&sys)
 	go usecases.SetoutServers(&sys)
 	<-sys.Sigs
-	usecases.LogInfo(&sys, "shuting down %s", sys.Name)
+	usecases.LogInfo(&sys, "shutting down %s", sys.Name)
 	cancel()
 	time.Sleep(2 * time.Second)
 }
@@ -108,11 +108,11 @@ func (ua *UnitAsset) handleNewMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (ua *UnitAsset) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	errors, warnings := ua.latestWarnings()
+	errors, warnings, latest := ua.filterLogs()
 	data := map[string]any{
 		"Errors":   errors,
 		"Warnings": warnings,
-		"Logs":     ua.latestLogs(),
+		"Latest":   latest,
 	}
 
 	buf := &bytes.Buffer{}

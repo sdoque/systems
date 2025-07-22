@@ -19,9 +19,6 @@ import (
 	"github.com/sdoque/mbaigo/usecases"
 )
 
-//go:embed dashboard.html
-var tmplDashboard string
-
 type message struct {
 	time   time.Time
 	level  forms.MessageLevel
@@ -38,24 +35,19 @@ func (m message) String() string {
 	)
 }
 
-// type Traits struct {
-// }
-
 type UnitAsset struct {
 	Name        string              `json:"name"`
 	Owner       *components.System  `json:"-"`
 	Details     map[string][]string `json:"details"`
 	ServicesMap components.Services `json:"-"`
 	CervicesMap components.Cervices `json:"-"`
-	// Traits
 
-	regMsg        []byte // Cached MessengerRegistration form
-	messages      map[string][]message
-	mutex         sync.RWMutex
-	tmplDashboard *template.Template
+	regMsg        []byte               // Cached MessengerRegistration form
+	messages      map[string][]message // Per system msg log
+	mutex         sync.RWMutex         // Protects concurrent access to previous field
+	tmplDashboard *template.Template   // The HTML template loaded from file
 }
 
-// TODO: check if pointer is necessary??
 func (ua *UnitAsset) GetName() string { return ua.Name }
 
 func (ua *UnitAsset) GetServices() components.Services { return ua.ServicesMap }
@@ -63,8 +55,6 @@ func (ua *UnitAsset) GetServices() components.Services { return ua.ServicesMap }
 func (ua *UnitAsset) GetCervices() components.Cervices { return ua.CervicesMap }
 
 func (ua *UnitAsset) GetDetails() map[string][]string { return ua.Details }
-
-// func (ua *UnitAsset) GetTraits() any { return ua.Traits }
 
 var _ components.UnitAsset = (*UnitAsset)(nil)
 
@@ -83,6 +73,11 @@ func initTemplate() components.UnitAsset {
 	}
 }
 
+// Instructs the compiler to load and embed the following file into the built binary
+
+//go:embed dashboard.html
+var tmplDashboard string
+
 func newResource(ca usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func(), error) {
 	ua := &UnitAsset{
 		Name:        ca.Name,
@@ -91,18 +86,12 @@ func newResource(ca usecases.ConfigurableAsset, sys *components.System) (compone
 		ServicesMap: usecases.MakeServiceMap(ca.Services),
 		messages:    make(map[string][]message),
 	}
-	// traits, err := unmarshalTraits(ca.Traits)
-	// if err != nil {
-	// 	return nil, nil, err
-	// }
-	// ua.Traits = traits[0]
 
 	var err error
 	ua.tmplDashboard, err = template.New("dashboard").Parse(tmplDashboard)
 	if err != nil {
 		return nil, nil, err
 	}
-
 	ua.regMsg, err = newRegMsg(sys)
 	if err != nil {
 		return nil, nil, err
@@ -111,18 +100,6 @@ func newResource(ca usecases.ConfigurableAsset, sys *components.System) (compone
 	f := func() {}
 	return ua, f, nil
 }
-
-// func unmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
-// 	var traitsList []Traits
-// 	for _, raw := range rawTraits {
-// 		var t Traits
-// 		if err := json.Unmarshal(raw, &t); err != nil {
-// 			return nil, fmt.Errorf("unmarshal trait: %w", err)
-// 		}
-// 		traitsList = append(traitsList, t)
-// 	}
-// 	return traitsList, nil
-// }
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -149,7 +126,7 @@ func newRegMsg(sys *components.System) ([]byte, error) {
 	return usecases.Pack(forms.Form(&m), "application/json")
 }
 
-const timeoutUpdate int = 30
+const beaconPeriod int = 30
 
 // runBeacon runs periodically in the background (in a goroutine at startup).
 // It fetches a list of systems and then sends out a MessengerRegistration to each.
@@ -161,7 +138,7 @@ func (ua *UnitAsset) runBeacon() {
 		}
 		ua.notifySystems(s)
 		select {
-		case <-time.Tick(time.Duration(timeoutUpdate) * time.Second):
+		case <-time.Tick(time.Duration(beaconPeriod) * time.Second):
 		case <-ua.Owner.Ctx.Done():
 			return
 		}
@@ -219,16 +196,19 @@ func (ua *UnitAsset) notifySystems(list []string) {
 			continue // Skip itself and other messengers
 		}
 		// Don't care about any errors or any systems that don't want to talk with us
+		// (using empty variable names to shut up the linter warning about unhandled errors)
 		_, _ = sendRequest("POST", sys+"/msg", ua.regMsg)
 	}
 }
 
 const maxMessages int = 10
 
+// addMessage adds the new message m to a system's log and optionally removes the
+// oldest, if the log's size is larger than maxMessages.
+// Note that this function sets the timestamp of the incoming msg too.
 func (ua *UnitAsset) addMessage(m forms.SystemMessage_v1) {
 	ua.mutex.Lock()
 	defer ua.mutex.Unlock()
-
 	ua.messages[m.System] = append(ua.messages[m.System], message{
 		time:   time.Now(),
 		level:  m.Level,
@@ -240,14 +220,17 @@ func (ua *UnitAsset) addMessage(m forms.SystemMessage_v1) {
 	}
 }
 
-func (ua *UnitAsset) latestWarnings() (errors, warnings map[string]message) {
+// filterLogs fetches the latest errors/warnings/all messages from the log.
+// The log is appended to in a chronological order already, so the latest error
+// and warning for each system will be returned and "all" will be in reverse
+// chronological order.
+func (ua *UnitAsset) filterLogs() (errors, warnings map[string]message, all []message) {
 	errors = make(map[string]message)
 	warnings = make(map[string]message)
 	ua.mutex.RLock()
-	defer ua.mutex.RUnlock()
-
 	for system := range ua.messages {
 		for _, m := range ua.messages[system] {
+			all = append(all, m)
 			switch m.level {
 			case forms.LevelError:
 				errors[system] = m
@@ -256,20 +239,10 @@ func (ua *UnitAsset) latestWarnings() (errors, warnings map[string]message) {
 			}
 		}
 	}
-	return
-}
-
-func (ua *UnitAsset) latestLogs() (logs []message) {
-	ua.mutex.RLock()
-	defer ua.mutex.RUnlock()
-
-	for system := range ua.messages {
-		for _, m := range ua.messages[system] {
-			logs = append(logs, m)
-		}
-	}
-	sort.Slice(logs, func(i, j int) bool {
-		return logs[i].time.After(logs[j].time)
+	ua.mutex.RUnlock()
+	// Reverse order
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].time.After(all[j].time)
 	})
 	return
 }

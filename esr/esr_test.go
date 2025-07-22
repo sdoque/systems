@@ -430,7 +430,7 @@ func TestQueryDB(t *testing.T) {
 			"Good case GET, everything passes",
 		},
 		{
-			http.StatusOK,
+			http.StatusBadRequest,
 			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
 				ua.leading = true
 
@@ -444,7 +444,7 @@ func TestQueryDB(t *testing.T) {
 			"Bad case POST, can't parse Content-Type from header",
 		},
 		{
-			http.StatusOK,
+			http.StatusBadRequest,
 			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
 				ua.leading = true
 
@@ -458,7 +458,7 @@ func TestQueryDB(t *testing.T) {
 			"Bad case POST, error while reading body",
 		},
 		{
-			http.StatusOK,
+			http.StatusBadRequest,
 			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
 				ua.leading = true
 

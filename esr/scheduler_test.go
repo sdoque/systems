@@ -5,13 +5,9 @@ import (
 	"time"
 )
 
-// --------------------------------------------------------------------------- //
-// Help functions and structs to test the add part of ****
-// --------------------------------------------------------------------------- //
-
-type addTaskParams struct {
-	setup func() *Scheduler
-}
+// -------------------- //
+// Tests for scheduler
+// -------------------- //
 
 func TestAddTask(t *testing.T) {
 	sched := NewScheduler()
@@ -52,7 +48,7 @@ func TestStop(t *testing.T) {
 	sched := NewScheduler()
 	now := time.Now()
 
-	// Add the task and then remove it
+	// Add some tasks and make sure Stop() works as intended
 	sched.AddTask(now.Add(25*time.Second), func() {}, 0)
 	sched.AddTask(now.Add(25*time.Second), func() {}, 1)
 	sched.AddTask(now.Add(25*time.Second), func() {}, 2)

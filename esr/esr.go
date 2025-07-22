@@ -176,7 +176,7 @@ func (ua *UnitAsset) updateDB(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, err = w.Write([]byte(updatedRecordBytes))
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("Error occurred while writing to response: %v", err)
 			return
 		}
 

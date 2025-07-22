@@ -279,48 +279,41 @@ func TestUpdateDB(t *testing.T) {
 				body := io.NopCloser(strings.NewReader("TestBody"))
 				r = httptest.NewRequest(http.MethodPut, "http://localhost/reg", body)
 				r.Header = map[string][]string{"Content-Type": {"application/json"}}
-
 				return w, r
 			},
 			"Bad case, not leading registrar",
 		},
 		{
-			200,
+			http.StatusBadRequest,
 			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
 				ua.leading = true
-
 				w = httptest.NewRecorder()
 				body := io.NopCloser(strings.NewReader("TestBody"))
 				r = httptest.NewRequest(http.MethodPut, "http://localhost/reg", body)
-
 				return w, r
 			},
 			"Bad case, wrong content type in request",
 		},
 		{
-			200,
+			http.StatusBadRequest,
 			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
 				ua.leading = true
-
 				w = httptest.NewRecorder()
 				body := io.NopCloser(errReader(0))
 				r = httptest.NewRequest(http.MethodPut, "http://localhost/reg", body)
 				r.Header = map[string][]string{"Content-Type": {"application/json"}}
-
 				return w, r
 			},
 			"Bad case, can't read body",
 		},
 		{
-			200,
+			http.StatusBadRequest,
 			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
 				ua.leading = true
-
 				w = httptest.NewRecorder()
 				body := io.NopCloser(strings.NewReader(""))
 				r = httptest.NewRequest(http.MethodPut, "http://localhost/reg", body)
 				r.Header = map[string][]string{"Content-Type": {"application/json"}}
-
 				return w, r
 			},
 			"Bad case, can't unpack body",
@@ -370,6 +363,25 @@ func TestUpdateDB(t *testing.T) {
 			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
 				ua.leading = true
 
+				rec := &forms.ServiceRecord_v1{
+					Id:      0,
+					Version: "ServiceRecord_v1",
+				}
+
+				data, _ := json.Marshal(rec)
+				w = httptest.NewRecorder()
+				body := io.NopCloser(bytes.NewReader(data))
+				r = httptest.NewRequest(http.MethodPost, "http://localhost/reg", body)
+				r.Header = map[string][]string{"Content-Type": {"application/json"}}
+
+				return w, r
+			},
+			"Good case, everything passes",
+		},
+		{
+			200,
+			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
+				ua.leading = true
 				w = httptest.NewRecorder()
 				body := io.NopCloser(strings.NewReader(""))
 				r = httptest.NewRequest(http.MethodGet, "http://localhost/reg", body)

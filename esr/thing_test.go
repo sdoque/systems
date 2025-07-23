@@ -184,7 +184,7 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 			func(ua *UnitAsset) error {
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
 				if err != nil {
-					return err
+					t.Fatalf("Failed sending first request")
 				}
 				err = sendAddRequest(1, "testDef2", "subP", time.Now().Format(time.RFC3339), ua.requests)
 				return err
@@ -196,7 +196,7 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 			func(ua *UnitAsset) error {
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
 				if err != nil {
-					return err
+					t.Fatalf("Failed sending first request")
 				}
 				err = sendAddRequest(1, "testDef", "subPa", time.Now().Format(time.RFC3339), ua.requests)
 				return err
@@ -208,7 +208,7 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 			func(ua *UnitAsset) error {
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
 				if err != nil {
-					return err
+					t.Fatalf("Failed sending first request")
 				}
 				err = sendAddRequest(1, "testDef", "subP", "", ua.requests)
 				return err
@@ -221,7 +221,7 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 				ch := ua.requests
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
 				if err != nil {
-					return err
+					t.Fatalf("Failed sending first request")
 				}
 				err = sendAddRequest(1, "testDef", "subP", time.Now().Add(1*time.Hour).Format(time.RFC3339), ch)
 				return err
@@ -234,7 +234,7 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 				ch := ua.requests
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
 				if err != nil {
-					return err
+					t.Fatalf("Failed sending first request")
 				}
 				err = sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
 				return err
@@ -247,7 +247,7 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 				ch := ua.requests
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
 				if err != nil {
-					return err
+					t.Fatalf("Failed sending first request")
 				}
 				err = sendAddRequest(1, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
 				return err

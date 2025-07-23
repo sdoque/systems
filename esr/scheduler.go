@@ -16,22 +16,30 @@
 
 package main
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 // Scheduler struct type with the list and three channels
 type Scheduler struct {
 	taskMap map[int]*time.Timer // list elements has id, timer
+	mu      sync.Mutex
 }
 
 // Returns a scheduler with an empty task map
 func NewScheduler() *Scheduler {
 	return &Scheduler{
 		taskMap: make(map[int]*time.Timer),
+		mu:      sync.Mutex{},
 	}
 }
 
 // AddTask adds a task to the task map and starts a timer for its job, when timer is done it runs the job in a goroutine
+// It's up to the caller to ensure that the deadline is not before time.Now()
 func (s *Scheduler) AddTask(deadline time.Time, job func(), id int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	timer, exists := s.taskMap[id]
 	if exists {
 		timer.Stop()
@@ -42,6 +50,8 @@ func (s *Scheduler) AddTask(deadline time.Time, job func(), id int) {
 
 // RemoveTask removes a scheduled job and deletes the task from the task map
 func (s *Scheduler) RemoveTask(id int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	timer, exists := s.taskMap[id]
 	if !exists {
 		return
@@ -52,6 +62,8 @@ func (s *Scheduler) RemoveTask(id int) {
 
 // Stop() loops through the task map and turns off the timer for each tasks job
 func (s *Scheduler) Stop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for _, value := range s.taskMap {
 		value.Stop()
 	}

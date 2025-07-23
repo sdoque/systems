@@ -12,16 +12,38 @@ import (
 func TestAddTask(t *testing.T) {
 	sched := NewScheduler()
 	now := time.Now()
+	ch := make(chan int)
+	// case: ensure chrono order
+	sched.AddTask(now.Add(2*time.Second), func() { ch <- 0 }, 0)
+	sched.AddTask(now.Add(5*time.Millisecond), func() { ch <- 1 }, 1)
 
-	// Add the task
-	sched.AddTask(now.Add(25*time.Second), func() {}, 0)
-
-	if _, exists := sched.taskMap[0]; !exists {
-		t.Errorf("Task was not present")
+	select {
+	case id := <-ch:
+		if id != 1 {
+			t.Errorf("Expected 1 from channel, got %d", id)
+		}
+	case <-time.After(50 * time.Millisecond):
+		t.Errorf("Chronological order test timed out")
 	}
+	sched.Stop()
+
+	sched.AddTask(now.Add(2*time.Second), func() { ch <- 0 }, 0)
+	sched.AddTask(now.Add(25*time.Millisecond), func() { ch <- 1 }, 0)
+
+	select {
+	case id := <-ch:
+		if id != 1 {
+			t.Errorf("Expected 1 from channel, got %d", id)
+		}
+	case <-time.After(50 * time.Millisecond):
+		t.Errorf("Duplicate ID test timed out")
+	}
+	sched.Stop()
 }
 
 func TestRemoveTask(t *testing.T) {
+	// TODO: Similar to AddTask for the PR comment
+
 	// Case: task exists
 	sched := NewScheduler()
 	now := time.Now()
@@ -45,6 +67,7 @@ func TestRemoveTask(t *testing.T) {
 }
 
 func TestStop(t *testing.T) {
+	// TODO: Some kind of counter
 	sched := NewScheduler()
 	now := time.Now()
 

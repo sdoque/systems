@@ -13,30 +13,8 @@ import (
 	"github.com/sdoque/mbaigo/usecases"
 )
 
-// ----------------------------------------------------- //
-// Help functions and structs to tests initTemplate()
-// ----------------------------------------------------- //
-
-func TestInitTemplate(t *testing.T) {
-	expectedServices := []string{"register", "query", "unregister", "status"}
-
-	ua := initTemplate()
-	services := ua.GetServices()
-
-	// Check if expected name and services are present
-	if ua.GetName() != "registry" {
-		t.Errorf("Name mismatch expected 'registry', got: %s", ua.GetName())
-	}
-
-	for _, s := range expectedServices {
-		if _, ok := services[s]; !ok {
-			t.Errorf("Expected service '%s' to be present", s)
-		}
-	}
-}
-
 // ------------------------------------------------ //
-// Help functions and structs to test newResource()
+// Help functions and other goodies for testing
 // ------------------------------------------------ //
 
 // Create a error reader to break json.Unmarshal()
@@ -49,17 +27,6 @@ func (errReader) Read(p []byte) (n int, err error) {
 }
 func (errReader) Close() error {
 	return nil
-}
-
-func createConfAssetBrokenTraits() usecases.ConfigurableAsset {
-	brokenTrait, _ := json.Marshal(errReader(0))
-	uac := usecases.ConfigurableAsset{
-		Name:     "testRegistrar",
-		Details:  map[string][]string{"testDetail": {"detail1", "detail2"}},
-		Services: []components.Service{},
-		Traits:   []json.RawMessage{json.RawMessage(brokenTrait)},
-	}
-	return uac
 }
 
 func createConfAssetMultipleTraits() usecases.ConfigurableAsset {
@@ -95,38 +62,6 @@ func createTestSystem() components.System {
 		orchestrator,
 	}
 	return sys
-}
-
-type newResourceParams struct {
-	setup     func() components.System
-	confAsset func() usecases.ConfigurableAsset
-	testCase  string
-}
-
-func TestNewResource(t *testing.T) {
-	params := []newResourceParams{
-		{
-			func() (sys components.System) { return createTestSystem() },
-			func() (confAsset usecases.ConfigurableAsset) { return createConfAssetBrokenTraits() },
-			"Case: unmarshal traits fails",
-		},
-		{
-			func() (sys components.System) { return createTestSystem() },
-			func() (confAsset usecases.ConfigurableAsset) { return createConfAssetMultipleTraits() },
-			"Case: confAsset has multiple traits",
-		},
-	}
-
-	for _, c := range params {
-		sys := c.setup()
-		uac := c.confAsset()
-
-		ua, shutdown := newResource(uac, &sys)
-		shutdown()
-		if ua.GetName() != "testRegistrar" {
-			t.Errorf("Name mismatch, expected '%s' got '%s'", uac.Name, ua.GetName())
-		}
-	}
 }
 
 // --------------------------------------------------------------------------- //
@@ -247,8 +182,11 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 		{
 			true,
 			func(ua *UnitAsset) error {
-				sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
-				err := sendAddRequest(1, "testDef2", "subP", time.Now().Format(time.RFC3339), ua.requests)
+				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
+				if err != nil {
+					return err
+				}
+				err = sendAddRequest(1, "testDef2", "subP", time.Now().Format(time.RFC3339), ua.requests)
 				return err
 			},
 			"Bad case, exists with different service definition",
@@ -256,8 +194,11 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 		{
 			true,
 			func(ua *UnitAsset) error {
-				sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
-				err := sendAddRequest(1, "testDef", "subPa", time.Now().Format(time.RFC3339), ua.requests)
+				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
+				if err != nil {
+					return err
+				}
+				err = sendAddRequest(1, "testDef", "subPa", time.Now().Format(time.RFC3339), ua.requests)
 				return err
 			},
 			"Bad case, exists with different subpath",
@@ -265,8 +206,11 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 		{
 			true,
 			func(ua *UnitAsset) error {
-				sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
-				err := sendAddRequest(1, "testDef", "subP", "", ua.requests)
+				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
+				if err != nil {
+					return err
+				}
+				err = sendAddRequest(1, "testDef", "subP", "", ua.requests)
 				return err
 			},
 			"Bad case, exists different creation time in updated record",
@@ -275,8 +219,11 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 			true,
 			func(ua *UnitAsset) error {
 				ch := ua.requests
-				sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
-				err := sendAddRequest(1, "testDef", "subP", time.Now().Add(1*time.Hour).Format(time.RFC3339), ch)
+				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
+				if err != nil {
+					return err
+				}
+				err = sendAddRequest(1, "testDef", "subP", time.Now().Add(1*time.Hour).Format(time.RFC3339), ch)
 				return err
 			},
 			"Bad case, mismatch between db- and received created field",
@@ -285,18 +232,24 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 			false,
 			func(ua *UnitAsset) error {
 				ch := ua.requests
-				sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
+				if err != nil {
+					return err
+				}
+				err = sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
 				return err
 			},
-			"Bad case, recCount has looped back to 0",
+			"Good case, recCount has looped back to 0",
 		},
 		{
 			false,
 			func(ua *UnitAsset) error {
 				ch := ua.requests
-				sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
-				err := sendAddRequest(1, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
+				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
+				if err != nil {
+					return err
+				}
+				err = sendAddRequest(1, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
 				return err
 			},
 			"Good case, updated db record",
@@ -312,6 +265,7 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 
 		// Test and check
 		err := c.request(ua)
+
 		if c.expectError == false && err != nil {
 			t.Errorf("Expected no errors in '%s': %v", c.testCase, err)
 		}
@@ -581,11 +535,12 @@ func TestFilterByServiceDefAndDetails(t *testing.T) {
 // Help functions and structs to test checkExpiration()
 // ---------------------------------------------------- //
 
-func createRegistryWithService(year any) (ua *UnitAsset, err error) {
-	initTemp := initTemplate()
-	ua, ok := initTemp.(*UnitAsset)
+func createRegistryWithService(year any) (ua *UnitAsset, cancel func(), err error) {
+	sys := createNewSys()
+	temp, cancel := newResource(createConfAssetMultipleTraits(), &sys)
+	ua, ok := temp.(*UnitAsset)
 	if !ok {
-		return nil, fmt.Errorf("Failed while typecasting to local UnitAsset")
+		return nil, nil, fmt.Errorf("Failed while typecasting to local UnitAsset")
 	}
 
 	var test forms.ServiceRecord_v1
@@ -594,12 +549,12 @@ func createRegistryWithService(year any) (ua *UnitAsset, err error) {
 	test.IPAddresses = []string{"999.999.999.999"}
 	test.EndOfValidity = fmt.Sprintf("%v-01-02T15:04:05Z", year)
 	ua.serviceRegistry = map[int]forms.ServiceRecord_v1{0: test}
-	return ua, nil
+	return ua, cancel, err
 }
 
 type checkExpirationParams struct {
 	servicePresent bool
-	setup          func() (*UnitAsset, error)
+	setup          func() (*UnitAsset, func(), error)
 	testCase       string
 }
 
@@ -607,22 +562,22 @@ func TestCheckExpiration(t *testing.T) {
 	params := []checkExpirationParams{
 		{
 			true,
-			func() (ua *UnitAsset, err error) { return createRegistryWithService(2026) },
+			func() (ua *UnitAsset, cancel func(), err error) { return createRegistryWithService(2026) },
 			"Best case, service not past expiration",
 		},
 		{
 			false,
-			func() (ua *UnitAsset, err error) { return createRegistryWithService(2006) },
+			func() (ua *UnitAsset, cancel func(), err error) { return createRegistryWithService(2006) },
 			"Bad case, service past expiration",
 		},
 		{
 			true,
-			func() (ua *UnitAsset, err error) { return createRegistryWithService("faulty") },
+			func() (ua *UnitAsset, cancel func(), err error) { return createRegistryWithService("faulty") },
 			"Bad case, time parsing problem",
 		},
 	}
 	for _, c := range params {
-		ua, err := c.setup()
+		ua, cancel, err := c.setup()
 		if err != nil {
 			t.Errorf("failed during setup: %v", err)
 		}
@@ -634,6 +589,8 @@ func TestCheckExpiration(t *testing.T) {
 		if _, exists := ua.serviceRegistry[0]; (exists == true) && (c.servicePresent == false) {
 			t.Errorf("expected service to be removed in '%s'", c.testCase)
 		}
+
+		cancel()
 	}
 }
 

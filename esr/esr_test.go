@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -193,8 +192,12 @@ func createFilledRegistrar() *UnitAsset {
 	var serviceAmount int
 	for x := range 5 {
 		serviceAmount++
-		ua.serviceRegistry[x] = forms.ServiceRecord_v1{Id: x, SystemName: fmt.Sprintf("testSys%d", x),
-			IPAddresses: []string{"localhost"}, ProtoPort: map[string]int{"http": 1234}}
+		ua.serviceRegistry[x] = forms.ServiceRecord_v1{
+			Id:          x,
+			SystemName:  fmt.Sprintf("testSys%d", x),
+			IPAddresses: []string{"localhost"},
+			ProtoPort:   map[string]int{"http": 1234},
+		}
 	}
 	return ua
 }
@@ -263,9 +266,47 @@ func TestSystemList(t *testing.T) {
 // Help functions and structs to test updateDB()
 // ----------------------------------------------- //
 
+func createSpecialRequest(statusCode int, method string) *http.Request {
+	if statusCode == 200 {
+		rec := &forms.ServiceRecord_v1{
+			Id:      0,
+			Version: "ServiceRecord_v1",
+		}
+
+		data, _ := json.Marshal(rec)
+		body := io.NopCloser(bytes.NewReader(data))
+		return httptest.NewRequest(method, "http://localhost/reg", body)
+	} else {
+		rec := &forms.ServiceRecord_v1{
+			Id:                int(0),
+			ServiceDefinition: "test",
+			SystemName:        "System",
+			ServiceNode:       "node",
+			IPAddresses:       []string{"123.456.789.012"},
+			ProtoPort:         map[string]int{"http": 1234},
+			Details:           map[string][]string{"details": {}},
+			Certificate:       "ABCD",
+			SubPath:           "testPath",
+			RegLife:           25,
+			Version:           "SignalA_v1.0",
+			Created:           "",
+			Updated:           time.Now().String(),
+			EndOfValidity:     time.Now().Add(25 * time.Second).String(),
+			SubscribeAble:     false,
+			ACost:             float64(0),
+			CUnit:             "",
+		}
+		data, _ := json.Marshal(rec)
+		body := io.NopCloser(bytes.NewReader(data))
+		return httptest.NewRequest(method, "http://localhost/reg", body)
+	}
+}
+
 type updateDBParams struct {
 	expectedStatuscode int
-	setup              func(*UnitAsset) (*httptest.ResponseRecorder, *http.Request)
+	leading            bool
+	body               io.ReadCloser
+	method             string
 	testCase           string
 }
 
@@ -273,122 +314,51 @@ func TestUpdateDB(t *testing.T) {
 	params := []updateDBParams{
 		{
 			http.StatusServiceUnavailable,
-			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
-				ua.leading = false
-				w = httptest.NewRecorder()
-				body := io.NopCloser(strings.NewReader("TestBody"))
-				r = httptest.NewRequest(http.MethodPut, "http://localhost/reg", body)
-				r.Header = map[string][]string{"Content-Type": {"application/json"}}
-				return w, r
-			},
+			false,
+			io.NopCloser(strings.NewReader("TestBody")),
+			http.MethodPut,
 			"Bad case, not leading registrar",
 		},
 		{
 			http.StatusBadRequest,
-			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
-				ua.leading = true
-				w = httptest.NewRecorder()
-				body := io.NopCloser(strings.NewReader("TestBody"))
-				r = httptest.NewRequest(http.MethodPut, "http://localhost/reg", body)
-				return w, r
-			},
+			true,
+			io.NopCloser(strings.NewReader("TestBody")),
+			http.MethodPut,
 			"Bad case, wrong content type in request",
 		},
 		{
 			http.StatusBadRequest,
-			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
-				ua.leading = true
-				w = httptest.NewRecorder()
-				body := io.NopCloser(errReader(0))
-				r = httptest.NewRequest(http.MethodPut, "http://localhost/reg", body)
-				r.Header = map[string][]string{"Content-Type": {"application/json"}}
-				return w, r
-			},
+			true,
+			io.NopCloser(errReader(0)),
+			http.MethodPut,
 			"Bad case, can't read body",
 		},
 		{
 			http.StatusBadRequest,
-			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
-				ua.leading = true
-				w = httptest.NewRecorder()
-				body := io.NopCloser(strings.NewReader(""))
-				r = httptest.NewRequest(http.MethodPut, "http://localhost/reg", body)
-				r.Header = map[string][]string{"Content-Type": {"application/json"}}
-				return w, r
-			},
+			true,
+			io.NopCloser(strings.NewReader("")),
+			http.MethodPut,
 			"Bad case, can't unpack body",
 		},
 		{
 			http.StatusInternalServerError,
-			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
-				ua.leading = true
-
-				w = httptest.NewRecorder()
-
-				// Record has to match the one sent by sendAddRequest(..)
-				rec := &forms.ServiceRecord_v1{
-					Id:                int(0),
-					ServiceDefinition: "test",
-					SystemName:        "System",
-					ServiceNode:       "node",
-					IPAddresses:       []string{"123.456.789.012"},
-					ProtoPort:         map[string]int{"http": 1234},
-					Details:           map[string][]string{"details": {}},
-					Certificate:       "ABCD",
-					SubPath:           "testPath",
-					RegLife:           25,
-					Version:           "SignalA_v1.0",
-					Created:           "",
-					Updated:           time.Now().String(),
-					EndOfValidity:     time.Now().Add(25 * time.Second).String(),
-					SubscribeAble:     false,
-					ACost:             float64(0),
-					CUnit:             "",
-				}
-				data, err := json.Marshal(rec)
-				if err != nil {
-					log.Printf("Error: %v", err)
-				}
-				body := io.NopCloser(bytes.NewReader(data))
-				r = httptest.NewRequest(http.MethodPut, "http://localhost/reg", body)
-				r.Header = map[string][]string{"Content-Type": {"application/json"}}
-				sendAddRequest(0, "test", "testPath", "", ua.requests)
-
-				return w, r
-			},
+			true,
+			nil,
+			http.MethodPut,
 			"Bad case, request returns error",
 		},
 		{
 			200,
-			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
-				ua.leading = true
-
-				rec := &forms.ServiceRecord_v1{
-					Id:      0,
-					Version: "ServiceRecord_v1",
-				}
-
-				data, _ := json.Marshal(rec)
-				w = httptest.NewRecorder()
-				body := io.NopCloser(bytes.NewReader(data))
-				r = httptest.NewRequest(http.MethodPost, "http://localhost/reg", body)
-				r.Header = map[string][]string{"Content-Type": {"application/json"}}
-
-				return w, r
-			},
+			true,
+			nil,
+			http.MethodPost,
 			"Good case, everything passes",
 		},
 		{
 			200,
-			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
-				ua.leading = true
-				w = httptest.NewRecorder()
-				body := io.NopCloser(strings.NewReader(""))
-				r = httptest.NewRequest(http.MethodGet, "http://localhost/reg", body)
-				r.Header = map[string][]string{"Content-Type": {"application/json"}}
-
-				return w, r
-			},
+			true,
+			io.NopCloser(strings.NewReader("")),
+			http.MethodGet,
 			"Good case, default case",
 		},
 	}
@@ -400,8 +370,16 @@ func TestUpdateDB(t *testing.T) {
 		confAsset := createConfAssetMultipleTraits()
 		temp, shutdown := newResource(confAsset, &sys)
 		ua = temp.(*UnitAsset)
+		ua.leading = c.leading
+		w := httptest.NewRecorder()
+		var r *http.Request
+		if c.body == nil {
+			r = createSpecialRequest(c.expectedStatuscode, c.method)
+		} else {
+			r = httptest.NewRequest(c.method, "http://localhost/reg", c.body)
+		}
 
-		w, r := c.setup(ua)
+		r.Header = map[string][]string{"Content-Type": {"application/json"}}
 
 		// Test and checks
 		ua.updateDB(w, r)
@@ -421,7 +399,10 @@ func TestUpdateDB(t *testing.T) {
 
 type queryDBParams struct {
 	expectedStatuscode int
-	setup              func(*UnitAsset) (*httptest.ResponseRecorder, *http.Request)
+	leading            bool
+	body               io.ReadCloser
+	method             string
+	header             map[string][]string
 	testCase           string
 }
 
@@ -429,113 +410,75 @@ func TestQueryDB(t *testing.T) {
 	params := []queryDBParams{
 		{
 			http.StatusOK,
-			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
-				ua.leading = true
-
-				w = httptest.NewRecorder()
-				body := io.NopCloser(strings.NewReader("{}"))
-				r = httptest.NewRequest(http.MethodGet, "http://localhost/reg", body)
-				r.Header = map[string][]string{"Content-Type": {"application/json"}}
-
-				return w, r
-			},
+			true,
+			io.NopCloser(strings.NewReader("{}")),
+			http.MethodGet,
+			map[string][]string{"Content-Type": {"application/json"}},
 			"Good case GET, everything passes",
 		},
 		{
 			http.StatusBadRequest,
-			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
-				ua.leading = true
-
-				w = httptest.NewRecorder()
-				body := io.NopCloser(strings.NewReader("{}"))
-				r = httptest.NewRequest(http.MethodPost, "http://localhost/reg", body)
-				r.Header = map[string][]string{}
-
-				return w, r
-			},
+			true,
+			io.NopCloser(strings.NewReader("{}")),
+			http.MethodPost,
+			map[string][]string{},
 			"Bad case POST, can't parse Content-Type from header",
 		},
 		{
 			http.StatusBadRequest,
-			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
-				ua.leading = true
-
-				w = httptest.NewRecorder()
-				body := io.NopCloser(errReader(0))
-				r = httptest.NewRequest(http.MethodPost, "http://localhost/reg", body)
-				r.Header = map[string][]string{"Content-Type": {"application/json"}}
-
-				return w, r
-			},
+			true,
+			io.NopCloser(errReader(0)),
+			http.MethodPost,
+			map[string][]string{"Content-Type": {"application/json"}},
 			"Bad case POST, error while reading body",
 		},
 		{
 			http.StatusBadRequest,
-			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
-				ua.leading = true
-
-				w = httptest.NewRecorder()
-				body := io.NopCloser(strings.NewReader("{}"))
-				r = httptest.NewRequest(http.MethodPost, "http://localhost/reg", body)
-				r.Header = map[string][]string{"Content-Type": {"application/json"}}
-
-				return w, r
-			},
+			true,
+			io.NopCloser(strings.NewReader("{}")),
+			http.MethodPost,
+			map[string][]string{"Content-Type": {"application/json"}},
 			"Bad case POST, error while unpacking body",
 		},
 		{
 			http.StatusInternalServerError,
-			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
-				ua.leading = true
-
-				w = httptest.NewRecorder()
-				body := io.NopCloser(strings.NewReader(`{"id": 0, "version":"SignalA_v1.0"}`))
-				r = httptest.NewRequest(http.MethodPost, "http://localhost/reg", body)
-				r.Header = map[string][]string{"Content-Type": {"application/json"}}
-
-				return w, r
-			},
+			true,
+			io.NopCloser(strings.NewReader(`{"id": 0, "version":"SignalA_v1.0"}`)),
+			http.MethodPost,
+			map[string][]string{"Content-Type": {"application/json"}},
 			"Bad case POST, request returns error",
 		},
 		{
 			http.StatusOK,
-			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
-				ua.leading = true
-
-				w = httptest.NewRecorder()
-				body := io.NopCloser(strings.NewReader(`{"id": 0, "version":"ServiceQuest_v1"}`))
-				r = httptest.NewRequest(http.MethodPost, "http://localhost/reg", body)
-				r.Header = map[string][]string{"Content-Type": {"application/json"}}
-
-				return w, r
-			},
+			true,
+			io.NopCloser(strings.NewReader(`{"id": 0, "version":"ServiceQuest_v1"}`)),
+			http.MethodPost,
+			map[string][]string{"Content-Type": {"application/json"}},
 			"Good case POST, request returns a result",
 		},
 		{
 			http.StatusMethodNotAllowed,
-			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
-				ua.leading = true
-
-				w = httptest.NewRecorder()
-				body := io.NopCloser(strings.NewReader(`{"id": 0, "version":"ServiceQuest_v1"}`))
-				r = httptest.NewRequest(http.MethodDelete, "http://localhost/reg", body)
-				r.Header = map[string][]string{"Content-Type": {"application/json"}}
-
-				return w, r
-			},
+			true,
+			io.NopCloser(strings.NewReader(`{"id": 0, "version":"ServiceQuest_v1"}`)),
+			http.MethodDelete,
+			map[string][]string{"Content-Type": {"application/json"}},
 			"Bad case default, unsupported http method",
 		},
 	}
 
 	for _, c := range params {
+		// Setup
 		var ua *UnitAsset
 		sys := createTestSystem()
 		confAsset := createConfAssetMultipleTraits()
 		temp, shutdown := newResource(confAsset, &sys)
 		ua = temp.(*UnitAsset)
-		sendAddRequest(0, "test", "testPath", "", ua.requests)
+		ua.leading = c.leading
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(c.method, "http://localhost/reg", c.body)
+		r.Header = c.header
 
-		w, r := c.setup(ua)
+		sendAddRequest(0, "test", "testPath", "", ua.requests)
 
 		// Test and checks
 		ua.queryDB(w, r)
@@ -555,7 +498,9 @@ func TestQueryDB(t *testing.T) {
 
 type cleanDBParams struct {
 	expectedStatuscode int
-	setup              func(*UnitAsset) (*httptest.ResponseRecorder, *http.Request)
+	leading            bool
+	body               io.ReadCloser
+	method             string
 	testCase           string
 }
 
@@ -563,30 +508,16 @@ func TestCleanDB(t *testing.T) {
 	params := []cleanDBParams{
 		{
 			http.StatusBadRequest,
-			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
-				ua.leading = true
-
-				w = httptest.NewRecorder()
-				body := io.NopCloser(strings.NewReader(`{"id": 0, "version":"ServiceQuest_v1"}`))
-				r = httptest.NewRequest(http.MethodDelete, "http://localhost/reg/a", body)
-				r.Header = map[string][]string{"Content-Type": {"application/json"}}
-
-				return w, r
-			},
+			true,
+			io.NopCloser(strings.NewReader(`{"id": 0, "version":"ServiceQuest_v1"}`)),
+			http.MethodDelete,
 			"Bad case DELETE, couldn't convert id to int",
 		},
 		{
 			200,
-			func(ua *UnitAsset) (w *httptest.ResponseRecorder, r *http.Request) {
-				ua.leading = true
-
-				w = httptest.NewRecorder()
-				body := io.NopCloser(strings.NewReader(`{"id": 0, "version":"ServiceQuest_v1"}`))
-				r = httptest.NewRequest(http.MethodGet, "http://localhost/reg/a", body)
-				r.Header = map[string][]string{"Content-Type": {"application/json"}}
-
-				return w, r
-			},
+			true,
+			io.NopCloser(strings.NewReader(`{"id": 0, "version":"ServiceQuest_v1"}`)),
+			http.MethodGet,
 			"Bad case default, unsupported http method",
 		},
 	}
@@ -597,9 +528,12 @@ func TestCleanDB(t *testing.T) {
 		confAsset := createConfAssetMultipleTraits()
 		temp, shutdown := newResource(confAsset, &sys)
 		ua = temp.(*UnitAsset)
-		sendAddRequest(0, "test", "testPath", "", ua.requests)
+		ua.leading = c.leading
 
-		w, r := c.setup(ua)
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(c.method, "http://localhost/reg/a", c.body)
+		r.Header = map[string][]string{"Content-Type": {"application/json"}}
+		sendAddRequest(0, "test", "testPath", "", ua.requests)
 
 		// Test and checks
 		ua.cleanDB(w, r)

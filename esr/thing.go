@@ -383,6 +383,7 @@ func checkExpiration(ua *UnitAsset, servId int) {
 			return
 		}
 		delete(ua.serviceRegistry, int(servId))
+		ua.sched.RemoveTask(int(servId))
 		if _, exists := ua.serviceRegistry[servId]; !exists {
 			log.Printf("The service with ID %d has been deleted because it was not renewed.", servId)
 		}

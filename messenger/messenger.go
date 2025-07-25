@@ -85,7 +85,7 @@ func (ua *UnitAsset) handleNewMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return
 	}
-	b, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError),
 			http.StatusInternalServerError)
@@ -93,12 +93,12 @@ func (ua *UnitAsset) handleNewMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	f, err := usecases.Unpack(b, r.Header.Get("Content-Type"))
+	form, err := usecases.Unpack(body, r.Header.Get("Content-Type"))
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
-	msg, ok := f.(*forms.SystemMessage_v1)
+	msg, ok := form.(*forms.SystemMessage_v1)
 	if !ok {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return

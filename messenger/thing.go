@@ -42,7 +42,7 @@ type UnitAsset struct {
 	ServicesMap components.Services `json:"-"`
 	CervicesMap components.Cervices `json:"-"`
 
-	regMsg        []byte               // Cached MessengerRegistration form
+	cachedRegMsg  []byte               // Caches the MessengerRegistration form
 	messages      map[string][]message // Per system msg log
 	mutex         sync.RWMutex         // Protects concurrent access to previous field
 	tmplDashboard *template.Template   // The HTML template loaded from file
@@ -59,7 +59,7 @@ func (ua *UnitAsset) GetDetails() map[string][]string { return ua.Details }
 var _ components.UnitAsset = (*UnitAsset)(nil)
 
 func initTemplate() components.UnitAsset {
-	s := components.Service{
+	service := components.Service{
 		Definition:  "message",
 		SubPath:     "message",
 		Details:     map[string][]string{"Forms": {"SystemMessage_v1"}},
@@ -69,7 +69,7 @@ func initTemplate() components.UnitAsset {
 	return &UnitAsset{
 		Name:        "log",
 		Details:     map[string][]string{},
-		ServicesMap: components.Services{s.SubPath: &s},
+		ServicesMap: components.Services{service.SubPath: &service},
 	}
 }
 
@@ -92,7 +92,7 @@ func newResource(ca usecases.ConfigurableAsset, sys *components.System) (compone
 	if err != nil {
 		return nil, nil, err
 	}
-	ua.regMsg, err = newRegMsg(sys)
+	ua.cachedRegMsg, err = newRegMsg(sys)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -109,21 +109,21 @@ func newRegMsg(sys *components.System) ([]byte, error) {
 	// This system URL is created in the same way as the registrar,
 	// in getUniqueSystems(). Using url.URL instead for safer string assembly.
 	// https://github.com/lmas/mbaigo_systems/blob/dev/esr/thing.go#L404-L407
-	var u url.URL
-	u.Host = sys.Host.IPAddresses[0]
-	u.Scheme = "https"
-	port := sys.Husk.ProtoPort[u.Scheme]
+	var systemURL url.URL
+	systemURL.Host = sys.Host.IPAddresses[0]
+	systemURL.Scheme = "https"
+	port := sys.Husk.ProtoPort[systemURL.Scheme]
 	if port == 0 {
-		u.Scheme = "http"
-		port = sys.Husk.ProtoPort[u.Scheme]
+		systemURL.Scheme = "http"
+		port = sys.Husk.ProtoPort[systemURL.Scheme]
 		if port == 0 {
 			return nil, fmt.Errorf("no http(s) port defined in conf")
 		}
 	}
-	u.Host += ":" + strconv.Itoa(port)
-	u.Path = sys.Name
-	m := forms.NewMessengerRegistration_v1(u.String())
-	return usecases.Pack(forms.Form(&m), "application/json")
+	systemURL.Host += ":" + strconv.Itoa(port)
+	systemURL.Path = sys.Name
+	registration := forms.NewMessengerRegistration_v1(systemURL.String())
+	return usecases.Pack(forms.Form(&registration), "application/json")
 }
 
 const beaconPeriod int = 30
@@ -132,11 +132,11 @@ const beaconPeriod int = 30
 // It fetches a list of systems and then sends out a MessengerRegistration to each.
 func (ua *UnitAsset) runBeacon() {
 	for {
-		s, err := ua.fetchSystems()
+		systems, err := ua.fetchSystems()
 		if err != nil {
 			usecases.LogWarn(ua.Owner, "error fetching system list: %s", err)
 		}
-		ua.notifySystems(s)
+		ua.notifySystems(systems)
 		select {
 		case <-time.Tick(time.Duration(beaconPeriod) * time.Second):
 		case <-ua.Owner.Ctx.Done():
@@ -171,33 +171,33 @@ func (ua *UnitAsset) fetchSystems() (systems []string, err error) {
 	if err != nil {
 		return
 	}
-	b, err := sendRequest("GET", url+"/syslist", nil)
-	f, err := usecases.Unpack(b, "application/json")
+	body, err := sendRequest("GET", url+"/syslist", nil)
+	form, err := usecases.Unpack(body, "application/json")
 	if err != nil {
 		return
 	}
-	list, ok := f.(*forms.SystemRecordList_v1)
+	records, ok := form.(*forms.SystemRecordList_v1)
 	if !ok {
 		err = fmt.Errorf("form is not a SystemRecordList_v1")
 		return
 	}
-	return list.List, nil
+	return records.List, nil
 }
 
 // notifySystems sends a pre-packed MessengerRegistration form to a list of online systems.
 // Any systems with incorrect URLs, any messengers, and any http errors will be ignored.
 func (ua *UnitAsset) notifySystems(list []string) {
 	for _, sys := range list {
-		u, err := url.Parse(sys)
+		sysURL, err := url.Parse(sys)
 		if err != nil {
 			continue // Skip misconfigured systems
 		}
-		if strings.HasPrefix(u.Path, "/"+ua.Owner.Name) {
+		if strings.HasPrefix(sysURL.Path, "/"+ua.Owner.Name) {
 			continue // Skip itself and other messengers
 		}
 		// Don't care about any errors or any systems that don't want to talk with us
 		// (using empty variable names to shut up the linter warning about unhandled errors)
-		_, _ = sendRequest("POST", sys+"/msg", ua.regMsg)
+		_, _ = sendRequest("POST", sys+"/msg", ua.cachedRegMsg)
 	}
 }
 
@@ -206,17 +206,17 @@ const maxMessages int = 10
 // addMessage adds the new message m to a system's log and optionally removes the
 // oldest, if the log's size is larger than maxMessages.
 // Note that this function sets the timestamp of the incoming msg too.
-func (ua *UnitAsset) addMessage(m forms.SystemMessage_v1) {
+func (ua *UnitAsset) addMessage(msg forms.SystemMessage_v1) {
 	ua.mutex.Lock()
 	defer ua.mutex.Unlock()
-	ua.messages[m.System] = append(ua.messages[m.System], message{
+	ua.messages[msg.System] = append(ua.messages[msg.System], message{
 		time:   time.Now(),
-		level:  m.Level,
-		system: m.System,
-		body:   m.Body,
+		level:  msg.Level,
+		system: msg.System,
+		body:   msg.Body,
 	})
-	if len(ua.messages[m.System]) > maxMessages {
-		ua.messages[m.System] = ua.messages[m.System][1:]
+	if len(ua.messages[msg.System]) > maxMessages {
+		ua.messages[msg.System] = ua.messages[msg.System][1:]
 	}
 }
 
@@ -229,13 +229,13 @@ func (ua *UnitAsset) filterLogs() (errors, warnings map[string]message, all []me
 	warnings = make(map[string]message)
 	ua.mutex.RLock()
 	for system := range ua.messages {
-		for _, m := range ua.messages[system] {
-			all = append(all, m)
-			switch m.level {
+		for _, msg := range ua.messages[system] {
+			all = append(all, msg)
+			switch msg.level {
 			case forms.LevelError:
-				errors[system] = m
+				errors[system] = msg
 			case forms.LevelWarn:
-				warnings[system] = m
+				warnings[system] = msg
 			}
 		}
 	}

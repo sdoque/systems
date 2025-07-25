@@ -15,7 +15,7 @@ import (
 
 type errorReader struct{}
 
-func (er *errorReader) Read(b []byte) (int, error) {
+func (er *errorReader) Read([]byte) (int, error) {
 	return 0, fmt.Errorf("read error")
 }
 
@@ -50,12 +50,12 @@ func TestHandleNewMessage(t *testing.T) {
 		messages: make(map[string][]message),
 	}
 	for _, test := range table {
-		w := httptest.NewRecorder()
-		r := httptest.NewRequest(test.method, "/message", test.body)
-		r.Header.Set("Content-Type", test.content)
-		ua.handleNewMessage(w, r)
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(test.method, "/message", test.body)
+		req.Header.Set("Content-Type", test.content)
+		ua.handleNewMessage(rec, req)
 
-		res := w.Result()
+		res := rec.Result()
 		if got, want := res.StatusCode, test.expectedStatus; got != want {
 			t.Errorf("expected status %d, got %d", want, got)
 		}

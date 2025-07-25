@@ -224,6 +224,11 @@ func (ua *UnitAsset) serviceRegistryHandler() {
 			}
 			ua.mu.Lock() // Lock the serviceRegistry map
 
+			// Check if the ID exists in the serviceRegistry
+			if _, exists := ua.serviceRegistry[rec.Id]; !exists {
+				rec.Id = 0
+			}
+
 			if rec.Id == 0 {
 				// In the case recCount had looped, check that there is no record at that position
 				for {
@@ -245,12 +250,6 @@ func (ua *UnitAsset) serviceRegistryHandler() {
 				log.Printf("The new service %s from system %s has been registered\n", rec.ServiceDefinition, rec.SystemName)
 			} else {
 				// Validate and update existing record
-				_, exists := ua.serviceRegistry[rec.Id]
-				if !exists {
-					ua.mu.Unlock()
-					request.Error <- fmt.Errorf("no existing record with id %d", rec.Id)
-					continue
-				}
 				dbRec := ua.serviceRegistry[rec.Id]
 				if dbRec.ServiceDefinition != rec.ServiceDefinition {
 					request.Error <- errors.New("mismatch between definition received record and database record")

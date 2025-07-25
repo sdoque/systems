@@ -42,32 +42,30 @@ func TestAddTask(t *testing.T) {
 }
 
 func TestRemoveTask(t *testing.T) {
-	// TODO: Similar to AddTask for the PR comment
-
 	// Case: task exists
 	sched := NewScheduler()
 	now := time.Now()
 
-	// Add the task and then remove it
+	// Add the task and then remove it, function should return true since it removed a task
 	sched.AddTask(now.Add(25*time.Second), func() {}, 0)
-	sched.RemoveTask(0)
 
-	if _, exists := sched.taskMap[0]; exists {
-		t.Errorf("Unexpected task exists in taskMap[0]")
+	if removed := sched.RemoveTask(0); removed != true {
+		t.Errorf("Expected function to return true")
 	}
 
-	// Case: task doesn't exist
+	if _, exists := sched.taskMap[0]; exists {
+		t.Errorf("Expected no element in taskMap[0]")
+	}
+
+	// Case: task doesn't exist, function should return false since there was no task to remove
 	sched = NewScheduler()
 	// Add the task and then remove it
-	sched.RemoveTask(0)
-
-	if _, exists := sched.taskMap[0]; exists {
-		t.Errorf("Unexpected task exists in taskMap[0]")
+	if removed := sched.RemoveTask(0); removed == true {
+		t.Errorf("Expected function to return false")
 	}
 }
 
 func TestStop(t *testing.T) {
-	// TODO: Some kind of counter
 	sched := NewScheduler()
 	now := time.Now()
 
@@ -76,9 +74,9 @@ func TestStop(t *testing.T) {
 	sched.AddTask(now.Add(25*time.Second), func() {}, 1)
 	sched.AddTask(now.Add(25*time.Second), func() {}, 2)
 	sched.AddTask(now.Add(25*time.Second), func() {}, 3)
-	sched.Stop()
+	count := sched.Stop()
 
-	if len(sched.taskMap) > 0 {
-		t.Errorf("Expected taskMap to be empty, has %d keys", len(sched.taskMap))
+	if count < 4 {
+		t.Errorf("Expected scheduler to turn off 4 tasks, got %d", count)
 	}
 }

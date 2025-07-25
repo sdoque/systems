@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/x509/pkix"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"testing"
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
@@ -85,7 +87,6 @@ func (ua *UnitAsset) handleNewMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	b, err := io.ReadAll(r.Body)
 	if err != nil {
-		usecases.LogError(ua.Owner, "read request body: %v", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError),
 			http.StatusInternalServerError)
 		return
@@ -94,20 +95,41 @@ func (ua *UnitAsset) handleNewMessage(w http.ResponseWriter, r *http.Request) {
 
 	f, err := usecases.Unpack(b, r.Header.Get("Content-Type"))
 	if err != nil {
-		usecases.LogWarn(ua.Owner, "unpack: %v", err)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 	msg, ok := f.(*forms.SystemMessage_v1)
 	if !ok {
-		usecases.LogWarn(ua.Owner, "form is not a SystemMessage_v1")
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 	ua.addMessage(*msg) // Don't want to have to deal with pointers, hence the *
 }
 
+// Encapsulates the regular bytes.Buffer, in order to allow causing mock errors
+type mockableBuffer struct {
+	bytes.Buffer // This embedded struct is available as "mockableBuffer.Buffer" by default
+	errWrite     error
+}
+
+func (mock *mockableBuffer) setWriteError(err error) {
+	mock.errWrite = err
+}
+
+func (mock *mockableBuffer) Write(body []byte) (int, error) {
+	if mock.errWrite != nil {
+		return 0, mock.errWrite
+	}
+	return mock.Buffer.Write(body)
+}
+
+const testBufferHeader string = "x-testing-buffer"
+
 func (ua *UnitAsset) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
 	errors, warnings, latest := ua.filterLogs()
 	data := map[string]any{
 		"Errors":   errors,
@@ -115,7 +137,12 @@ func (ua *UnitAsset) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"Latest":   latest,
 	}
 
-	buf := &bytes.Buffer{}
+	buf := &mockableBuffer{}
+	// Protects the special test header by enabling it's use only while running `go test`
+	if testing.Testing() && r.Header.Get(testBufferHeader) != "" {
+		// This write error will cause an error in the template.Execute() below
+		buf.setWriteError(fmt.Errorf("mock error"))
+	}
 	if err := ua.tmplDashboard.Execute(buf, data); err != nil {
 		usecases.LogError(ua.Owner, "execute dashboard: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)

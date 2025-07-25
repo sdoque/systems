@@ -49,23 +49,26 @@ func (s *Scheduler) AddTask(deadline time.Time, job func(), id int) {
 }
 
 // RemoveTask removes a scheduled job and deletes the task from the task map
-func (s *Scheduler) RemoveTask(id int) {
+func (s *Scheduler) RemoveTask(id int) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	timer, exists := s.taskMap[id]
 	if !exists {
-		return
+		return false
 	}
 	timer.Stop()
 	delete(s.taskMap, id)
+	return true
 }
 
 // Stop() loops through the task map and turns off the timer for each tasks job
-func (s *Scheduler) Stop() {
+func (s *Scheduler) Stop() (counter int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, value := range s.taskMap {
 		value.Stop()
+		counter++
 	}
 	s.taskMap = make(map[int]*time.Timer)
+	return
 }

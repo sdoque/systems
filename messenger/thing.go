@@ -172,6 +172,9 @@ func (ua *UnitAsset) fetchSystems() (systems []string, err error) {
 		return
 	}
 	body, err := sendRequest("GET", url+"/syslist", nil)
+	if err != nil {
+		return
+	}
 	form, err := usecases.Unpack(body, "application/json")
 	if err != nil {
 		return

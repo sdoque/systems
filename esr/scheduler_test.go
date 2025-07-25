@@ -13,10 +13,10 @@ func TestAddTask(t *testing.T) {
 	sched := NewScheduler()
 	now := time.Now()
 	ch := make(chan int)
+
 	// case: ensure chrono order
 	sched.AddTask(now.Add(2*time.Second), func() { ch <- 0 }, 0)
 	sched.AddTask(now.Add(5*time.Millisecond), func() { ch <- 1 }, 1)
-
 	select {
 	case id := <-ch:
 		if id != 1 {
@@ -27,9 +27,9 @@ func TestAddTask(t *testing.T) {
 	}
 	sched.Stop()
 
+	// Case: ID is reused between tasks
 	sched.AddTask(now.Add(2*time.Second), func() { ch <- 0 }, 0)
 	sched.AddTask(now.Add(25*time.Millisecond), func() { ch <- 1 }, 0)
-
 	select {
 	case id := <-ch:
 		if id != 1 {

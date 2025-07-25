@@ -65,8 +65,8 @@ func (s *Scheduler) RemoveTask(id int) bool {
 func (s *Scheduler) Stop() (counter int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, value := range s.taskMap {
-		value.Stop()
+	for _, timer := range s.taskMap {
+		timer.Stop()
 		counter++
 	}
 	s.taskMap = make(map[int]*time.Timer)

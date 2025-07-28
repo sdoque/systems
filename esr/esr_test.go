@@ -24,10 +24,9 @@ func createLeadingRegistrar() *UnitAsset {
 		Name:        "testRegistrar",
 		Details:     map[string][]string{"testDetail": {"detail1", "detail2"}},
 		ServicesMap: components.Services{},
-		Traits: Traits{
-			leading:      true,
-			leadingSince: time.Now(),
-		},
+
+		leading:      true,
+		leadingSince: time.Now(),
 	}
 	return uac
 }
@@ -37,10 +36,9 @@ func createNonLeadingRegistrar() *UnitAsset {
 		Name:        "testRegistrar",
 		Details:     map[string][]string{"testDetail": {"detail1", "detail2"}},
 		ServicesMap: components.Services{},
-		Traits: Traits{
-			leading:          false,
-			leadingRegistrar: &components.CoreSystem{Name: "otherRegistrar", Url: "otherURL"},
-		},
+
+		leading:          false,
+		leadingRegistrar: &components.CoreSystem{Name: "otherRegistrar", Url: "otherURL"},
 	}
 	return uac
 }
@@ -50,10 +48,9 @@ func createServiceUnavailableRegistrar() *UnitAsset {
 		Name:        "testRegistrar",
 		Details:     map[string][]string{"testDetail": {"detail1", "detail2"}},
 		ServicesMap: components.Services{},
-		Traits: Traits{
-			leading:          false,
-			leadingRegistrar: nil,
-		},
+
+		leading:          false,
+		leadingRegistrar: nil,
 	}
 	return uac
 }

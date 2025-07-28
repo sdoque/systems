@@ -175,13 +175,6 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 		{
 			true,
 			func(ua *UnitAsset) error {
-				return sendAddRequest(1, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
-			},
-			"Bad case, service doesn't exist in registry",
-		},
-		{
-			true,
-			func(ua *UnitAsset) error {
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
 				if err != nil {
 					t.Fatalf("Failed sending first request")

@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -122,7 +123,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 
 	traits, err := UnmarshalTraits(configuredAsset.Traits)
 	if err != nil {
-		usecases.LogWarn(sys, "could not unmarshal traits: %v", err)
+		log.Println("Warning: could not unmarshal traits:", err)
 	} else if len(traits) > 0 {
 		ua.Traits = traits[0] // or handle multiple traits if needed
 	}
@@ -130,7 +131,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	go ua.readTemperature(sys.Ctx)
 
 	return ua, func() {
-		usecases.LogInfo(sys, "disconnecting from %s", ua.Name)
+		log.Printf("disconnecting from %s\n", ua.Name)
 	}
 }
 
@@ -171,25 +172,25 @@ func (ua *UnitAsset) readTemperature(ctx context.Context) {
 				deviceFile := "/sys/bus/w1/devices/" + ua.Name + "/w1_slave"
 				rawData, err := os.ReadFile(deviceFile)
 				if err != nil {
-					usecases.LogError(ua.Owner, "Error reading temperature file: %s, error: %v", deviceFile, err)
+					log.Printf("Error reading temperature file: %s, error: %v\n", deviceFile, err)
 					continue // Retry on the next cycle
 				}
 
 				if len(rawData) == 0 {
-					usecases.LogWarn(ua.Owner, "Empty data read from temperature file: %s", deviceFile)
+					log.Printf("Empty data read from temperature file: %s\n", deviceFile)
 					continue
 				}
 
 				rawValue := strings.Split(string(rawData), "\n")[1]
 				if !strings.Contains(rawValue, "t=") {
-					usecases.LogError(ua.Owner, "Invalid temperature data: %s", rawData)
+					log.Printf("Invalid temperature data: %s\n", rawData)
 					continue
 				}
 
 				tempStr := strings.Split(rawValue, "t=")[1]
 				temp, err := strconv.ParseFloat(tempStr, 64)
 				if err != nil {
-					usecases.LogError(ua.Owner, "Error parsing temperature: %v", err)
+					log.Printf("Error parsing temperature: %v\n", err)
 					continue
 				}
 
@@ -207,6 +208,7 @@ func (ua *UnitAsset) readTemperature(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done(): // Shutdown
+			log.Println("Context canceled, stopping temperature readings.")
 			return
 
 		case temp := <-tempChan: // Update temperature and timestamp

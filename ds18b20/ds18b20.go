@@ -20,6 +20,8 @@ import (
 	"context"
 	"crypto/x509/pkix"
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -60,15 +62,14 @@ func main() {
 	// Configure the system
 	rawResources, err := usecases.Configure(&sys)
 	if err != nil {
-		usecases.LogWarn(&sys, "configuration error: %v", err)
+		log.Fatalf("configuration error: %v\n", err)
 	}
 	sys.UAssets = make(map[string]*components.UnitAsset) // clear the unit asset map (from the template)
 	var cleanups []func()
 	for _, raw := range rawResources {
 		var uac usecases.ConfigurableAsset
 		if err := json.Unmarshal(raw, &uac); err != nil {
-			usecases.LogError(&sys, "resource configuration error: %+v", err)
-			return
+			log.Fatalf("resource configuration error: %+v\n", err)
 		}
 		ua, cleanup := newResource(uac, &sys)
 		cleanups = append(cleanups, cleanup)
@@ -87,7 +88,7 @@ func main() {
 
 	// wait for shutdown signal, and gracefully close properly goroutines with context
 	<-sys.Sigs // wait for a SIGINT (Ctrl+C) signal
-	usecases.LogInfo(&sys, "shuting down system %s", sys.Name)
+	log.Println("\nshuting down system", sys.Name)
 	cancel()                    // cancel the context, signaling the goroutines to stop
 	time.Sleep(2 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
 }
@@ -114,18 +115,18 @@ func (ua *UnitAsset) readTemp(w http.ResponseWriter, r *http.Request) {
 		ua.trayChan <- getMeasuremet
 		select {
 		case err := <-getMeasuremet.Error:
-			usecases.LogError(ua.Owner, "error getting measurement: %v", err)
-			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Printf("Logic error in getting measurement, %s\n", err)
+			w.WriteHeader(http.StatusInternalServerError) // Use 500 for an internal error
 			return
 		case temperatureForm := <-getMeasuremet.ValueP:
 			usecases.HTTPProcessGetRequest(w, r, &temperatureForm)
 			return
 		case <-time.After(5 * time.Second): // Optional timeout
-			usecases.LogWarn(ua.Owner, "timed out while getting measurement")
-			http.Error(w, "Measurement timed out", http.StatusInternalServerError)
+			http.Error(w, "Request timed out", http.StatusGatewayTimeout)
+			log.Println("Failure to process temperature reading request")
 			return
 		}
 	default:
-		http.Error(w, "Method is not supported.", http.StatusMethodNotAllowed)
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}
 }

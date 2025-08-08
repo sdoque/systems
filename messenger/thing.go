@@ -134,7 +134,7 @@ func (ua *UnitAsset) runBeacon() {
 	for {
 		systems, err := ua.fetchSystems()
 		if err != nil {
-			usecases.LogWarn(ua.Owner, "error fetching system list: %s", err)
+			usecases.LogInfo(ua.Owner, "error fetching system list: %s", err)
 		}
 		ua.notifySystems(systems)
 		select {

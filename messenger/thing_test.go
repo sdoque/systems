@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/sdoque/mbaigo/components"
+	"github.com/sdoque/mbaigo/forms"
 )
 
 func TestNewRegMsg(t *testing.T) {
@@ -191,5 +192,52 @@ func TestFetchSystems(t *testing.T) {
 		if got, want := len(list), 1; got != want {
 			t.Errorf("expected %d urls in list, got %d", want, got)
 		}
+	}
+}
+
+func TestNotifySystems(t *testing.T) {
+	name := "test messenger"
+	urls := []string{
+		"\x00bad",  // Bad URLs
+		"/" + name, // Skip itself
+		"/good",    // All ok
+	}
+	sys := components.NewSystem(name, context.Background())
+	ua := &UnitAsset{
+		Owner: &sys,
+	}
+	mock := newTransSendRequest()
+	mock.status = http.StatusOK
+	mock.body = strings.NewReader("ok") // Required for sendRequest()
+	for _, test := range urls {
+		ua.notifySystems([]string{test})
+	}
+}
+
+func TestAddMessage(t *testing.T) {
+	sys := "test"
+	ua := &UnitAsset{
+		messages: make(map[string][]message),
+	}
+	for i := range maxMessages * 2 {
+		msg := forms.SystemMessage_v1{
+			Level:  forms.LevelDebug,
+			System: sys,
+			Body:   fmt.Sprintf("%d", i),
+		}
+		ua.addMessage(msg)
+	}
+
+	size := len(ua.messages[sys])
+	if got, want := size, maxMessages; got > want {
+		t.Errorf("expected max messages %d, got %d", want, got)
+	}
+	oldest := ua.messages[sys][0]
+	if got, want := oldest.body, fmt.Sprintf("%d", maxMessages); got != want {
+		t.Errorf("expected oldest msg '%s', got '%s'", want, got)
+	}
+	newest := ua.messages[sys][size-1]
+	if got, want := newest.body, fmt.Sprintf("%d", maxMessages*2-1); got != want {
+		t.Errorf("expected newest msg '%s', got '%s'", want, got)
 	}
 }

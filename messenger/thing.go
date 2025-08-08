@@ -157,10 +157,10 @@ func sendRequest(method, url string, body []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, fmt.Errorf("bad response: %s", resp.Status)
 	}
-	defer resp.Body.Close()
 	return io.ReadAll(resp.Body)
 }
 
@@ -219,6 +219,7 @@ func (ua *UnitAsset) addMessage(msg forms.SystemMessage_v1) {
 		body:   msg.Body,
 	})
 	if len(ua.messages[msg.System]) > maxMessages {
+		// Strips the oldest msg from the front of the slice
 		ua.messages[msg.System] = ua.messages[msg.System][1:]
 	}
 }
@@ -227,6 +228,8 @@ func (ua *UnitAsset) addMessage(msg forms.SystemMessage_v1) {
 // The log is appended to in a chronological order already, so the latest error
 // and warning for each system will be returned and "all" will be in reverse
 // chronological order.
+// NOTE: No tests are provided for this function, as it's most likely subject
+// to later changes.
 func (ua *UnitAsset) filterLogs() (errors, warnings map[string]message, all []message) {
 	errors = make(map[string]message)
 	warnings = make(map[string]message)

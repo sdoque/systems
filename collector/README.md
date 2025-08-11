@@ -1,6 +1,6 @@
-# mbaigo System: influxer
+# mbaigo System: Collector
 
-The Influxer is a system that as for asset the time series database [InfluxDB](https://en.wikipedia.org/wiki/InfluxDB).
+The Collector is a system that as for asset the time series database [InfluxDB](https://en.wikipedia.org/wiki/InfluxDB).
 
 It offers one services, *squery*. squery provides a list of signals present in its bucket’s measurements.
 
@@ -12,33 +12,32 @@ As with the other systems, this is a prototype that shows that the mbaigo librar
 ## Compiling
 To compile the code, one needs to get the AiGo module
 ```go get github.com/vanDeventer/mbaigo```
-and initialize the *go.mod* file with ``` go mod init github.com/vanDeventer/arrowsys/inflxer``` before running *go mod tidy*.
+and initialize the *go.mod* file with ``` go mod init github.com/vanDeventer/arrowsys/collector``` before running *go mod tidy*.
 
 The reason the *go.mod* file is not included in the repository is that when developing the mbaigo module, a replace statement needs to be included to point to the development code.
 
-To run the code, one just needs to type in ```go run influxer.go thing.go``` within a terminal or at a command prompt.
+To run the code, one just needs to type in ```go run Collector.go thing.go``` within a terminal or at a command prompt.
 
 It is **important** to start the program from within its own directory (and each system should have their own directory) because it looks for its configuration file there. If it does not find it there, it will generate one and shutdown to allow the configuration file to be updated.
 
 The configuration and operation of the system can be verified using the system's web server using a standard web browser, whose address is provided by the system at startup.
 
 To build the software for one's own machine,
-```go build -o influxer```.
+```go build -o Collector```.
 
 
 ## Cross compiling/building
 The following commands enable one to build for different platforms:
-- Intel Mac:  ```GOOS=darwin GOARCH=amd64 go build -o influxer_imac influxer.go thing.go```
-- ARM Mac: ```GOOS=darwin GOARCH=arm64 go build -o influxer_amac influxer.go thing.go```
-- Windows 64: ```GOOS=windows GOARCH=amd64 go build -o influxer.exe influxer.go thing.go```
-- Raspberry Pi 64: ```GOOS=linux GOARCH=arm64 go build -o influxer_rpi64 influxer.go thing.go```
-- (new) Raspberry Pi 32: ```GOOS=linux GOARCH=arm GOARM=7 go build -o influxer_rpi32 influxer.go thing.go```
-- Linux: ```GOOS=linux GOARCH=amd64 go build -o influxer_linux influxer.go thing.go```
+- Intel Mac:  ```GOOS=darwin GOARCH=amd64 go build -o Collector_imac```
+- ARM Mac: ```GOOS=darwin GOARCH=arm64 go build -o Collector_amac ```
+- Windows 64: ```GOOS=windows GOARCH=amd64 go build -o Collector.exe```
+- Raspberry Pi 64: ```GOOS=linux GOARCH=arm64 go build -o Collector_rpi64```
+- Linux: ```GOOS=linux GOARCH=amd64 go build -o Collector_linux```
 
 One can find a complete list of platform by typing *‌go tool dist list* at the command prompt
 
 If one wants to secure copy it to a Raspberry pi,
-`scp influxer_rpi64 jan@192.168.1.6:Desktop/influxer/` where user is the *username* @ the *IP address* of the Raspberry Pi with a relative (to the user's home directory) target *Desktop/influxer/* directory.influxer
+`scp Collector_rpi64 jan@192.168.1.10:rpiExec/Collector/` where user is the *username* @ the *IP address* of the Raspberry Pi with a relative (to the user's home directory) target *rpiExec/Collector/* directory.Collector
 
 
 ## Deployment of the asset

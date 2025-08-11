@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2024 Synecdoque
+ * Copyright (c) 2025 Synecdoque
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -17,44 +17,30 @@
 package main
 
 import (
-	"context"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
-	"strconv"
-	"strings"
-	"time"
+	"net/http"
+	"os/exec"
 
 	"github.com/sdoque/mbaigo/components"
-	"github.com/sdoque/mbaigo/forms"
 	"github.com/sdoque/mbaigo/usecases"
 )
 
-// Define the types of requests the measurement manager can handle
-type STray struct {
-	Action string
-	ValueP chan forms.SignalA_v1a
-	Error  chan error
-}
-
 // -------------------------------------Define the unit asset
-// Traits are Asset-specific configurable parameters
+// Traits are Asset-specific configurable parameters and variables
 type Traits struct {
-	temperature float64   `json:"-"`
-	tStamp      time.Time `json:"-"`
 }
 
-// UnitAsset type models the unit asset (interface) of the system.
+// UnitAsset type models the unit asset (interface) of the system
 type UnitAsset struct {
 	Name        string              `json:"name"`
 	Owner       *components.System  `json:"-"`
 	Details     map[string][]string `json:"details"`
 	ServicesMap components.Services `json:"-"`
 	CervicesMap components.Cervices `json:"-"`
-	//
 	Traits
-	trayChan chan STray `json:"-"` // Add a channel for temperature readings
 }
 
 // GetName returns the name of the Resource.
@@ -90,20 +76,19 @@ var _ components.UnitAsset = (*UnitAsset)(nil)
 // initTemplate initializes a UnitAsset with default values.
 func initTemplate() components.UnitAsset {
 	// Define the services that expose the capabilities of the unit asset(s)
-	temperature := components.Service{
-		Definition:  "temperature",
-		SubPath:     "temperature",
-		Details:     map[string][]string{"Forms": {"SignalA_v1a"}},
-		RegPeriod:   30,
-		Description: "provides the temperature (GET) of the resource temperature sensor",
+	stream := components.Service{
+		Definition:  "stream",
+		SubPath:     "start",
+		Details:     map[string][]string{"Forms": {"mpeg"}},
+		Description: " provides a video stream from the camera",
 	}
 
 	// var uat components.UnitAsset // this is an interface, which we then initialize
 	uat := &UnitAsset{
-		Name:    "sensor_Id",
-		Details: map[string][]string{"Unit": {"Celsius"}, "Location": {"Kitchen"}},
+		Name:    "PiCam",
+		Details: map[string][]string{"Model": {"PiCam v3 NoIR"}},
 		ServicesMap: components.Services{
-			temperature.SubPath: &temperature, // Inline assignment of the temperature service
+			stream.SubPath: &stream, // Inline assignment of the temperature service
 		},
 	}
 	return uat
@@ -118,20 +103,16 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
-		trayChan:    make(chan STray), // Initialize the channel
 	}
-
 	traits, err := UnmarshalTraits(configuredAsset.Traits)
 	if err != nil {
 		log.Println("Warning: could not unmarshal traits:", err)
 	} else if len(traits) > 0 {
 		ua.Traits = traits[0] // or handle multiple traits if needed
 	}
-	// start the unit asset(s)
-	go ua.readTemperature(sys.Ctx)
 
 	return ua, func() {
-		log.Printf("disconnecting from %s\n", ua.Name)
+		log.Println("disconnecting from sensors")
 	}
 }
 
@@ -148,80 +129,75 @@ func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
 	return traitsList, nil
 }
 
-//-------------------------------------Unit asset's functionalities
+//-------------------------------------Unit asset's resource functions
 
-// readTemperature obtains the temperature from respective ds18b20 resource at regular intervals
-func (ua *UnitAsset) readTemperature(ctx context.Context) {
-	defer close(ua.trayChan) // Ensure the channel is closed when the goroutine exits
+// StartStreamURL returns the URL to start the video stream.
+func (ua *UnitAsset) StartStreamURL() string {
+	ip := ua.Owner.Host.IPAddresses[0]
+	port := ua.Owner.Husk.ProtoPort["http"]
+	return fmt.Sprintf("http://%s:%d/filmer/%s/stream", ip, port, ua.Name)
+}
 
-	// Create a ticker that triggers every 2 seconds
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop() // Clean up the ticker when done
+// StreamTo streams the video from the camera to the HTTP response writer.
+// It uses libcamera-vid to capture video and sends it as a multipart MJPEG stream.
+func (ua *UnitAsset) StreamTo(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 
-	tempChan := make(chan float64) // Channel for latest temperature readings
-	tStampChan := make(chan time.Time)
+	cmd := exec.Command("libcamera-vid",
+		"-t", "0",
+		"--codec", "mjpeg",
+		"--width", "640",
+		"--height", "480",
+		"--framerate", "15",
+		"-o", "-")
 
-	// Start a separate goroutine for temperature reading
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		http.Error(w, "failed to create pipe: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := cmd.Start(); err != nil {
+		http.Error(w, "failed to start libcamera-vid: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	go func() {
-		for {
-			select {
-			case <-ctx.Done(): // Stop when the context is canceled
-				return
-
-			case <-ticker.C: // Read temperature at regular intervals
-				deviceFile := "/sys/bus/w1/devices/" + ua.Name + "/w1_slave"
-				rawData, err := os.ReadFile(deviceFile)
-				if err != nil {
-					log.Printf("Error reading temperature file: %s, error: %v\n", deviceFile, err)
-					continue // Retry on the next cycle
-				}
-
-				if len(rawData) == 0 {
-					log.Printf("Empty data read from temperature file: %s\n", deviceFile)
-					continue
-				}
-
-				rawValue := strings.Split(string(rawData), "\n")[1]
-				if !strings.Contains(rawValue, "t=") {
-					log.Printf("Invalid temperature data: %s\n", rawData)
-					continue
-				}
-
-				tempStr := strings.Split(rawValue, "t=")[1]
-				temp, err := strconv.ParseFloat(tempStr, 64)
-				if err != nil {
-					log.Printf("Error parsing temperature: %v\n", err)
-					continue
-				}
-
-				// Send the temperature and timestamp back to the main loop
-				select {
-				case tempChan <- temp / 1000.0:
-					tStampChan <- time.Now()
-				case <-ctx.Done(): // Stop the goroutine if context is canceled
-					return
-				}
-			}
+		<-r.Context().Done()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
 		}
 	}()
 
+	buffer := make([]byte, 0)
+	temp := make([]byte, 4096)
+
 	for {
-		select {
-		case <-ctx.Done(): // Shutdown
-			log.Println("Context canceled, stopping temperature readings.")
-			return
+		n, err := stdout.Read(temp)
+		if err != nil {
+			log.Println("stream read error:", err)
+			break
+		}
+		buffer = append(buffer, temp[:n]...)
 
-		case temp := <-tempChan: // Update temperature and timestamp
-			ua.temperature = temp
-			ua.tStamp = <-tStampChan
+		for {
+			start := bytes.Index(buffer, []byte{0xFF, 0xD8}) // JPEG SOI
+			end := bytes.Index(buffer, []byte{0xFF, 0xD9})   // JPEG EOI
+			if start >= 0 && end > start {
+				frame := buffer[start : end+2]
+				buffer = buffer[end+2:]
 
-		case order := <-ua.trayChan: // Address a GET request
-			var f forms.SignalA_v1a
-			f.NewForm()
-			f.Value = ua.temperature
-			f.Unit = "Celsius"
-			f.Timestamp = ua.tStamp
-			order.ValueP <- f
+				fmt.Fprintf(w, "--frame\r\n")
+				fmt.Fprintf(w, "Content-Type: image/jpeg\r\n")
+				fmt.Fprintf(w, "Content-Length: %d\r\n\r\n", len(frame))
+				w.Write(frame)
+
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush() // very important!
+				}
+			} else {
+				break
+			}
 		}
 	}
 }

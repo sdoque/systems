@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2024 Synecdoque
+ * Copyright (c) 2025 Synecdoque
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
@@ -28,28 +29,27 @@ import (
 	"github.com/sdoque/mbaigo/usecases"
 )
 
-//-------------------------------------Define the unit asset
-
-// UnitAsset type models the unit asset (interface) of the system
-// Traits are Asset-specific configurable parameters
+// -------------------------------------Define the unit asset
+// Traits are Asset-specific configurable parameters and variables
 type Traits struct {
-	SetPt     float64       `json:"setPoint"`
-	Period    time.Duration `json:"samplingPeriod"`
-	Kp        float64       `json:"kp"`
-	Lambda    float64       `json:"lambda"`
-	Ki        float64       `json:"ki"`
-	jitter    time.Duration `json:"-"`
-	deviation float64       `json:"-"`
-	previousT float64       `json:"-"`
+	SetPt         float64       `json:"setPoint"` // the set point for the level
+	Period        time.Duration `json:"samplingPeriod"`
+	Kp            float64       `json:"kp"`
+	Lambda        float64       `json:"lambda"`
+	Ki            float64       `json:"ki"`
+	jitter        time.Duration
+	deviation     float64
+	integral      float64
+	previousLevel float64 // previous level reading to avoid flooding the log
 }
 
+// UnitAsset type models the unit asset (interface) of the system
 type UnitAsset struct {
 	Name        string              `json:"name"`
 	Owner       *components.System  `json:"-"`
 	Details     map[string][]string `json:"details"`
 	ServicesMap components.Services `json:"-"`
 	CervicesMap components.Cervices `json:"-"`
-	//
 	Traits
 }
 
@@ -86,18 +86,18 @@ var _ components.UnitAsset = (*UnitAsset)(nil)
 // initTemplate initializes a UnitAsset with default values.
 func initTemplate() components.UnitAsset {
 	setPointService := components.Service{
-		Definition:  "setpoint",
+		Definition:  "setPoint",
 		SubPath:     "setpoint",
-		Details:     map[string][]string{"Unit": {"Celsius"}, "Forms": {"SignalA_v1a"}},
-		RegPeriod:   120,
+		Details:     map[string][]string{"Unit": {"Percent"}, "Forms": {"SignalA_v1a"}},
+		RegPeriod:   100,
 		CUnit:       "Eur/h",
 		Description: "provides the current thermal setpoint (GET) or sets it (PUT)",
 	}
-	thermalErrorService := components.Service{
-		Definition:  "thermalerror",
-		SubPath:     "thermalerror",
-		Details:     map[string][]string{"Unit": {"Celsius"}, "Forms": {"SignalA_v1a"}},
-		RegPeriod:   120,
+	levelErrorService := components.Service{
+		Definition:  "levelError",
+		SubPath:     "levelerror",
+		Details:     map[string][]string{"Unit": {"Percent"}, "Forms": {"SignalA_v1a"}},
+		RegPeriod:   30,
 		Description: "provides the current difference between the set point and the temperature (GET)",
 	}
 	jitterService := components.Service{
@@ -110,21 +110,21 @@ func initTemplate() components.UnitAsset {
 
 	assetTraits := Traits{
 		SetPt:  20,
-		Period: 10,
+		Period: 5,
 		Kp:     5,
 		Lambda: 0.5,
 		Ki:     0,
 	}
 
-	// var uat components.UnitAsset // this is an interface, which we then initialize
+	// create the unit asset template
 	uat := &UnitAsset{
-		Name:    "controller_1",
-		Details: map[string][]string{"Location": {"Kitchen"}},
+		Name:    "Leveler_1",
+		Details: map[string][]string{"Location": {"UpperTank"}},
 		Traits:  assetTraits,
 		ServicesMap: components.Services{
-			setPointService.SubPath:     &setPointService,
-			thermalErrorService.SubPath: &thermalErrorService,
-			jitterService.SubPath:       &jitterService,
+			setPointService.SubPath:   &setPointService,
+			levelErrorService.SubPath: &levelErrorService,
+			jitterService.SubPath:     &jitterService,
 		},
 	}
 	return uat
@@ -138,16 +138,17 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	sProtocols := components.SProtocols(sys.Husk.ProtoPort)
 	// instantiate the consumed services
 	t := &components.Cervice{
-		Definition: "temperature",
+		Definition: "level",
 		Protos:     sProtocols,
 		Nodes:      make(map[string][]string, 0),
 	}
 
 	r := &components.Cervice{
-		Definition: "rotation",
+		Definition: "pumpSpeed",
 		Protos:     sProtocols,
 		Nodes:      make(map[string][]string, 0),
 	}
+
 	// instantiate the unit asset
 	ua := &UnitAsset{
 		Name:        configuredAsset.Name,
@@ -167,9 +168,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		ua.Traits = traits[0] // or handle multiple traits if needed
 	}
 
-	// thermalUnit := ua.ServicesMap["setpoint"].Details["Unit"][0] // the measurement done below are still in Celsius, so allowing it to be configurable does not really make sense at this point
-	ua.CervicesMap["temperature"].Details = components.MergeDetails(ua.Details, map[string][]string{"Unit": {"Celsius"}, "Forms": {"SignalA_v1a"}})
-	ua.CervicesMap["rotation"].Details = components.MergeDetails(ua.Details, map[string][]string{"Unit": {"Percent"}, "Forms": {"SignalA_v1a"}})
+	ua.CervicesMap["level"].Details = components.MergeDetails(ua.Details, map[string][]string{"Unit": {"Percent"}, "Forms": {"SignalA_v1a"}, "Location": {"UpperTank"}})
+	ua.CervicesMap["pumpSpeed"].Details = components.MergeDetails(ua.Details, map[string][]string{"Unit": {"Percent"}, "Forms": {"SignalA_v1a"}})
 
 	// start the unit asset(s)
 	go ua.feedbackLoop(sys.Ctx)
@@ -194,16 +194,16 @@ func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
 
 //-------------------------------------Thing's resource methods
 
-// getSetPoint fills out a signal form with the current thermal setpoint
+// getSetPoint fills out a signal form with the current level set point
 func (ua *UnitAsset) getSetPoint() (f forms.SignalA_v1a) {
 	f.NewForm()
 	f.Value = ua.SetPt
-	f.Unit = "Celsius"
+	f.Unit = "Percent"
 	f.Timestamp = time.Now()
 	return f
 }
 
-// setSetPoint updates the thermal setpoint
+// setSetPoint updates the level set point
 func (ua *UnitAsset) setSetPoint(f forms.SignalA_v1a) {
 	ua.SetPt = f.Value
 	log.Printf("new set point: %.1f", f.Value)
@@ -213,7 +213,7 @@ func (ua *UnitAsset) setSetPoint(f forms.SignalA_v1a) {
 func (ua *UnitAsset) getError() (f forms.SignalA_v1a) {
 	f.NewForm()
 	f.Value = ua.deviation
-	f.Unit = "Celsius"
+	f.Unit = "Percent"
 	f.Timestamp = time.Now()
 	return f
 }
@@ -248,16 +248,16 @@ func (ua *UnitAsset) feedbackLoop(ctx context.Context) {
 func (ua *UnitAsset) processFeedbackLoop() {
 	jitterStart := time.Now()
 
-	// get the current temperature
-	tf, err := usecases.GetState(ua.CervicesMap["temperature"], ua.Owner)
+	// get the current level
+	tf, err := usecases.GetState(ua.CervicesMap["level"], ua.Owner)
 	if err != nil {
-		log.Printf("\n unable to obtain a temperature reading error: %s\n", err)
+		log.Printf("\n unable to obtain a level reading error: %s\n", err)
 		return
 	}
 	// Perform a type assertion to convert the returned Form to SignalA_v1a
 	tup, ok := tf.(*forms.SignalA_v1a)
 	if !ok {
-		log.Println("problem unpacking the temperature signal form")
+		log.Println("problem unpacking the level signal form")
 		return
 	}
 
@@ -269,38 +269,50 @@ func (ua *UnitAsset) processFeedbackLoop() {
 	var of forms.SignalA_v1a
 	of.NewForm()
 	of.Value = output
-	of.Unit = ua.CervicesMap["rotation"].Details["Unit"][0]
+	of.Unit = ua.CervicesMap["pumpSpeed"].Details["Unit"][0]
 	of.Timestamp = time.Now()
 
-	// pack the new valve state form
+	// pack the new pumpSpeed state form
 	op, err := usecases.Pack(&of, "application/json")
 	if err != nil {
 		return
 	}
-	// send the new valve state request
-	_, err = usecases.SetState(ua.CervicesMap["rotation"], ua.Owner, op)
+	// send the new state request
+	_, err = usecases.SetState(ua.CervicesMap["pumpSpeed"], ua.Owner, op)
 	if err != nil {
-		log.Printf("cannot update valve state: %s\n", err)
+		log.Printf("cannot update pump speed: %s\n", err)
 		return
 	}
 
-	if tup.Value != ua.previousT {
-		log.Printf("the temperature is %.2f °C with an error %.2f°C and valve set at %.2f%%\n", tup.Value, ua.deviation, output)
-		ua.previousT = tup.Value
+	if tup.Value != ua.previousLevel {
+		log.Printf("the level is %.2f percent with an error %.2f percent and the pumpSpeed set at %.2f%%\n", tup.Value, ua.deviation, output)
+		ua.previousLevel = tup.Value
 	}
 
 	ua.jitter = time.Since(jitterStart)
 }
 
-// calculateOutput is the actual P controller (no real close loop yet)
-func (ua *UnitAsset) calculateOutput(thermDiff float64) float64 {
-	vPosition := ua.Kp*thermDiff + 50 // if the error is 0, the position is at 50%
+// calculateOutput is the actual P controller
+func (ua *UnitAsset) calculateOutput(levelDiff float64) float64 {
+	// Proportional term
+	pTerm := ua.Kp * levelDiff
 
-	// limit the output between 0 and 100%
-	if vPosition < 0 {
-		vPosition = 0
-	} else if vPosition > 100 {
-		vPosition = 100
+	// Update integral with exponential decay using Lambda
+	sampleSeconds := (ua.Period * time.Second).Seconds()
+	decay := math.Exp(-sampleSeconds / ua.Lambda)
+	ua.integral = decay*ua.integral + levelDiff*sampleSeconds
+
+	// Integral term
+	iTerm := ua.Ki * ua.integral
+
+	// Combined PI output
+	output := pTerm + iTerm
+
+	// Limit output to [0, 100]%
+	if output < 0 {
+		output = 0
+	} else if output > 100 {
+		output = 100
 	}
-	return vPosition
+	return output
 }

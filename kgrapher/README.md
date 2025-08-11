@@ -10,10 +10,13 @@ Currently, when the KGrapher’s only service is invoked from a web browser, it 
 
 Using the model in conjunction with the Arrowhead Framework Ontology (afo), a computer can infer new knowledge about the local cloud and reason about it.
 
+The KGrapher also serves (makes available) local ontologies and knowledge graphs.
+One can obtain these description through the *localOntologies* service.
+
 ## Compiling
 To compile the code, one needs initialize the *go.mod* file with ``` go mod init github.com/sdoque/systems/kgrapher``` before running *go mod tidy*.
 
-To run the code, one just needs to type in ```go run kgrapher.go thing.go``` within a terminal or at a command prompt. One can also build it to get an executable of it ```go run modeler.go thing.go``` 
+To run the code, one just needs to type in ```go run .``` within a terminal or at a command prompt.
 
 It is **important** to start the program from within its own directory (and each system should have their own directory) because it looks for its configuration file there. If it does not find it there, it will generate one and shutdown to allow the configuration file to be updated.
 
@@ -26,7 +29,7 @@ To build the software for one's own machine,
 ## Cross compiling/building
 The following commands enable one to build for different platforms:
 
-- Raspberry Pi 64: ```GOOS=linux GOARCH=arm64 go build -o kgrapher_rpi64 kgrapher.go thing.go```
+- Raspberry Pi 64: ```GOOS=linux GOARCH=arm64 go build -o kgrapher_rpi64```
 
 One can find a complete list of platform by typing *‌go tool dist list* at the command prompt
 

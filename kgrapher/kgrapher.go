@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -43,6 +44,14 @@ func main() {
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		ProtoPort:   map[string]int{"https": 0, "http": 20105, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/kgrapher",
+		DName: pkix.Name{
+			CommonName:         sys.Name,
+			Organization:       []string{"Synecdoque"},
+			OrganizationalUnit: []string{"Systems"},
+			Locality:           []string{"Luleå"},
+			Province:           []string{"Norrbotten"},
+			Country:            []string{"SE"},
+		},
 	}
 
 	// instantiate a template unit asset
@@ -51,17 +60,17 @@ func main() {
 	sys.UAssets[assetName] = &assetTemplate
 
 	// Configure the system
-	rawResources, servsTemp, err := usecases.Configure(&sys)
+	rawResources, err := usecases.Configure(&sys)
 	if err != nil {
 		log.Fatalf("Configuration error: %v\n", err)
 	}
 	sys.UAssets = make(map[string]*components.UnitAsset) // clear the unit asset map (from the template)
 	for _, raw := range rawResources {
-		var uac UnitAsset
+		var uac usecases.ConfigurableAsset
 		if err := json.Unmarshal(raw, &uac); err != nil {
 			log.Fatalf("Resource configuration error: %+v\n", err)
 		}
-		ua, cleanup := newResource(uac, &sys, servsTemp)
+		ua, cleanup := newResource(uac, &sys)
 		defer cleanup()
 		sys.UAssets[ua.GetName()] = &ua
 	}
@@ -87,15 +96,33 @@ func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath
 	switch servicePath {
 	case "cloudgraph":
 		ua.aggregate(w, r)
+	case "localontologies":
+		ua.listOntologies(w, r)
+	case "files":
+		// this is a catch-all for the files service, which is not implemented in this system
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}
 }
 
+// assembleOntologies writes out the knowledge graph of the local cloud and pushes it to GraphDB
 func (ua *UnitAsset) aggregate(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		ua.assembleOntologies(w)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+	}
+}
+
+// listOntologies writes out the HTML produced by localOntologies()
+func (ua *UnitAsset) listOntologies(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		p := r.Pattern
+		html := ua.localOntologies(p)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8") // set the content type for the response of the HTML page not the ontologies
+		fmt.Fprint(w, html)
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}

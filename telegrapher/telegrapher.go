@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2024 Synecdoque
+ * Copyright (c) 2025 Synecdoque
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -36,12 +37,20 @@ func main() {
 	// instantiate the System
 	sys := components.NewSystem("telegrapher", ctx)
 
-	// instatiate the husk
+	// instantiate the husk
 	sys.Husk = &components.Husk{
-		Description: " subcribes and publishes to an MQTT broker",
+		Description: " subscribes and publishes to an MQTT broker",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		ProtoPort:   map[string]int{"https": 0, "http": 20172, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/telegrapher",
+		DName: pkix.Name{
+			CommonName:         sys.Name,
+			Organization:       []string{"Synecdoque"},
+			OrganizationalUnit: []string{"Systems"},
+			Locality:           []string{"Luleå"},
+			Province:           []string{"Norrbotten"},
+			Country:            []string{"SE"},
+		},
 	}
 
 	// instantiate a template unit asset
@@ -50,23 +59,19 @@ func main() {
 	sys.UAssets[assetName] = &assetTemplate
 
 	// Configure the system
-	rawResources, servsTemp, err := usecases.Configure(&sys)
+	rawResources, err := usecases.Configure(&sys)
 	if err != nil {
 		log.Fatalf("Configuration error: %v\n", err)
 	}
-
 	sys.UAssets = make(map[string]*components.UnitAsset) // clear the unit asset map (from the template)
-	//	Resources := make(map[string]*UnitAsset)
 	for _, raw := range rawResources {
-		var uac UnitAsset
+		var uac usecases.ConfigurableAsset
 		if err := json.Unmarshal(raw, &uac); err != nil {
 			log.Fatalf("Resource configuration error: %+v\n", err)
 		}
-		promUA, cleanup := newResource(uac, &sys, servsTemp)
+		ua, cleanup := newResource(uac, &sys)
 		defer cleanup()
-		for _, nua := range promUA {
-			sys.UAssets[nua.GetName()] = &nua
-		}
+		sys.UAssets[ua.GetName()] = &ua
 	}
 
 	// Generate PKI keys and CSR to obtain a authentication certificate from the CA
@@ -91,15 +96,15 @@ func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath
 	if svrs[servicePath] != nil {
 		ua.access(w, r, servicePath)
 	} else {
-		http.Error(w, "Invalid service request [Do not modify the services subpath in the configurration file]", http.StatusBadRequest)
+		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}
 }
 
 func (ua *UnitAsset) access(w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch r.Method {
 	case "GET":
-		msg := messageList[ua.metatopic+"/"+servicePath]
-		if msg != nil {
+		msg := ua.Message
+		if len(msg) > 0 {
 			w.WriteHeader(http.StatusOK)
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(msg)
@@ -107,11 +112,24 @@ func (ua *UnitAsset) access(w http.ResponseWriter, r *http.Request, servicePath 
 			http.Error(w, "The subscribed topic is not being published", http.StatusBadRequest)
 		}
 	case "PUT":
-		// sig, err := usecases.HTTPProcessSetRequest(w, r)
+		// data, err := io.ReadAll(r.Body)
 		// if err != nil {
-		// 	log.Println("Error with the setting request of the position ", err)
+		// 	http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		// 	return
 		// }
-		// ua.setPosition(sig)
+		// defer r.Body.Close()
+
+		// if err := ua.publishRaw(data); err != nil {
+		log.Printf("MQTT client is connected: %v", ua.mClient.IsConnected())
+
+		if err := ua.publishRaw([]byte(`{"test":123}`)); err != nil {
+			log.Printf("Failed to publish: %v", err)
+			http.Error(w, "MQTT publish failed", http.StatusInternalServerError)
+			return
+		}
+		log.Printf("MQTT client is connected: %v", ua.mClient.IsConnected())
+
+		w.WriteHeader(http.StatusAccepted)
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}

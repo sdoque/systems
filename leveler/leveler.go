@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -34,14 +35,22 @@ func main() {
 	defer cancel()                                          // make sure all paths cancel the context to avoid context leak
 
 	// instantiate the System
-	sys := components.NewSystem("influxer", ctx)
+	sys := components.NewSystem("Leveler", ctx)
 
-	// Instatiate the Capusle
+	// Instantiate the husk
 	sys.Husk = &components.Husk{
-		Description: " is a system that ingests time signals into an Influx database",
+		Description: " is a controller for a consumed servo motor position based on a consumed temperature",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
-		ProtoPort:   map[string]int{"https": 0, "http": 20180, "coap": 0},
-		InfoLink:    "https://github.com/sdoque/systems/tree/main/influxer",
+		ProtoPort:   map[string]int{"https": 0, "http": 20154, "coap": 0},
+		InfoLink:    "https://github.com/sdoque/systems/tree/main/leveler",
+		DName: pkix.Name{
+			CommonName:         sys.Name,
+			Organization:       []string{"Synecdoque"},
+			OrganizationalUnit: []string{"Systems"},
+			Locality:           []string{"Luleå"},
+			Province:           []string{"Norrbotten"},
+			Country:            []string{"SE"},
+		},
 	}
 
 	// instantiate a template unit asset
@@ -50,17 +59,17 @@ func main() {
 	sys.UAssets[assetName] = &assetTemplate
 
 	// Configure the system
-	rawResources, servsTemp, err := usecases.Configure(&sys)
+	rawResources, err := usecases.Configure(&sys)
 	if err != nil {
 		log.Fatalf("Configuration error: %v\n", err)
 	}
 	sys.UAssets = make(map[string]*components.UnitAsset) // clear the unit asset map (from the template)
 	for _, raw := range rawResources {
-		var uac UnitAsset
+		var uac usecases.ConfigurableAsset
 		if err := json.Unmarshal(raw, &uac); err != nil {
 			log.Fatalf("Resource configuration error: %+v\n", err)
 		}
-		ua, cleanup := newResource(uac, &sys, servsTemp)
+		ua, cleanup := newResource(uac, &sys)
 		defer cleanup()
 		sys.UAssets[ua.GetName()] = &ua
 	}
@@ -82,20 +91,50 @@ func main() {
 }
 
 // Serving handles the resources services. NOTE: it expects those names from the request URL path
-func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {
+func (t *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
-	case "mquery":
-		ua.measQuery(w, r)
-
+	case "setpoint":
+		t.setpt(w, r)
+	case "levelerror":
+		t.diff(w, r)
+	case "jitter":
+		t.variations(w, r)
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}
 }
 
-func (ua *UnitAsset) measQuery(w http.ResponseWriter, r *http.Request) {
+func (rsc *UnitAsset) setpt(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		ua.q4measurements(w)
+		setPointForm := rsc.getSetPoint()
+		usecases.HTTPProcessGetRequest(w, r, &setPointForm)
+	case "PUT":
+		sig, err := usecases.HTTPProcessSetRequest(w, r)
+		if err != nil {
+			log.Println("Error with the setting request of the position ", err)
+		}
+		rsc.setSetPoint(sig)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+	}
+}
+
+func (rsc *UnitAsset) diff(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		signalErr := rsc.getError()
+		usecases.HTTPProcessGetRequest(w, r, &signalErr)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+	}
+}
+
+func (rsc *UnitAsset) variations(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		signalErr := rsc.getJitter()
+		usecases.HTTPProcessGetRequest(w, r, &signalErr)
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}

@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -43,6 +44,14 @@ func main() {
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		ProtoPort:   map[string]int{"https": 0, "http": 20170, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/mbaigo/tree/master/uaclient",
+		DName: pkix.Name{
+			CommonName:         sys.Name,
+			Organization:       []string{"Synecdoque"},
+			OrganizationalUnit: []string{"Systems"},
+			Locality:           []string{"Luleå"},
+			Province:           []string{"Norrbotten"},
+			Country:            []string{"SE"},
+		},
 	}
 
 	// instantiate a template unit asset
@@ -51,21 +60,21 @@ func main() {
 	sys.UAssets[assetName] = &assetTemplate
 
 	// Configure the system
-	rawResources, servsTemp, err := usecases.Configure(&sys)
+	rawResources, err := usecases.Configure(&sys)
 	if err != nil {
-		log.Fatalf("Configuration error: %v\n", err)
+		log.Fatalf("configuration error: %v\n", err)
 	}
 	sys.UAssets = make(map[string]*components.UnitAsset) // clear the unit asset map (from the template)
+	var cleanups []func()
 	for _, raw := range rawResources {
-		var uac UnitAsset
+		var uac usecases.ConfigurableAsset
 		if err := json.Unmarshal(raw, &uac); err != nil {
-			log.Fatalf("Resource configuration error: %+v\n", err)
+			log.Fatalf("resource configuration error: %+v\n", err)
 		}
-		promUA, cleanup := newResource(uac, &sys, servsTemp)
-		defer cleanup()
-		for _, nua := range promUA {
-			sys.UAssets[nua.GetName()] = &nua
-		}
+		ua, cleanup := newResource(uac, &sys)
+		cleanups = append(cleanups, cleanup)
+		// defer cleanup()
+		sys.UAssets[ua.GetName()] = &ua
 	}
 
 	// Generate PKI keys and CSR to obtain a authentication certificate from the CA

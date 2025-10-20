@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -62,8 +63,8 @@ type UnitAsset struct {
 	ServicesMap components.Services `json:"-"`
 	CervicesMap components.Cervices `json:"-"`
 	//
-	Traits // Embedding the Traits struct to include its fields and methods
-	mu     sync.Mutex
+	Traits
+	mu sync.Mutex
 }
 
 // GetName returns the name of the Resource.
@@ -127,13 +128,10 @@ func initTemplate() components.UnitAsset {
 		Description: "reports (GET) the role of the Service Registrar as leading or on stand by",
 	}
 
-	assetTraits := Traits{}
-
 	// Create the UnitAsset with the defined services
 	uat := &UnitAsset{
 		Name:    "registry",
-		Details: map[string][]string{"Location": {"LocalCloud"}},
-		Traits:  assetTraits,
+		Details: map[string][]string{"Type": {"ephemeral"}},
 		ServicesMap: components.Services{
 			registerService.SubPath:   &registerService,
 			queryService.SubPath:      &queryService,
@@ -150,7 +148,6 @@ func initTemplate() components.UnitAsset {
 func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {
 	// Start the registration expiration check scheduler
 	cleaningScheduler := NewScheduler()
-	go cleaningScheduler.run()
 
 	// Initialize the UnitAsset
 	ua := &UnitAsset{
@@ -177,14 +174,17 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 
 	ua.Traits = assetTraits // Assign the traits to the UnitAsset
 
-	ua.Role() // Start to repeatedly check which is the leading registrar
+	// Start to repeatedly check which is the leading registrar
+	ua.Role()
 
 	// Start the service registry manager goroutine
 	go ua.serviceRegistryHandler()
 
 	return ua, func() {
+		ua.mu.Lock()
 		close(ua.requests)       // Close channels before exiting (cleanup)
 		cleaningScheduler.Stop() // Gracefully stop the scheduler
+		ua.mu.Unlock()
 		log.Println("Closing the service registry database connection")
 	}
 }
@@ -221,6 +221,11 @@ func (ua *UnitAsset) serviceRegistryHandler() {
 			}
 			ua.mu.Lock() // Lock the serviceRegistry map
 
+			// Check if the ID exists in the serviceRegistry
+			if _, exists := ua.serviceRegistry[rec.Id]; !exists {
+				rec.Id = 0
+			}
+
 			if rec.Id == 0 {
 				// In the case recCount had looped, check that there is no record at that position
 				for {
@@ -242,12 +247,6 @@ func (ua *UnitAsset) serviceRegistryHandler() {
 				log.Printf("The new service %s from system %s has been registered\n", rec.ServiceDefinition, rec.SystemName)
 			} else {
 				// Validate and update existing record
-				_, exists := ua.serviceRegistry[rec.Id]
-				if !exists {
-					ua.mu.Unlock()
-					request.Error <- fmt.Errorf("no existing record with id %d", rec.Id)
-					continue
-				}
 				dbRec := ua.serviceRegistry[rec.Id]
 				if dbRec.ServiceDefinition != rec.ServiceDefinition {
 					request.Error <- errors.New("mismatch between definition received record and database record")
@@ -278,7 +277,6 @@ func (ua *UnitAsset) serviceRegistryHandler() {
 				}
 				nextExpiration := now.Add(time.Duration(dbRec.RegLife) * time.Second).Format(time.RFC3339)
 				rec.EndOfValidity = nextExpiration
-				// log.Printf("Updated the record %s with next expiration date at %s", rec.ServiceDefinition, rec.EndOfValidity)
 			}
 			ua.sched.AddTask(now.Add(time.Duration(rec.RegLife)*time.Second), func() { checkExpiration(ua, rec.Id) }, rec.Id)
 			ua.serviceRegistry[rec.Id] = *rec // Add record to the registry
@@ -296,28 +294,38 @@ func (ua *UnitAsset) serviceRegistryHandler() {
 				}
 				ua.mu.Unlock() // Unlock access to the service registry map
 				request.Result <- result
-				// log.Println("complete listing sent from registry")
 				continue
 			}
 			qform, ok := request.Record.(*forms.ServiceQuest_v1)
 			if !ok {
-				fmt.Println("Problem unpacking the service quest request")
+				log.Println("Problem unpacking the service quest request")
 				request.Error <- fmt.Errorf("invalid record type")
 				continue
 			}
-			fmt.Printf("\nThe service quest form is %v\n\n", qform)
 			matchingRecords := ua.FilterByServiceDefinitionAndDetails(qform.ServiceDefinition, qform.Details)
 			request.Result <- matchingRecords
 
 		case "delete":
 			// Handle delete record
+			ua.mu.Lock()
+			ua.sched.RemoveTask(int(request.Id))
 			delete(ua.serviceRegistry, int(request.Id))
 			if _, exists := ua.serviceRegistry[int(request.Id)]; !exists {
 				log.Printf("The service with ID %d has been deleted.", request.Id)
 			}
+			ua.mu.Unlock()
 			request.Error <- nil // Send success response
 		}
 	}
+}
+
+func compareDetails(reqDetails []string, availDetails []string) bool {
+	for _, requiredValue := range reqDetails {
+		if slices.Contains(availDetails, requiredValue) {
+			return true
+		}
+	}
+	return false
 }
 
 // FilterByServiceDefinitionAndDetails returns a list of services with the given service definition and details TODO: protocols
@@ -340,20 +348,7 @@ func (ua *UnitAsset) FilterByServiceDefinitionAndDetails(desiredDefinition strin
 				}
 
 				// Ensure at least one value in requiredDetails matches record.Details
-				valueMatch := false
-				for _, requiredValue := range values {
-					for _, recordValue := range recordValues {
-						if recordValue == requiredValue {
-							valueMatch = true
-							break
-						}
-					}
-					if valueMatch {
-						break
-					}
-				}
-
-				if !valueMatch {
+				if !compareDetails(values, recordValues) {
 					matchesAllDetails = false
 					break
 				}
@@ -370,10 +365,12 @@ func (ua *UnitAsset) FilterByServiceDefinitionAndDetails(desiredDefinition strin
 
 // checkExpiration checks if a service has expired and deletes it if it has.
 func checkExpiration(ua *UnitAsset, servId int) {
+	ua.mu.Lock()
+	defer ua.mu.Unlock()
 	dbRec := ua.serviceRegistry[servId]
 	expiration, err := time.Parse(time.RFC3339, dbRec.EndOfValidity)
 	if err != nil {
-		log.Printf("time parsing problem when checking service expiration")
+		log.Printf("Time parsing problem when checking service expiration")
 		return
 	}
 
@@ -382,6 +379,7 @@ func checkExpiration(ua *UnitAsset, servId int) {
 			return
 		}
 		delete(ua.serviceRegistry, int(servId))
+		ua.sched.RemoveTask(int(servId))
 		if _, exists := ua.serviceRegistry[servId]; !exists {
 			log.Printf("The service with ID %d has been deleted because it was not renewed.", servId)
 		}
@@ -395,14 +393,13 @@ func getUniqueSystems(ua *UnitAsset) (*forms.SystemRecordList_v1, error) {
 
 	ua.mu.Lock() // Ensure thread safety
 	defer ua.mu.Unlock()
-
 	for _, record := range ua.serviceRegistry {
 		var sAddress string
 
 		// Check for HTTPS
-		if port, exists := record.ProtoPort["https"]; exists && port != 0 {
+		if port := record.ProtoPort["https"]; port != 0 {
 			sAddress = "https://" + record.IPAddresses[0] + ":" + strconv.Itoa(port) + "/" + record.SystemName
-		} else if port, exists := record.ProtoPort["http"]; exists && port != 0 { // Check for HTTP
+		} else if port := record.ProtoPort["http"]; port != 0 { // Check for HTTP
 			sAddress = "http://" + record.IPAddresses[0] + ":" + strconv.Itoa(port) + "/" + record.SystemName
 		} else {
 			fmt.Printf("Warning: %s cannot be modeled\n", record.SystemName)

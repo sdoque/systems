@@ -25,6 +25,7 @@ import (
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/sdoque/mbaigo/components"
+	"github.com/sdoque/mbaigo/forms"
 	"github.com/sdoque/mbaigo/usecases"
 )
 
@@ -126,7 +127,14 @@ func initTemplate() components.UnitAsset {
 // newResource creates the Resource resource with its pointers and channels based on the configuration using the tConig structs
 func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {
 	topic := configuredAsset.Name
-	assetName := strings.ReplaceAll(topic, "/", "_")
+	lastSlashIndex := strings.LastIndex(topic, "/")
+	if lastSlashIndex == -1 {
+		fmt.Printf("topic %s has no forward slash and is ignored\n", topic)
+		return nil, func() {}
+	}
+	asset := topic[:lastSlashIndex]
+	service := topic[lastSlashIndex+1:]
+	assetName := strings.ReplaceAll(asset, "/", "_")
 	// instantiate the unit asset
 	ua := &UnitAsset{
 		Name:    assetName,
@@ -147,29 +155,24 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	if len(ua.Pattern) <= 0 {
 		log.Fatal("Error: UnitAsset must have at least one pattern defined in Traits")
 	}
-	lastSlashIndex := strings.LastIndex(topic, "/")
-	if lastSlashIndex == -1 {
-		fmt.Printf("topic %s has no forward slash and is ignored\n", topic)
-		return nil, func() {}
-	}
-	asset := topic[:lastSlashIndex]
-	service := topic[lastSlashIndex+1:]
 
 	// Fill Details from pattern and topic
 	metaDetails := strings.Split(asset, "/")
+	topicDetrails := make(map[string][]string)
+	for i := 0; i < len(ua.Pattern) && i < len(metaDetails); i++ {
+		topicDetrails[ua.Pattern[i]] = append(ua.Details[ua.Pattern[i]], metaDetails[i])
+	}
 	if ua.Details == nil {
 		ua.Details = make(map[string][]string)
 	}
-	for i := 0; i < len(ua.Pattern) && i < len(metaDetails); i++ {
-		ua.Details[ua.Pattern[i]] = append(ua.Details[ua.Pattern[i]], metaDetails[i])
-	}
+	ua.Details = components.MergeDetails(ua.Details, topicDetrails)
 
 	// Make the topic an Arrowhead service (since we are subscribing to it)
 	if ua.Period < 0 {
 		access := components.Service{
 			Definition:  service,
 			SubPath:     "access",
-			Details:     map[string][]string{"forms": {"mqttPayload"}},
+			Details:     map[string][]string{"forms": {"mqttPayload"}}, // TODO: this logic needs to be reviewed
 			RegPeriod:   30,
 			Description: "Read the current topic message (GET) or publish to it (PUT)",
 		}
@@ -187,6 +190,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			Protos:     sProtocols,
 			Nodes:      make(map[string][]string),
 		}
+		newCervice.Details = topicDetrails
 		if ua.CervicesMap == nil {
 			ua.CervicesMap = make(components.Cervices)
 		}
@@ -242,29 +246,23 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			for {
 				select {
 				case <-ticker.C:
-					// payload := map[string]interface{}{
-					// 	"value":     0,
-					// 	"unit":      "celsius",
-					// 	"timestamp": time.Now().Format(time.RFC3339),
-					// 	"version":   "SignalA_v1.0",
-					// }
 					payload, err := usecases.GetState(ua.CervicesMap[service], ua.Owner)
 					if err != nil {
 						log.Printf("\nUnable to obtain a %s reading with error %s\n", service, err)
 						continue // return fmt.Errorf("unsupported measurement: %s", name)
 					}
 					fmt.Printf("%+v\n", payload)
-					// tup, ok := payload.(*forms.SignalA_v1a)
-					// if !ok {
-					// 	log.Println("Problem unpacking the signal form")
-					// 	continue // return fmt.Errorf("problem unpacking measurement: %s", name)
-					// }
-					// message, err := usecases.Pack(payload, "application/json")
-					// if err := ua.publishToTopic(message, "application/json"); err != nil {
-					// 	log.Printf("Periodic publish failed for topic %s: %v", ua.Topic, err)
-					// } else {
-					// 	log.Printf("Periodic message sent to topic %s", ua.Topic)
-					// }
+					payload, ok := payload.(*forms.SignalA_v1a)
+					if !ok {
+						log.Println("Problem unpacking the signal form")
+						continue // return fmt.Errorf("problem unpacking measurement: %s", name)
+					}
+					message, err := usecases.Pack(payload, "application/json")
+					if err := ua.publishRaw(message); err != nil {
+						log.Printf("Periodic publish failed for topic %s: %v", ua.Topic, err)
+					} else {
+						log.Printf("Periodic message sent to topic %s", ua.Topic)
+					}
 				case <-sys.Ctx.Done():
 					log.Printf("Stopping periodic publishing for %s", ua.Topic)
 					return
@@ -323,6 +321,7 @@ func (ua *UnitAsset) publishToTopic(payload map[string]interface{}, contentType 
 	return nil
 }
 
+// publishRaw publishes raw data to the MQTT topic of the unit asset.
 func (ua *UnitAsset) publishRaw(data []byte) error {
 	// Just publish and return immediately
 	token := ua.mClient.Publish(ua.Topic, 0, false, data)

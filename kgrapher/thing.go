@@ -98,7 +98,7 @@ func initTemplate() components.UnitAsset {
 	localOntologies := components.Service{
 		Definition:  "localOntologies",
 		SubPath:     "localontologies",
-		Details:     map[string][]string{"Location": {"LocalCloud"}},
+		Details:     map[string][]string{"Location": {"Files"}},
 		RegPeriod:   61,
 		Description: "provides the list of local ontologies (GET)",
 	}
@@ -107,7 +107,7 @@ func initTemplate() components.UnitAsset {
 	uat := &UnitAsset{
 		Name:        "assembler",
 		Owner:       &components.System{},
-		Details:     map[string][]string{"Location": {"LocalCloud"}},
+		Details:     map[string][]string{"Type": {"Interactive"}},
 		ServicesMap: map[string]*components.Service{cloudgraph.SubPath: &cloudgraph, localOntologies.SubPath: &localOntologies},
 		Traits: Traits{
 			RepositoryURL: "http://localhost:7200/repositories/Arrowhead/statements",

@@ -110,7 +110,22 @@ func (ua *UnitAsset) rotation(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Println("Error with the setting request of the position ", err)
 		}
-		ua.setPosition(sig)
+		confirmation, err := ua.setPosition(sig)
+		if err != nil {
+			log.Println("Error setting the position ", err)
+		}
+		// return the confirmation of the set operation
+		bestContentType := "application/json" // we know what we sent, so we can respond in the same format
+		responseData, err := usecases.Pack(&confirmation, bestContentType)
+		if err != nil {
+			log.Printf("Error packing response: %v", err)
+		}
+		w.Header().Set("Content-Type", bestContentType)
+		w.WriteHeader(http.StatusOK)
+		_, err = w.Write(responseData)
+		if err != nil {
+			log.Printf("Error while writing response: %v", err)
+		}
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}

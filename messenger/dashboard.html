@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="refresh" content="10">
+<style>
+main {
+  display: flex;
+  flex-flow: row wrap;
+}
+#hosts, #logs {
+  width: 100%;
+}
+#errors, #warnings {
+  width: 50%;
+}
+li {
+  font-size: 14px;
+}
+</style>
+<title>Dashboard</title>
+</head>
+<body>
+<main>
+
+<section id="hosts"><h2>Status</h2>
+<ul>
+  <li>No hosts.</li>
+</ul>
+</section>
+
+<section id="errors"><h2>Errors</h2>
+<ul>
+{{range .Errors}}
+  <li>{{.}}</li>
+{{else}}
+  <li>No errors.</li>
+{{end}}
+</ul>
+</section>
+
+<section id="warnings"><h2>Warnings</h2>
+<ul>
+{{range .Warnings}}
+  <li>{{.}}</li>
+{{else}}
+  <li>No warnings.</li>
+{{end}}
+</ul>
+</section>
+
+<section id="log"><h2>Log</h2>
+<ul>
+{{range .Latest}}
+  <li>{{.}}</li>
+{{else}}
+  <li>No logs.</li>
+{{end}}
+</ul>
+</section>
+
+</main>
+</body>
+</html>

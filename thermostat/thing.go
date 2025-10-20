@@ -252,12 +252,14 @@ func (ua *UnitAsset) processFeedbackLoop() {
 	tf, err := usecases.GetState(ua.CervicesMap["temperature"], ua.Owner)
 	if err != nil {
 		log.Printf("\n unable to obtain a temperature reading error: %s\n", err)
+		ua.updateValvePosition(50)
 		return
 	}
 	// Perform a type assertion to convert the returned Form to SignalA_v1a
 	tup, ok := tf.(*forms.SignalA_v1a)
 	if !ok {
 		log.Println("problem unpacking the temperature signal form")
+		ua.updateValvePosition(50)
 		return
 	}
 
@@ -265,29 +267,13 @@ func (ua *UnitAsset) processFeedbackLoop() {
 	ua.deviation = ua.SetPt - tup.Value
 	output := ua.calculateOutput(ua.deviation)
 
-	// prepare the form to send
-	var of forms.SignalA_v1a
-	of.NewForm()
-	of.Value = output
-	of.Unit = ua.CervicesMap["rotation"].Details["Unit"][0]
-	of.Timestamp = time.Now()
-
-	// pack the new valve state form
-	op, err := usecases.Pack(&of, "application/json")
-	if err != nil {
-		return
-	}
-	// send the new valve state request
-	_, err = usecases.SetState(ua.CervicesMap["rotation"], ua.Owner, op)
-	if err != nil {
-		log.Printf("cannot update valve state: %s\n", err)
-		return
-	}
-
 	if tup.Value != ua.previousT {
 		log.Printf("the temperature is %.2f °C with an error %.2f°C and valve set at %.2f%%\n", tup.Value, ua.deviation, output)
 		ua.previousT = tup.Value
 	}
+
+	// update the valve position
+	ua.updateValvePosition(output)
 
 	ua.jitter = time.Since(jitterStart)
 }
@@ -303,4 +289,26 @@ func (ua *UnitAsset) calculateOutput(thermDiff float64) float64 {
 		vPosition = 100
 	}
 	return vPosition
+}
+
+func (ua *UnitAsset) updateValvePosition(position float64) {
+	// prepare the form to send
+	var of forms.SignalA_v1a
+	of.NewForm()
+	of.Value = position
+	of.Unit = ua.CervicesMap["rotation"].Details["Unit"][0]
+	of.Timestamp = time.Now()
+
+	// pack the new valve state form
+	op, err := usecases.Pack(&of, "application/json")
+	if err != nil {
+		return
+	}
+	// send the new valve state request
+	_, err = usecases.SetState(ua.CervicesMap["rotation"], ua.Owner, op)
+	// if err != nil {
+	// 	log.Printf("cannot update valve state: %s\n", err)
+	// 	return
+	// }
+
 }

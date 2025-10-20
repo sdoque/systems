@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -31,18 +32,12 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sdoque/mbaigo/components"
 	"github.com/sdoque/mbaigo/forms"
+	"github.com/sdoque/mbaigo/usecases"
 )
 
-//-------------------------------------Define the unit asset
-
-// UnitAsset type models the unit asset (interface) of the system
-type UnitAsset struct {
-	Name        string              `json:"name"`
-	Owner       *components.System  `json:"-"`
-	Details     map[string][]string `json:"details"`
-	ServicesMap components.Services `json:"-"`
-	CervicesMap components.Cervices `json:"-"`
-	//
+// -------------------------------------Define the unit asset
+// Traits are Asset-specific configurable parameters
+type Traits struct {
 	ServerAdrress string              `json:"serverAddress"`
 	NodeList      map[string][]string `json:"NodeList"`
 	Server        *opcua.Client
@@ -59,6 +54,17 @@ type UnitAsset struct {
 	Scale         string
 	Min           string
 	Max           string
+}
+
+// UnitAsset type models the unit asset (interface) of the system
+type UnitAsset struct {
+	Name        string              `json:"name"`
+	Owner       *components.System  `json:"-"`
+	Details     map[string][]string `json:"details"`
+	ServicesMap components.Services `json:"-"`
+	CervicesMap components.Cervices `json:"-"`
+	// Asset-specific parameters
+	Traits
 }
 
 // GetName returns the name of the Resource.
@@ -79,6 +85,11 @@ func (ua *UnitAsset) GetCervices() components.Cervices {
 // GetDetails returns the details of the Resource.
 func (ua *UnitAsset) GetDetails() map[string][]string {
 	return ua.Details
+}
+
+// GetTraits returns the traits of the Resource.
+func (ua *UnitAsset) GetTraits() any {
+	return ua.Traits
 }
 
 // ensure UnitAsset implements components.UnitAsset (this check is done at during the compilation)
@@ -107,9 +118,11 @@ func initTemplate() components.UnitAsset {
 
 	// var uat components.UnitAsset // this is an interface, which we then initialize
 	uat := &UnitAsset{
-		Name:          "PLC with OPC UA server",
-		Details:       map[string][]string{"PLC": {"Prosys_Simulation_Server"}, "Location": {"Line 1"}, "KKS": {"YLLCP001"}},
-		ServerAdrress: "opc.tcp://192.168.1.2:53530/OPCUA/SimulationServer",
+		Name:    "PLC with OPC UA server",
+		Details: map[string][]string{"PLC": {"Prosys_Simulation_Server"}, "Location": {"Line_1"}, "KKS": {"YLLCP001"}},
+		Traits: Traits{
+			ServerAdrress: "opc.tcp://192.168.1.2:53530/OPCUA/SimulationServer",
+		},
 		ServicesMap: components.Services{
 			browse.SubPath: &browse,
 			access.SubPath: &access,
@@ -121,39 +134,48 @@ func initTemplate() components.UnitAsset {
 //-------------------------------------Instantiate unit asset(s) based on configuration
 
 // newResource creates the unit asset with its pointers and channels based on the configuration using the uaConfig structs
-func newResource(uac UnitAsset, sys *components.System, servs []components.Service) ([]components.UnitAsset, func()) {
+func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) ([]components.UnitAsset, func()) {
+	var plcConfig Traits
 	ctx := sys.Ctx
-	endpoint := uac.ServerAdrress
-	uaerver, err := opcua.NewClient(endpoint)
+	traits, err := UnmarshalTraits(configuredAsset.Traits)
+	if err != nil {
+		log.Fatalln("Warning: could not unmarshal traits:", err)
+	} else if len(traits) > 0 {
+		plcConfig = traits[0] // or handle multiple traits if needed
+	}
+
+	endpoint := plcConfig.ServerAdrress
+	opcuaClient, err := opcua.NewClient(endpoint)
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Printf("Trying to connect to OPC UA server @ %s\n", endpoint)
-	if err := uaerver.Connect(ctx); err != nil {
+	if err := opcuaClient.Connect(ctx); err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println("Connected")
 	nodelist := []components.UnitAsset{}
 
+	// Setting up the default node (Objects folder)
 	uasset := &UnitAsset{}
 	uasset.Name = "ObjectsFolder"
 	uasset.NodeName = "ns=0;i=85"
-	uasset.Server = uaerver
+	uasset.Server = opcuaClient
 	uasset.NodeID, err = ua.ParseNodeID(uasset.NodeName)
 	if err != nil {
 		log.Fatalf("invalid node id: %s", err)
 	}
-	uasset.Details = uac.Details
+	// uasset.Details = uac.Details
 	// Create a new instance of components.Services since each resources has its own set of services
-	uasset.ServicesMap = components.CloneServices(servs)
+	// uasset.ServicesMap = components.CloneServices(servs)
 	uasset.Owner = sys
 	nodelist = append(nodelist, uasset)
 
 	// Check if "Node_Id" key exists to avoid a potential panic
-	if nodeIds, ok := uac.NodeList["Node_Id"]; ok {
+	if nodeIds, ok := plcConfig.NodeList["Node_Id"]; ok {
 		for _, nodeId := range nodeIds {
 			newUA := &UnitAsset{} // Create a pointer to UnitAsset
-			newUA.Server = uaerver
+			newUA.Server = opcuaClient
 			newUA.NodeID, err = ua.ParseNodeID(nodeId)
 			if err != nil {
 				log.Printf("invalid node id: %s", err)
@@ -164,9 +186,9 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 				fmt.Printf("Node %s browsing errror %s", nodeId, err)
 			}
 			newUA.Name = nodeList[0].BrowseName
-			newUA.Details = uac.Details
+			// newUA.Details = uac.Details
 			// Create a new instance of components.Services since each resources has its own set of services
-			newUA.ServicesMap = components.CloneServices(servs)
+			// newUA.ServicesMap = components.CloneServices(servs)
 
 			newUA.Owner = sys
 			nodelist = append(nodelist, newUA)
@@ -178,10 +200,23 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 	// Return the unit asset(s) and a cleanup function to close any connection
 	return nodelist, func() {
 		fmt.Println("Closing the OPC UA server connection")
-		if err := uaerver.Close(ctx); err != nil {
+		if err := opcuaClient.Close(ctx); err != nil {
 			log.Printf("Error closing OPC UA connection: %v", err)
 		}
 	}
+}
+
+// UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
+func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
+	var traitsList []Traits
+	for _, raw := range rawTraits {
+		var t Traits
+		if err := json.Unmarshal(raw, &t); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
+		}
+		traitsList = append(traitsList, t)
+	}
+	return traitsList, nil
 }
 
 // -------------------------------------Unit asset's function methods

@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -187,26 +188,27 @@ func resolveLocalOntologies(localOntologies map[string]string, dir string, baseU
 // -------------------------------------Unit asset's function methods
 
 // assembles ontologies gets the list of systems from the lead registrar and then the ontology of each system
+// assembles ontologies gets the list of systems from the lead registrar and then the ontology of each system
 func (ua *UnitAsset) assembleOntologies(w http.ResponseWriter) {
-	// Look for leading service registrar
-
+	// 1) Discover the leading Service Registrar and request the cloud's system list
 	leadingRegistrarURL, err := components.GetRunningCoreSystemURL(ua.Owner, "serviceregistrar")
 	if err != nil {
 		log.Printf("Error getting the leading service registrar URL: %s\n", err)
 		http.Error(w, "Internal Server Error: unable to get leading service registrar URL", http.StatusInternalServerError)
 		return
 	}
-	// request list of systems in the cloud from the leading service registrar
 	leadUrl := leadingRegistrarURL + "/syslist"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+
 	req, err := http.NewRequest(http.MethodGet, leadUrl, nil)
 	if err != nil {
 		log.Printf("Error getting the systems list from service registrar, %s\n", err)
 		return
 	}
 	req = req.WithContext(ctx)
+
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -233,21 +235,22 @@ func (ua *UnitAsset) assembleOntologies(w http.ResponseWriter) {
 		return
 	}
 
-	// Perform a type assertion to convert the returned Form to ServiceRecord_v1
+	// 2) Assert we got a SystemRecordList, which contains the list of system base URLs
 	systemsList, ok := sL.(*forms.SystemRecordList_v1)
 	if !ok {
 		fmt.Println("Problem unpacking the service registration reply")
 		return
 	}
 
-	// Prepare the local cloud's knowledge graph by asking each system their their knowledge graph
-	prefixes := make(map[string]bool)        // To store unique prefixes
-	processedBlocks := make(map[string]bool) // To track processed RDF blocks
-	var uniqueIndividuals []string           // To store unique RDF individuals
+	// 3) Collect prefixes (deduped), and individual TTL blocks (deduped)
+	prefixes := make(map[string]bool)        // "@prefix ..." lines we keep once
+	processedBlocks := make(map[string]bool) // for deduping RDF blocks across systems
+	var uniqueIndividuals []string           // all individuals we will output
 
 	for _, s := range systemsList.List {
 		sysUrl := s + "/kgraph"
 		fmt.Println(sysUrl)
+
 		resp, err := http.Get(sysUrl)
 		if err != nil {
 			log.Printf("Unable to get ontology from %s: %s\n", s, err)
@@ -260,43 +263,92 @@ func (ua *UnitAsset) assembleOntologies(w http.ResponseWriter) {
 			continue
 		}
 
-		// Split into individual RDF blocks
-		blocks := strings.Split(string(bodyBytes), "\n\n") // Assuming blocks are separated by newlines
+		// Normalize CRLF to LF so splitting works even if a system returns Windows newlines.
+		text := strings.ReplaceAll(string(bodyBytes), "\r\n", "\n")
+
+		// Split into individual RDF blocks; your systems emit blocks separated by a blank line.
+		blocks := strings.Split(text, "\n\n") // :contentReference[oaicite:4]{index=4}
 
 		for _, block := range blocks {
 			normalizedBlock := strings.TrimSpace(block)
+			if normalizedBlock == "" {
+				continue
+			}
 			if processedBlocks[normalizedBlock] {
-				// Skip duplicate block
+				continue // already seen
+			}
+
+			// Collect @prefix lines (keep them out of individuals)
+			if strings.HasPrefix(normalizedBlock, "@prefix") {
+				for _, line := range strings.Split(normalizedBlock, "\n") {
+					if strings.HasPrefix(line, "@prefix") {
+						prefixes[line] = true
+					}
+				}
 				continue
 			}
 
-			// Extract prefixes only from the first pass and add to the prefixes map
-			if strings.HasPrefix(normalizedBlock, "@prefix") {
-				lines := strings.Split(normalizedBlock, "\n")
-				for _, line := range lines {
-					if strings.HasPrefix(line, "@prefix") {
-						prefixes[line] = true // Add unique prefixes
-					}
-				}
-				continue // Skip adding prefixes as RDF blocks
-			}
-
-			// Mark this block as processed and add to individuals
 			processedBlocks[normalizedBlock] = true
 			uniqueIndividuals = append(uniqueIndividuals, normalizedBlock)
 		}
 	}
 
-	// Construct the graph string
+	// 4) Detect a single cloud IRI from any afo:System blocks that already declare afo:isContainedIn
+	//    (We do this AFTER collection, to avoid running on an empty slice.)
+	var cloudIRI string
+	{
+		seen := map[string]struct{}{}
+		for _, blk := range uniqueIndividuals {
+			if !isSystemBlock(blk) { // helper in your file
+				continue
+			}
+			vals := extractContainedIns(blk) // helper in your file
+			// De-dup per block; error if a single system declares more than one cloud.
+			local := map[string]struct{}{}
+			for _, v := range vals {
+				local[v] = struct{}{}
+			}
+			if len(local) > 1 {
+				// report early with the concrete subject for clarity
+				http.Error(w, fmt.Sprintf("Bad Request: system %s has conflicting afo:isContainedIn values", extractSubject(blk)), http.StatusBadRequest)
+				return
+			}
+			for k := range local {
+				seen[k] = struct{}{}
+			}
+		}
+		if len(seen) == 0 {
+			http.Error(w, "Bad Request: no afo:isContainedIn found; please declare a LocalCloud in at least one system", http.StatusBadRequest)
+			return
+		}
+		if len(seen) > 1 {
+			var all []string
+			for k := range seen {
+				all = append(all, k)
+			}
+			sort.Strings(all)
+			http.Error(w, fmt.Sprintf("Bad Request: multiple LocalClouds detected across systems: %v", all), http.StatusBadRequest)
+			return
+		}
+		for k := range seen {
+			cloudIRI = k // the single agreed value
+		}
+	}
+
+	// 5) Ensure every afo:System has afo:isContainedIn cloudIRI (append a separate triple when missing)
+	for i, blk := range uniqueIndividuals {
+		if isSystemBlock(blk) && len(extractContainedIns(blk)) == 0 {
+			uniqueIndividuals[i] = injectContainedIn(blk, cloudIRI) // helper in your file
+		}
+	}
+
+	// 6) Build the final graph: prefixes (once), ontology header with imports, then all blocks
 	var graph string
 
-	// updatePrefixes(prefixes, ua.Traits.LOntologies) //update prefixes with local ontology URIs TO DO: remove function call, it is not used anymore
-	// Write unique prefixes once
 	for prefix := range prefixes {
 		graph += prefix + "\n"
 	}
 
-	// Add the ontology definition
 	ontoImport := "\n:ontology a owl:Ontology "
 	for _, uri := range ua.Traits.LOntologies {
 		ontoImport += fmt.Sprintf(";\n    owl:imports <%s> ", uri)
@@ -304,26 +356,21 @@ func (ua *UnitAsset) assembleOntologies(w http.ResponseWriter) {
 	ontoImport += ".\n"
 	graph += ontoImport + "\n"
 
-	// Write unique RDF blocks
 	for _, block := range uniqueIndividuals {
 		graph += block + "\n\n"
 	}
 
-	// Send the knowledge graph to the browser
+	// 7) Return to browser and POST to GraphDB (same as your current flow)
 	w.Header().Set("Content-Type", "text/turtle")
-	w.Write([]byte(graph))
+	w.Write([]byte(graph)) // :contentReference[oaicite:5]{index=5}
 
-	// Send the knowledge graph to GraphDB
 	req, err = http.NewRequest("POST", ua.RepositoryURL, bytes.NewBuffer([]byte(graph)))
 	if err != nil {
 		fmt.Println("Error creating the request to the database:", err)
 		return
 	}
-
-	// Set appropriate headers
 	req.Header.Set("Content-Type", "text/turtle")
 
-	// Send the request
 	client = &http.Client{}
 	resp, err = client.Do(req)
 	if err != nil {
@@ -332,7 +379,6 @@ func (ua *UnitAsset) assembleOntologies(w http.ResponseWriter) {
 	}
 	defer resp.Body.Close()
 
-	// Read and print the response
 	body, err := io.ReadAll(resp.Body)
 	fmt.Println("GraphDB Response Status:", resp.Status)
 	if err != nil {
@@ -366,6 +412,132 @@ func updatePrefixes(prefixes map[string]bool, prefixUpdates map[string]string) {
 	for k := range updated {
 		prefixes[k] = true
 	}
+}
+
+// ------------------------------------- Local cloud containing all systems
+
+// ensurePrefixed returns v with "alc:" prefix unless it's already an IRI (<...>) or a prefixed/absolute IRI (contains ':').
+func ensurePrefixed(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return v
+	}
+	if (strings.HasPrefix(v, "<") && strings.HasSuffix(v, ">")) || strings.Contains(v, ":") {
+		return v
+	}
+	return "alc:" + v
+}
+
+// isSystemBlock reports whether this TTL block defines an afo:System individual.
+func isSystemBlock(block string) bool {
+	// Heuristic: first line looks like: "alc:foo a afo:System ;" or ends with "."
+	lines := strings.Split(strings.TrimSpace(block), "\n")
+	if len(lines) == 0 {
+		return false
+	}
+	first := lines[0]
+	return strings.Contains(first, " a afo:System ")
+}
+
+// extractSubject returns the subject IRI (first token of the first line).
+func extractSubject(block string) string {
+	first := strings.Split(strings.TrimSpace(block), "\n")[0]
+	parts := strings.Fields(first)
+	if len(parts) > 0 {
+		return parts[0] // e.g., "alc:aiko_ds18b20"
+	}
+	return ""
+}
+
+// extractContainedIns finds all afo:isContainedIn objects in a block.
+func extractContainedIns(block string) []string {
+	var found []string
+	for _, line := range strings.Split(block, "\n") {
+		if strings.Contains(line, "afo:isContainedIn ") {
+			// very simple parse: take everything after predicate up to ';' or '.'
+			after := strings.SplitN(line, "afo:isContainedIn", 2)[1]
+			after = strings.TrimSpace(after)
+			after = strings.TrimRight(after, " ;.")
+			if after != "" {
+				found = append(found, after)
+			}
+		}
+	}
+	return found
+}
+
+// injectContainedIn inserts "afo:isContainedIn <iri>" as one of the system's predicates
+// by replacing the final '.' of the block with " ;\n    afo:isContainedIn <iri> ."
+// This keeps the triple *inside* the subject's predicate list (not as a separate triple).
+// If the block doesn't end with '.', we fall back to appending a separate triple.
+func injectContainedIn(block, iri string) string {
+	iri = ensurePrefixed(iri)
+
+	// Don't add if it's already present.
+	if len(extractContainedIns(block)) > 0 {
+		return block
+	}
+
+	trim := strings.TrimRight(block, " \t\r\n")
+	if trim == "" {
+		return block
+	}
+
+	// Normal case: the subject block ends with a single '.'
+	if strings.HasSuffix(trim, ".") {
+		// Replace the trailing '.' with " ;\n    afo:isContainedIn <iri> ."
+		core := strings.TrimSuffix(trim, ".")
+		return core + " ;\n    afo:isContainedIn " + iri + " .\n"
+	}
+
+	// Fallback: append as a separate triple with explicit subject.
+	subj := extractSubject(block)
+	if subj == "" {
+		return block
+	}
+	return trim + "\n" + fmt.Sprintf("%s afo:isContainedIn %s .\n", subj, iri)
+}
+
+// detectGlobalCloud validates there is at most one unique LocalCloud across all system blocks.
+// Returns that single IRI (normalized) or an error if conflicting values are found.
+// If none is provided anywhere, returns "" and no error (caller decides policy).
+func detectGlobalCloud(blocks []string) (string, error) {
+	set := map[string]struct{}{}
+	for _, b := range blocks {
+		if !isSystemBlock(b) {
+			continue
+		}
+		vals := extractContainedIns(b)
+		// de-dupe within block and normalize
+		local := map[string]struct{}{}
+		for _, v := range vals {
+			local[ensurePrefixed(v)] = struct{}{}
+		}
+		if len(local) > 1 {
+			// a single system declares conflicting values
+			var ls []string
+			for k := range local {
+				ls = append(ls, k)
+			}
+			sort.Strings(ls)
+			return "", fmt.Errorf("a system block has conflicting afo:isContainedIn values: %v", ls)
+		}
+		for k := range local {
+			set[k] = struct{}{}
+		}
+	}
+	if len(set) <= 1 {
+		for k := range set {
+			return k, nil // the only value, or "" if none
+		}
+		return "", nil
+	}
+	var gs []string
+	for k := range set {
+		gs = append(gs, k)
+	}
+	sort.Strings(gs)
+	return "", fmt.Errorf("multiple LocalClouds detected across systems: %v", gs)
 }
 
 // ----------- Local Ontologies Service -----------------------------------------------------------

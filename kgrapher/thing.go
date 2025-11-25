@@ -25,6 +25,7 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -39,9 +40,9 @@ import (
 // -------------------------------------Define the unit asset
 // Traits are Asset-specific configurable parameters
 type Traits struct {
-	SystemList    forms.SystemRecordList_v1 `json:"-"`
-	RepositoryURL string                    `json:"graphDBurl"`
-	LOntologies   map[string]string         `json:"localOntologies"` // map of ontology names to their file paths
+	SystemList     forms.SystemRecordList_v1 `json:"-"`
+	TripleStoreURL string                    `json:"graphDBurl"`
+	LOntologies    map[string]string         `json:"localOntologies"` // map of ontology names to their file paths
 }
 
 // UnitAsset type models the unit asset (interface) of the system
@@ -111,7 +112,7 @@ func initTemplate() components.UnitAsset {
 		Details:     map[string][]string{"Type": {"Interactive"}},
 		ServicesMap: map[string]*components.Service{cloudgraph.SubPath: &cloudgraph, localOntologies.SubPath: &localOntologies},
 		Traits: Traits{
-			RepositoryURL: "http://localhost:7200/repositories/Arrowhead/statements",
+			TripleStoreURL: "http://localhost:7200/repositories/Arrowhead/statements",
 			LOntologies: map[string]string{
 				"alc": "alc-ontology-local.ttl", // Initialize the map for local ontologies
 			},
@@ -187,7 +188,6 @@ func resolveLocalOntologies(localOntologies map[string]string, dir string, baseU
 
 // -------------------------------------Unit asset's function methods
 
-// assembles ontologies gets the list of systems from the lead registrar and then the ontology of each system
 // assembles ontologies gets the list of systems from the lead registrar and then the ontology of each system
 func (ua *UnitAsset) assembleOntologies(w http.ResponseWriter) {
 	// 1) Discover the leading Service Registrar and request the cloud's system list
@@ -349,7 +349,7 @@ func (ua *UnitAsset) assembleOntologies(w http.ResponseWriter) {
 		graph += prefix + "\n"
 	}
 
-	ontoImport := "\n:ontology a owl:Ontology "
+	ontoImport := "\nalc:ontology a owl:Ontology "
 	for _, uri := range ua.Traits.LOntologies {
 		ontoImport += fmt.Sprintf(";\n    owl:imports <%s> ", uri)
 	}
@@ -360,13 +360,27 @@ func (ua *UnitAsset) assembleOntologies(w http.ResponseWriter) {
 		graph += block + "\n\n"
 	}
 
-	// 7) Return to browser and POST to GraphDB (same as your current flow)
+	// 7) Return to browser and POST to GraphDB (now: snapshot + replace current)
 	w.Header().Set("Content-Type", "text/turtle")
-	w.Write([]byte(graph)) // :contentReference[oaicite:5]{index=5}
+	w.Write([]byte(graph))
 
-	req, err = http.NewRequest("POST", ua.RepositoryURL, bytes.NewBuffer([]byte(graph)))
+	// Build a snapshot IRI (UTC is simplest to compare later)
+	snapshotT := time.Now().UTC().Format(time.RFC3339) // e.g. 2025-11-14T09:17:23Z
+	snapshotIRI := "urn:snapshots:" + snapshotT
+
+	// Derive endpoints from ua.TripleStoreURL
+	statementsURL := ua.TripleStoreURL // expected: .../repositories/<repo>/statements
+	repoBase := strings.TrimSuffix(ua.TripleStoreURL, "/statements")
+
+	// Graph Store HTTP Protocol endpoint for indirectly-referenced graphs
+	// If you pass repo *base* (…/repositories/<repo>) instead, use:
+	// gspURL := repoBase + "/rdf-graphs/service?graph=" + url.QueryEscape(snapshotIRI)
+	gspURL := repoBase + "/rdf-graphs/service?graph=" + url.QueryEscape(snapshotIRI)
+
+	// --- 7a) PUT the TTL into the snapshot named graph
+	req, err = http.NewRequest(http.MethodPut, gspURL, bytes.NewBuffer([]byte(graph)))
 	if err != nil {
-		fmt.Println("Error creating the request to the database:", err)
+		log.Println("Error creating snapshot PUT:", err)
 		return
 	}
 	req.Header.Set("Content-Type", "text/turtle")
@@ -374,17 +388,43 @@ func (ua *UnitAsset) assembleOntologies(w http.ResponseWriter) {
 	client = &http.Client{}
 	resp, err = client.Do(req)
 	if err != nil {
-		fmt.Println("Error sending the request to the database:", err)
+		log.Println("Error PUTting snapshot:", err)
 		return
 	}
 	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	fmt.Println("GraphDB Response Status:", resp.Status)
-	if err != nil {
-		fmt.Println("Error reading the response body:", err)
-		fmt.Println("GraphDB Response Body:", string(body))
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode/100 != 2 {
+		log.Printf("Snapshot PUT failed: %s\n%s\n", resp.Status, string(respBody))
+		return
 	}
+
+	// --- 7b) Replace <urn:state:current> with this snapshot (single SPARQL UPDATE)
+	update := fmt.Sprintf(`CLEAR GRAPH <urn:state:current>;
+ADD GRAPH <%s> TO <urn:state:current>;`, snapshotIRI)
+
+	form := url.Values{"update": {update}}
+	req2, err := http.NewRequest(http.MethodPost, statementsURL, bytes.NewBufferString(form.Encode()))
+	if err != nil {
+		log.Println("Error creating update POST:", err)
+		return
+	}
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+
+	resp2, err := client.Do(req2)
+	if err != nil {
+		log.Println("Error POSTing update:", err)
+		return
+	}
+	defer resp2.Body.Close()
+	resp2Body, _ := io.ReadAll(resp2.Body)
+	if resp2.StatusCode/100 != 2 {
+		log.Printf("Update failed: %s\n%s\n", resp2.Status, string(resp2Body))
+		return
+	}
+
+	fmt.Println("Snapshot stored at:", snapshotIRI)
+	fmt.Println("Current graph replaced from snapshot.")
+
 }
 
 // updatePrefix_Target updates the prefixes in the RDF blocks with the new URIs from the local ontologies.

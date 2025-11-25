@@ -30,6 +30,7 @@ To build the software for one's own machine,
 The following commands enable one to build for different platforms:
 
 - Raspberry Pi 64: ```GOOS=linux GOARCH=arm64 go build -o kgrapher_rpi64```
+- Linux: GOOS=```GOARCH=amd64 go build -o kgrapher_amd64``` or ```GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o kgrapher_linux_amd64 .``` depending on the CPU (use ```uname -m``` to find out)
 
 One can find a complete list of platform by typing *‌go tool dist list* at the command prompt
 

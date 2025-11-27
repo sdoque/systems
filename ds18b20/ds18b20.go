@@ -42,7 +42,8 @@ func main() {
 	sys.Husk = &components.Husk{
 		Description: "reads the temperature from 1-wire sensors",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
-		ProtoPort:   map[string]int{"https": 0, "http": 20150, "coap": 0},
+		Host:        components.NewDevice(),
+		ProtoPort:   map[string]int{"https": -1, "http": 20150, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/ds18b20",
 		DName: pkix.Name{
 			CommonName:         sys.Name,

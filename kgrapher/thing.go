@@ -146,7 +146,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		log.Fatalf("could not create directory %q: %v", dir, err)
 	}
-	serverAddress := ua.Owner.Host.IPAddresses[0]                                          // Use the first IP address of the system
+	serverAddress := ua.Owner.Husk.Host.IPAddresses[0]                                     // Use the first IP address of the system
 	ontologyURL := fmt.Sprintf("http://%s:20105/kgrapher/assembler/files/", serverAddress) //only using http for now TODO: use https
 	// 2. Resolve local ontologies to their full URLs
 	resolveLocalOntologies(ua.LOntologies, dir, ontologyURL)
@@ -342,7 +342,10 @@ func (ua *UnitAsset) assembleOntologies(w http.ResponseWriter) {
 		}
 	}
 
-	// 6) Build the final graph: prefixes (once), ontology header with imports, then all blocks
+	// 6a) Prefix all cloud-local individuals with the LocalCloud name
+	uniqueIndividuals = addCloudPrefixToBlocks(uniqueIndividuals, cloudIRI)
+
+	// 6b) Build the final graph: prefixes (once), ontology header with imports, then all blocks
 	var graph string
 
 	for prefix := range prefixes {
@@ -452,6 +455,92 @@ func updatePrefixes(prefixes map[string]bool, prefixUpdates map[string]string) {
 	for k := range updated {
 		prefixes[k] = true
 	}
+}
+
+// addCloudPrefixToBlocks prefixes all alc: subjects (except the cloud itself and "ontology")
+// with "<CloudName>_" and updates all references consistently.
+func addCloudPrefixToBlocks(blocks []string, cloudIRI string) []string {
+	cloudIRI = ensurePrefixed(cloudIRI)
+	cloudName := extractCloudName(cloudIRI)
+	if cloudName == "" {
+		return blocks
+	}
+
+	// First pass: build a mapping oldIRI -> newIRI
+	mapping := map[string]string{}
+	for _, blk := range blocks {
+		subj := extractSubject(blk)
+		if !strings.HasPrefix(subj, "alc:") {
+			continue
+		}
+		rest := strings.TrimPrefix(subj, "alc:")
+		if rest == "" {
+			continue
+		}
+		// Don't touch the cloud itself or the ontology individual
+		if rest == cloudName || rest == "ontology" {
+			continue
+		}
+		// Avoid double-prefixing if it's already tagged
+		if strings.HasPrefix(rest, cloudName+"_") {
+			continue
+		}
+		newSubj := "alc:" + cloudName + "_" + rest
+		mapping[subj] = newSubj
+	}
+
+	if len(mapping) == 0 {
+		return blocks
+	}
+
+	// Replace longer IRIs first to avoid partial collisions
+	keys := make([]string, 0, len(mapping))
+	for k := range mapping {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return len(keys[i]) > len(keys[j])
+	})
+
+	out := make([]string, len(blocks))
+	for i, blk := range blocks {
+		txt := blk
+		for _, old := range keys {
+			txt = strings.ReplaceAll(txt, old, mapping[old])
+		}
+		out[i] = txt
+	}
+	return out
+}
+
+// extractCloudName gets the local name from a cloud IRI like "alc:AlphaCloud"
+// or "<http://.../AlphaCloud>" or "<http://...#AlphaCloud>".
+func extractCloudName(iri string) string {
+	iri = strings.TrimSpace(iri)
+	if iri == "" {
+		return ""
+	}
+
+	// Full IRI in angle brackets
+	if strings.HasPrefix(iri, "<") && strings.HasSuffix(iri, ">") {
+		inner := iri[1 : len(iri)-1]
+		idx := strings.LastIndexAny(inner, "#/")
+		if idx >= 0 && idx+1 < len(inner) {
+			return inner[idx+1:]
+		}
+		return inner
+	}
+
+	// Prefixed name like "alc:AlphaCloud"
+	if strings.Contains(iri, ":") {
+		parts := strings.SplitN(iri, ":", 2)
+		if len(parts) == 2 {
+			return parts[1]
+		}
+	}
+
+	// Fallback: just return whatever we got
+	return iri
 }
 
 // ------------------------------------- Local cloud containing all systems

@@ -133,7 +133,7 @@ func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
 
 // StartStreamURL returns the URL to start the video stream.
 func (ua *UnitAsset) StartStreamURL() string {
-	ip := ua.Owner.Host.IPAddresses[0]
+	ip := ua.Owner.Husk.Host.IPAddresses[0]
 	port := ua.Owner.Husk.ProtoPort["http"]
 	return fmt.Sprintf("http://%s:%d/filmer/%s/stream", ip, port, ua.Name)
 }

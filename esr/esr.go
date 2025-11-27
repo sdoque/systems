@@ -47,6 +47,7 @@ func main() {
 	sys.Husk = &components.Husk{
 		Description: "is an Arrowhead mandatory core system that keeps track of the currently available services.",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}, "LocalCloud": {"AlphaCloud"}},
+		Host:        components.NewDevice(),
 		ProtoPort:   map[string]int{"https": 0, "http": 20102, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/esr",
 		DName: pkix.Name{
@@ -419,7 +420,7 @@ func peersList(sys *components.System) (peers []*components.CoreSystem, err erro
 		if err != nil {
 			fmt.Println(err)
 		}
-		if (u.Hostname() == sys.Host.IPAddresses[0] || u.Hostname() == "localhost") && uPort == sys.Husk.ProtoPort[u.Scheme] {
+		if (u.Hostname() == sys.Husk.Host.IPAddresses[0] || u.Hostname() == "localhost") && uPort == sys.Husk.ProtoPort[u.Scheme] {
 			continue
 		}
 		peers = append(peers, cs)

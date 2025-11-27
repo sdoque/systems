@@ -42,6 +42,7 @@ func main() {
 	sys.Husk = &components.Husk{
 		Description: "assembles the ontologies of all systems in a local cloud",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
+		Host:        components.NewDevice(),
 		ProtoPort:   map[string]int{"https": 0, "http": 20105, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/kgrapher",
 		DName: pkix.Name{

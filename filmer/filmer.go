@@ -41,6 +41,7 @@ func main() {
 	sys.Husk = &components.Husk{
 		Description: " takes a picture using a camera and saves a file",
 		Details:     map[string][]string{"Developer": {"Arrowhead"}},
+		Host:        components.NewDevice(),
 		ProtoPort:   map[string]int{"https": 0, "http": 20162, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/mbaigo/tree/master/filmer",
 		DName: pkix.Name{

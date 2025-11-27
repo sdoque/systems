@@ -37,7 +37,8 @@ func main() {
 	// instantiate the husk
 	sys.Husk = &components.Husk{
 		Description: " provides a rotation service using a standard servo motor driven with PWM",
-		Details:     map[string][]string{"Developer": {"Arrowhead"}},
+		Details:     map[string][]string{"Developer": {"Synecdoque"}},
+		Host:        components.NewDevice(),
 		ProtoPort:   map[string]int{"https": 0, "http": 20151, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/parallax",
 		DName: pkix.Name{

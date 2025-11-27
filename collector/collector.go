@@ -41,6 +41,7 @@ func main() {
 	sys.Husk = &components.Husk{
 		Description: " is a system that ingests time signals into an Influx database",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
+		Host:        components.NewDevice(),
 		ProtoPort:   map[string]int{"https": 0, "http": 20180, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/influxer",
 		DName: pkix.Name{

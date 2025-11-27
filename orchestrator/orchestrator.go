@@ -39,8 +39,8 @@ func main() {
 	// Instantiate the husk
 	sys.Husk = &components.Husk{
 		Description: "provides the URL of a currently available and authorized sought service",
-		Certificate: "ABCD",
 		Details:     map[string][]string{"Developer": {"Arrowhead"}},
+		Host:        components.NewDevice(),
 		ProtoPort:   map[string]int{"https": 0, "http": 20103, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/orchestrator",
 		DName: pkix.Name{

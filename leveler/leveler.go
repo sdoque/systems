@@ -41,6 +41,7 @@ func main() {
 	sys.Husk = &components.Husk{
 		Description: " is a controller for a consumed servo motor position based on a consumed temperature",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
+		Host:        components.NewDevice(),
 		ProtoPort:   map[string]int{"https": 0, "http": 20154, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/leveler",
 		DName: pkix.Name{

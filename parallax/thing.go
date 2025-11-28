@@ -98,7 +98,7 @@ func initTemplate() components.UnitAsset {
 	// var uat components.UnitAsset // this is an interface, which we then initialize
 	uat := &UnitAsset{
 		Name:    "Servo_1",
-		Details: map[string][]string{"Model": {"standard servo", "half_circle"}, "Location": {"Kitchen"}},
+		Details: map[string][]string{"Model": {"standardServo", "halfCircle"}, "Location": {"Kitchen"}},
 		ServicesMap: components.Services{
 			rotation.SubPath: &rotation, // Inline assignment of the rotation service
 		},

@@ -41,6 +41,7 @@ func main() {
 	sys.Husk = &components.Husk{
 		Description: " subscribes and publishes to an MQTT broker",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
+		Host:        components.NewDevice(),
 		ProtoPort:   map[string]int{"https": 0, "http": 20172, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/telegrapher",
 		DName: pkix.Name{
@@ -51,6 +52,8 @@ func main() {
 			Province:           []string{"Norrbotten"},
 			Country:            []string{"SE"},
 		},
+		RegistrarChan: make(chan *components.CoreSystem, 1),
+		Messengers:    make(map[string]int),
 	}
 
 	// instantiate a template unit asset

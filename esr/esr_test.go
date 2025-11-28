@@ -114,26 +114,26 @@ func TestRoleStatus(t *testing.T) {
 
 func createTestSysMultipleRegistrars(port string) components.System {
 	sys := createTestSystem()
-	sys.CoreS = []*components.CoreSystem{}
+	sys.Husk.CoreS = []*components.CoreSystem{}
 	for num := range 5 {
 		reg := &components.CoreSystem{
 			Name: "serviceregistrar",
 			Url:  fmt.Sprintf("http://localhost:%s/%d", port, num),
 		}
-		sys.CoreS = append(sys.CoreS, reg)
+		sys.Husk.CoreS = append(sys.Husk.CoreS, reg)
 	}
 	return sys
 }
 
 func createTestSysBrokenRegistrarURL() components.System {
 	sys := createTestSystem()
-	sys.CoreS = []*components.CoreSystem{}
+	sys.Husk.CoreS = []*components.CoreSystem{}
 
 	reg := &components.CoreSystem{
 		Name: "serviceregistrar",
 		Url:  string(rune(0)),
 	}
-	sys.CoreS = append(sys.CoreS, reg)
+	sys.Husk.CoreS = append(sys.Husk.CoreS, reg)
 
 	return sys
 }

@@ -58,6 +58,8 @@ func main() {
 			Province:           []string{"Norrbotten"},
 			Country:            []string{"SE"},
 		},
+		RegistrarChan: make(chan *components.CoreSystem, 1),
+		Messengers:    make(map[string]int),
 	}
 
 	// instantiate a template unit asset
@@ -408,7 +410,7 @@ func (ua *UnitAsset) Role() {
 
 // peerslist provides a list of the other service registrars in the local cloud
 func peersList(sys *components.System) (peers []*components.CoreSystem, err error) {
-	for _, cs := range sys.CoreS {
+	for _, cs := range sys.Husk.CoreS {
 		if cs.Name != "serviceregistrar" {
 			continue
 		}

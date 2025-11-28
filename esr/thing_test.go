@@ -57,7 +57,7 @@ func createTestSystem() components.System {
 		Name: "orchestrator",
 		Url:  "https://orchestator:1234",
 	}
-	sys.CoreS = []*components.CoreSystem{
+	sys.Husk.CoreS = []*components.CoreSystem{
 		leadingRegistrar,
 		orchestrator,
 	}
@@ -90,6 +90,8 @@ func createNewSys() components.System {
 			Province:           []string{"Norrbotten"},
 			Country:            []string{"SE"},
 		},
+		RegistrarChan: make(chan *components.CoreSystem, 1),
+		Messengers:    make(map[string]int),
 	}
 
 	// instantiate a template unit asset

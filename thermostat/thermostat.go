@@ -36,6 +36,7 @@ func main() {
 
 	// instantiate the System
 	sys := components.NewSystem("thermostat", ctx)
+	sys.Mission = "Controlling_Servo"
 
 	// Instantiate the husk
 	sys.Husk = &components.Husk{
@@ -110,6 +111,7 @@ func (t *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath 
 	}
 }
 
+// setpt handles the get and set requests for the thermostat set point
 func (rsc *UnitAsset) setpt(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
@@ -126,6 +128,7 @@ func (rsc *UnitAsset) setpt(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// diff handles the get requests for the thermostat error signal
 func (rsc *UnitAsset) diff(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
@@ -136,6 +139,8 @@ func (rsc *UnitAsset) diff(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// variations handles the get requests for the thermostat jitter signal
+// the time to make the temperature get request , process it, and set the new position
 func (rsc *UnitAsset) variations(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2024 Synecdoque
+ * Copyright (c) 2025 Synecdoque
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -21,9 +21,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"mime"
 	"net/http"
 	"time"
 
@@ -32,21 +30,21 @@ import (
 	"github.com/sdoque/mbaigo/usecases"
 )
 
-// This is the main function for the Modbus master (modboss) system
 func main() {
 	// prepare for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background()) // create a context that can be cancelled
-	defer cancel()
+	defer cancel()                                          // make sure all paths cancel the context to avoid context leak
 
 	// instantiate the System
-	sys := components.NewSystem("modboss", ctx)
+	sys := components.NewSystem("emulator", ctx)
 
 	// instantiate the husk
 	sys.Husk = &components.Husk{
-		Description: "interacts with an Modbus slave or server",
+		Description: "replays signals stored in JSON, XML or CSV files",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
-		ProtoPort:   map[string]int{"https": 0, "http": 20171, "coap": 0},
-		InfoLink:    "https://github.com/sdoque/systems/tree/main/modboss",
+		Host:        components.NewDevice(),
+		ProtoPort:   map[string]int{"https": 0, "http": 20156, "coap": 0},
+		InfoLink:    "https://github.com/sdoque/systems/tree/main/ds18b20",
 		DName: pkix.Name{
 			CommonName:         sys.Name,
 			Organization:       []string{"Synecdoque"},
@@ -67,20 +65,19 @@ func main() {
 	// Configure the system
 	rawResources, err := usecases.Configure(&sys)
 	if err != nil {
-		log.Fatalf("Configuration error: %v\n", err)
+		log.Fatalf("configuration error: %v\n", err)
 	}
 	sys.UAssets = make(map[string]*components.UnitAsset) // clear the unit asset map (from the template)
+	var cleanups []func()
 	for _, raw := range rawResources {
 		var uac usecases.ConfigurableAsset
 		if err := json.Unmarshal(raw, &uac); err != nil {
-			log.Fatalf("Resource configuration error: %+v\n", err)
+			log.Fatalf("resource configuration error: %+v\n", err)
 		}
-		uas, cleanup := newResource(uac, &sys)
-		defer cleanup()
-		for _, ua := range uas {
-			var asset components.UnitAsset = ua
-			sys.UAssets[ua.GetName()] = &asset
-		}
+		ua, cleanup := newResource(uac, &sys)
+		cleanups = append(cleanups, cleanup)
+		defer cleanup() // ensure cleanup is called when the program exits
+		sys.UAssets[ua.GetName()] = &ua
 	}
 
 	// Generate PKI keys and CSR to obtain a authentication certificate from the CA
@@ -94,59 +91,65 @@ func main() {
 
 	// wait for shutdown signal, and gracefully close properly goroutines with context
 	<-sys.Sigs // wait for a SIGINT (Ctrl+C) signal
-	fmt.Println("\nshuting down system", sys.Name)
+	log.Println("\nshuting down system", sys.Name)
 	cancel()                    // cancel the context, signaling the goroutines to stop
-	time.Sleep(3 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
+	time.Sleep(2 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
 }
 
 // Serving handles the resources services. NOTE: it expects those names from the request URL path
 func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
-
 	case "access":
-		ua.access(w, r)
+		ua.readSignal(w, r)
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}
 }
 
-func (ua *UnitAsset) access(w http.ResponseWriter, r *http.Request) {
+// readSignal gets the unit asset's signal datum and sends it in a signal form
+func (ua *UnitAsset) readSignal(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
-	case "GET":
-		valueForm := ua.read()
-		usecases.HTTPProcessGetRequest(w, r, valueForm)
-	case "POST":
-		contentType := r.Header.Get("Content-Type")
-		mediaType, _, err := mime.ParseMediaType(contentType)
-		if err != nil {
-			fmt.Println("Error parsing media type:", err)
+	case http.MethodGet:
+		getMeasuremet := STray{
+			Action: "read",
+			// Buffer 1 prevents emulateAsset from blocking forever if the handler exits early.
+			ValueP: make(chan forms.SignalA_v1a, 1),
+			Error:  make(chan error, 1),
+		}
+
+		// IMPORTANT: Protect the send. Your previous code could block forever here.
+		select {
+		case ua.trayChan <- getMeasuremet:
+			// delivered
+		case <-r.Context().Done():
+			http.Error(w, "Request cancelled", http.StatusRequestTimeout)
+			log.Println("Signal reading request cancelled by client")
+			return
+		case <-time.After(1 * time.Second):
+			http.Error(w, "Asset busy", http.StatusGatewayTimeout)
+			log.Println("Failure to enqueue signal reading request (asset busy)")
 			return
 		}
 
-		defer r.Body.Close()
-		bodyBytes, err := io.ReadAll(r.Body)
-		if err != nil {
-			log.Printf("error reading service discovery request body: %v", err)
+		// Now wait for the response (or timeout/cancel)
+		select {
+		case err := <-getMeasuremet.Error:
+			fmt.Printf("Logic error in getting measurement, %s\n", err)
+			w.WriteHeader(http.StatusInternalServerError)
 			return
-		}
-		newState, err := usecases.Unpack(bodyBytes, mediaType)
-		if err != nil {
-			log.Printf("error extracting the service discovery request %v\n", err)
+
+		case signalForm := <-getMeasuremet.ValueP:
+			usecases.HTTPProcessGetRequest(w, r, &signalForm)
 			return
-		}
-		// Perform a type assertion to convert the received form to the expected type
-		switch ns := newState.(type) {
-		case *forms.SignalA_v1a:
-			// v is of type *forms.SignalA_v1a
-			fmt.Printf("Received analog signal: %.2f %s\n", ns.Value, ns.Unit)
-			ua.write(ns.Value)
-		case *forms.SignalB_v1a:
-			// v is of type *forms.SignalB_v1a
-			fmt.Printf("Received digital signal: %v\n", ns.Value)
-			ua.write(ns.Value)
-		default:
-			log.Printf("Problem unpacking the new value for %s: unsupported form type %T", ua.Name, ns)
-			http.Error(w, "Unsupported form type", http.StatusBadRequest)
+
+		case <-r.Context().Done():
+			http.Error(w, "Request cancelled", http.StatusRequestTimeout)
+			log.Println("Signal reading request cancelled while waiting for response")
+			return
+
+		case <-time.After(5 * time.Second):
+			http.Error(w, "Request timed out", http.StatusGatewayTimeout)
+			log.Println("Failure to process signal reading request (timed out waiting for response)")
 			return
 		}
 

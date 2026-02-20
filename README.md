@@ -1,4 +1,43 @@
 # mbaigo systems
+
+The Arrowhead Framework is used to compose a *system of systems* for a specific purpose.
+
+It is similar to building with LEGO: the same set of building blocks can be assembled into different solutions (e.g., a plane or a car), and the final assembly represents a distinct functional concept. For example, to build a climate control solution, you would select and integrate systems such as a temperature sensor system, a valve (actuator) system, and a thermostat/control system.
+
+An Arrowhead system of systems—also called a *local cloud*—is dynamic: systems may join or leave during operation. This is possible because Arrowhead relies on *service-oriented architecture (SOA)*. Each system exposes one or more services that other systems can consume.
+
+A *service* is an externally accessible function provided by a system, typically representing the capabilities of its underlying asset. For example:
+
+* A temperature sensor system has a physical sensor as its asset. The sensor’s function is to measure temperature, and the system exposes that measurement as a temperature service.
+* A database system has a database as its asset. The system exposes operations such as create, read, update, and delete (CRUD) as services.
+
+To enable service discovery, each provider system registers its services with the *Service Registrar*, whose asset is the service registry. When a consumer system wants to use a service, it asks the *Orchestrator* how to reach the desired service.
+
+The Orchestrator queries the Service Registrar to check whether the requested service is currently registered (i.e., available). If it is available, the Orchestrator returns the service endpoint (URL) to the consumer. The consumer then communicates directly with the provider using that URL.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant SP as Service Provider
+    participant SR as Service Registrar
+    participant OR as Orchestrator
+    participant SC as Service Consumer
+
+    %% Registration phase
+    SP->>SR: Register services (service definition + endpoint metadata)
+    SR-->>SP: Return registration ID
+
+    %% Discovery / orchestration phase
+    SC->>OR: Request desired service (service query)
+    OR->>SR: Lookup service availability + endpoint
+    SR-->>OR: Return service URL (endpoint)
+    OR-->>SC: Provide service URL
+
+    %% Consumption phase
+    SC->>SP: Invoke service at URL (request execution)
+    SP-->>SC: Service response (result)
+```
+
 ## Collections of systems that rely on the mbaigo module
 
 - Service Registrar (asset: SQLite database)

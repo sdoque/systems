@@ -18,6 +18,7 @@ package main
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -27,18 +28,13 @@ import (
 
 	"github.com/sdoque/mbaigo/components"
 	"github.com/sdoque/mbaigo/forms"
+	"github.com/sdoque/mbaigo/usecases"
 )
 
 //-------------------------------------Define the unit asset
 
-// UnitAsset type models the unit asset (interface) of the system
-type UnitAsset struct {
-	Name        string              `json:"name"`
-	Owner       *components.System  `json:"-"`
-	Details     map[string][]string `json:"details"`
-	ServicesMap components.Services `json:"-"`
-	CervicesMap components.Cervices `json:"-"`
-	//
+// Traits are Asset-specific configurable parameters
+type Traits struct {
 	ServerAddress string              `json:"serverAddress"`
 	RegisterMap   map[string][]string `json:"register_map"`
 	conn          *net.Conn           `json:"-"`
@@ -46,6 +42,17 @@ type UnitAsset struct {
 	Address       string              `json:"-"`
 	Access        string              `json:"-"`
 	DataType      string              `json:"-"`
+}
+
+// UnitAsset type models the unit asset (interface) of the system
+type UnitAsset struct {
+	Name        string              `json:"assetName"`
+	Owner       *components.System  `json:"-"`
+	Details     map[string][]string `json:"details"`
+	ServicesMap components.Services `json:"-"`
+	CervicesMap components.Cervices `json:"-"`
+	//
+	Traits
 }
 
 // GetName returns the name of the Resource.
@@ -68,6 +75,11 @@ func (ua *UnitAsset) GetDetails() map[string][]string {
 	return ua.Details
 }
 
+// GetTraits returns the traits of the Resource.
+func (ua *UnitAsset) GetTraits() any {
+	return ua.Traits
+}
+
 // ensure UnitAsset implements components.UnitAsset (this check is done at during the compilation)
 var _ components.UnitAsset = (*UnitAsset)(nil)
 
@@ -86,30 +98,33 @@ func initTemplate() components.UnitAsset {
 
 	// var uat components.UnitAsset // this is an interface, which we then initialize
 	uat := &UnitAsset{
-		Name:          "PLC with Modbus slave",
-		Details:       map[string][]string{"PLC": {"Wago"}, "Location": {"A2306"}},
-		ServerAddress: "192.168.1.2:502",
-		RegisterMap: map[string][]string{
-			"coil": {
-				"00001,ConveyorStart,rw,Boolean",
-				"00002,ConveyorStop,rw,Boolean",
-				"00003,EmergencyStop,ro,Boolean",
-			},
-			"discreteInput": { // 100xxx with protocol offset
-				"00001,MotorRunning,ro,Boolean",
-				"00002,LimitSwitchReached,ro,Boolean",
-				"00003,OverloadDetected,ro,Boolean",
-			},
-			"holdingRegister": { // 400xxx with protocol offset
-				"00001,TargetSpeed,rw,16-bit INT",
-				"00002,CurrentSpeed,ro,16-bit INT",
-				"00003,BatchCounter,rw,16-bit INT",
-			},
-			"inputRegister": { //3000xx with protocol offset
-				"00002,TemperatureSensor2,ro,16-bit INT",
-				"00003,VibrationSensor,ro,16-bit INT",
+		Name:    "PLC with Modbus slave",
+		Details: map[string][]string{"PLC": {"Wago"}, "Location": {"A2307"}},
+		Traits: Traits{
+			ServerAddress: "192.168.1.6:502",
+			RegisterMap: map[string][]string{
+				"coil": {
+					"00001,ConveyorStart,rw,Boolean",
+					"00002,ConveyorStop,rw,Boolean",
+					"00003,EmergencyStop,ro,Boolean",
+				},
+				"discreteInput": { // 100xxx with protocol offset
+					"00001,MotorRunning,ro,Boolean",
+					"00002,LimitSwitchReached,ro,Boolean",
+					"00003,OverloadDetected,ro,Boolean",
+				},
+				"holdingRegister": { // 400xxx with protocol offset
+					"00001,TargetSpeed,rw,16-bit INT",
+					"00002,CurrentSpeed,ro,16-bit INT",
+					"00003,BatchCounter,rw,16-bit INT",
+				},
+				"inputRegister": { //3000xx with protocol offset
+					"00002,TemperatureSensor2,ro,16-bit INT",
+					"00003,VibrationSensor,ro,16-bit INT",
+				},
 			},
 		},
+
 		ServicesMap: components.Services{
 			access.SubPath: &access,
 		},
@@ -120,8 +135,23 @@ func initTemplate() components.UnitAsset {
 //-------------------------------------Instantiate the unit assets based on configuration
 
 // newResource creates the Resource resource with its pointers and channels based on the configuration
-func newResource(uac UnitAsset, sys *components.System, servs []components.Service) ([]components.UnitAsset, func()) {
-	endpoint := uac.ServerAddress
+func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) ([]*UnitAsset, func()) {
+	ua := &UnitAsset{
+		Name:        configuredAsset.Name,
+		Owner:       sys,
+		Details:     configuredAsset.Details,
+		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
+		CervicesMap: make(map[string]*components.Cervice), // Initialize map
+	}
+
+	traits, err := UnmarshalTraits(configuredAsset.Traits)
+	if err != nil {
+		log.Println("Warning: could not unmarshal traits:", err)
+	} else if len(traits) > 0 {
+		ua.Traits = traits[0] // or handle multiple traits if needed
+	}
+
+	endpoint := ua.ServerAddress
 	fmt.Printf("Trying to connect to server @ %s\n", endpoint)
 
 	// Set a 5-second timeout
@@ -132,8 +162,8 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 	}
 	fmt.Println("Connected")
 
-	var slaveIO []components.UnitAsset
-	for kind, gio := range uac.RegisterMap {
+	var slaveIO []*UnitAsset
+	for kind, gio := range ua.RegisterMap {
 		ioKind := typeOfIO(kind)
 		for _, str := range gio {
 			newUA := &UnitAsset{} // Create a pointer to UnitAsset
@@ -148,8 +178,7 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 			newUA.Access = parts[2]
 			newUA.DataType = parts[3]
 			newUA.Owner = sys
-			newUA.Details = uac.Details
-			newUA.ServicesMap = components.CloneServices(servs)
+			newUA.Details = ua.Details
 			slaveIO = append(slaveIO, newUA) // Use the pointer to newUA
 		}
 	}
@@ -157,8 +186,21 @@ func newResource(uac UnitAsset, sys *components.System, servs []components.Servi
 	// Return the unit asset(s) and a cleanup function to close any connection
 	return slaveIO, func() {
 		fmt.Println("Closing the Modbus TCP connection")
-		defer slave.Close()
+		_ = slave.Close()
 	}
+}
+
+// UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
+func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
+	var traitsList []Traits
+	for _, raw := range rawTraits {
+		var t Traits
+		if err := json.Unmarshal(raw, &t); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
+		}
+		traitsList = append(traitsList, t)
+	}
+	return traitsList, nil
 }
 
 // -------------------------------------Unit asset's function methods

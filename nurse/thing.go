@@ -18,17 +18,14 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
-	"strings"
-	"sync"
+	"net/url"
 	"time"
-
-	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
-	"github.com/influxdata/influxdb-client-go/v2/api"
-	"github.com/influxdata/influxdb-client-go/v2/api/write"
 
 	"github.com/sdoque/mbaigo/components"
 	"github.com/sdoque/mbaigo/forms"
@@ -36,33 +33,33 @@ import (
 )
 
 // -------------------------------------Define a measurement (or signal)
-type MeasurementT struct {
-	Name    string              `json:"serviceDefinition"`
-	Details map[string][]string `json:"mdetails"`
-	Period  time.Duration       `json:"samplingPeriod"`
+type SignalT struct {
+	Name          string              `json:"serviceDefinition"`
+	Details       map[string][]string `json:"details"`
+	Period        time.Duration       `json:"samplingPeriod"`
+	Threshold     float64             `json:"threshold"`
+	TOverCount    int                 `json:"t_over_count"`
+	Operational   bool                `json:"operational"`
+	WorkRequested bool                `json:"work_requested"`
 }
 
 //-------------------------------------Define the unit asset
 
 // Traits are Asset-specific configurable parameters
 type Traits struct {
-	FluxURL      string         `json:"db_url"`
-	Token        string         `json:"token"`
-	Org          string         `json:"organization"`
-	Bucket       string         `json:"bucket"`
-	Measurements []MeasurementT `json:"measurements"`
+	SAP_URL string    `json:"sap_url"`
+	Signals []SignalT `json:"signals"`
 }
 
 // UnitAsset type models the unit asset (interface) of the system
 type UnitAsset struct {
-	Name        string              `json:"bucket_name"`
+	Name        string              `json:"assetName"`
 	Owner       *components.System  `json:"-"`
 	Details     map[string][]string `json:"details"`
 	ServicesMap components.Services `json:"-"`
 	CervicesMap components.Cervices `json:"-"`
 	//
 	Traits
-	client influxdb2.Client // InfluxDB client
 }
 
 // GetName returns the name of the Resource.
@@ -97,35 +94,36 @@ var _ components.UnitAsset = (*UnitAsset)(nil)
 
 // initTemplate initializes a UnitAsset with default values.
 func initTemplate() components.UnitAsset {
-	mqueryService := components.Service{
-		Definition:  "mquery",
-		SubPath:     "mquery",
+	Operational := components.Service{
+		Definition:  "SignalMonitoring",
+		SubPath:     "monitor",
 		Details:     map[string][]string{},
-		RegPeriod:   60,
-		CUnit:       "",
-		Description: "provides the list of measurements in the bucket (GET)",
+		RegPeriod:   22,
+		Description: "monitors the value of the consumed service signal (GET)",
 	}
 
 	uat := &UnitAsset{
-		Name:    "demo",
-		Details: map[string][]string{"Database": {"InfluxDB"}},
+		Name:    "HealthTracker",
+		Details: map[string][]string{},
 		Traits: Traits{
-			FluxURL: "http://10.0.0.33:8086",
-			Token:   "K1NTWNlToyUNXdii7IwNJ1W-kMsagUr8w1r4cRVYqK-N-R9vVT1MCJwHFBxOgiW85iKiMSsUpbrxQsQZJA8IzA==",
-			Org:     "mbaigo",
-			Bucket:  "demo",
-			Measurements: []MeasurementT{
+			SAP_URL: "http://sap.example.com",
+			Signals: []SignalT{
 				{
-					Name:    "temperature",
-					Details: map[string][]string{"Location": {"Kitchen"}},
-					Period:  3,
+					Name:          "temperature",
+					Details:       map[string][]string{"Unit": {"Celsius"}},
+					Period:        4,
+					Threshold:     75.0,
+					TOverCount:    3,
+					Operational:   true,
+					WorkRequested: false,
 				},
 			},
 		},
 		ServicesMap: components.Services{
-			mqueryService.SubPath: &mqueryService,
+			Operational.SubPath: &Operational,
 		},
 	}
+
 	return uat
 }
 
@@ -138,10 +136,6 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
-		// FluxURL:     uac.FluxURL,
-		// Token:       uac.Token,
-		// Org:         uac.Org,
-		// Bucket:      uac.Bucket,
 		CervicesMap: make(map[string]*components.Cervice), // Initialize map
 	}
 
@@ -152,48 +146,34 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		ua.Traits = traits[0] // or handle multiple traits if needed
 	}
 
-	if ua.FluxURL == "" || ua.Token == "" || ua.Org == "" || ua.Bucket == "" {
-		log.Fatal("Invalid InfluxDB configuration: missing required parameters")
+	r := CheckServerUp(ua.SAP_URL, 2*time.Second)
+	if r.Up {
+		fmt.Printf("SAP server is up (status=%d, in %s)\n", r.StatusCode, r.Duration)
+	} else {
+		fmt.Printf("SAP server is down (%v, in %s)\n", r.Err, r.Duration)
 	}
 
-	// Create a new client for InfluxDB
-	ua.client = influxdb2.NewClient(ua.FluxURL, ua.Token)
-
-	// Create a non-blocking write API
-	writeAPI := ua.client.WriteAPI(ua.Org, ua.Bucket)
-
-	// Collect and ingest measurements
-	var wg sync.WaitGroup
 	sProtocols := components.SProtocols(sys.Husk.ProtoPort)
-<<<<<<< HEAD:collector/thing.go
-	for _, measurement := range ua.Traits.Measurements {
-=======
-	for _, measurement := range uac.Measurements {
->>>>>>> main:Influxer/thing.go
+	for _, signal := range ua.Traits.Signals {
 		// determine the protocols that the system supports
-		cMeasurement := components.Cervice{
-			Definition: measurement.Name,
-			Details:    measurement.Details,
+		cSignal := components.Cervice{
+			Definition: signal.Name,
+			Details:    signal.Details,
 			Protos:     sProtocols,
 			Nodes:      make(map[string][]string, 0),
 		}
-		ua.CervicesMap[cMeasurement.Definition] = &cMeasurement
+		ua.CervicesMap[cSignal.Definition] = &cSignal
 
-		wg.Add(1)
-		go func(name string, period time.Duration) {
-			defer wg.Done()
-			if err := ua.collectIngest(name, period, writeAPI); err != nil {
-				log.Printf("Error in collectIngest for measurement: %v", err)
-			}
-		}(measurement.Name, measurement.Period*time.Second)
+		// start the data collection goroutine for the measurement
+		go ua.sigMon(signal.Name, signal.Period*time.Second)
+
 	}
 
 	// Return the unit asset and a cleanup function to close the InfluxDB client
 	return ua, func() {
-		log.Println("Waiting for all goroutines to finish...")
-		wg.Wait()
-		log.Println("Disconnecting from InfluxDB")
-		ua.client.Close()
+
+		log.Println("Disconnecting from systems...")
+		// ua.client.Close()
 	}
 }
 
@@ -212,8 +192,8 @@ func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
 
 //-------------------------------------Unit asset's functionalities
 
-// collectIngest
-func (ua *UnitAsset) collectIngest(name string, period time.Duration, writeAPI api.WriteAPI) error {
+// sigMon periodically monitors the measurement and if it exceeds the threshold, it reports to the SAP system
+func (ua *UnitAsset) sigMon(name string, period time.Duration) error {
 	ticker := time.NewTicker(period)
 	defer ticker.Stop()
 
@@ -237,52 +217,79 @@ func (ua *UnitAsset) collectIngest(name string, period time.Duration, writeAPI a
 				continue // return fmt.Errorf("problem unpacking measurement: %s", name)
 			}
 
-			metaD := ua.CervicesMap[name].Details
+			point := fmt.Sprintf("Measurement: %s, Value: %.2f, Time: %s", name, tup.Value, time.Now().Format(time.RFC3339))
 
-			// Convert metaD (map[string][]string) into InfluxDB tags (map[string]string)
-			tags := make(map[string]string)
-			for key, values := range metaD {
-				// Join all values in the slice with a comma
-				tags[key] = strings.Join(values, ",")
-			}
+			log.Printf("%s", point)
 
-			// Create an InfluxDB point using metaD as tags
-			point := write.NewPoint(
-				name,
-				tags, // Transformed metaD as tags
-				map[string]interface{}{"value": tup.Value}, // Field value
-				time.Now(), // Timestamp
-			)
-
-			// Write point to InfluxDB using WriteAPI
-			writeAPI.WritePoint(point)
 		}
 	}
 }
 
-// q4measurements queries the bucket for the list of measurements
-func (ua *UnitAsset) q4measurements(w http.ResponseWriter) {
-	text := "The list of measurements in the " + ua.Name + " bucket is:\n"
-	queryAPI := ua.client.QueryAPI(ua.Org)
-
-	query := fmt.Sprintf(`
-		 import "influxdata/influxdb/schema"
-		 schema.measurements(bucket: "%s")
-	 `, ua.Name)
-
-	results, err := queryAPI.Query(context.Background(), query)
-	if err != nil {
-		log.Fatal(err)
+// state queries the bucket for the list of measurements
+func (ua *UnitAsset) state(w http.ResponseWriter) {
+	text := "The list of measurements that are monitored by " + ua.Name + "\n"
+	for _, signal := range ua.Traits.Signals {
+		text += fmt.Sprintf("Signal: %s, Threshold: %f, TOverCount: %d, Operational: %t, WorkRequested: %t\n",
+			signal.Name, signal.Threshold, signal.TOverCount, signal.Operational, signal.WorkRequested)
 	}
-
-	for results.Next() {
-		measurement := fmt.Sprintf("%v", results.Record().Value())
-		text += "- " + measurement + "\n"
-	}
-
-	if err := results.Err(); err != nil {
-		log.Fatal(err)
-	}
-
 	w.Write([]byte(text))
+}
+
+// //-------------------------------------SAP server interaction functions
+type CheckResult struct {
+	Up         bool
+	StatusCode int
+	Err        error
+	Duration   time.Duration
+}
+
+func CheckServerUp(rawURL string, timeout time.Duration) CheckResult {
+	start := time.Now()
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return CheckResult{Up: false, Err: fmt.Errorf("invalid url: %w", err), Duration: time.Since(start)}
+	}
+
+	// Transport with sane timeouts. (Default transport has some timeouts but not all.)
+	dialer := &net.Dialer{
+		Timeout:   timeout,
+		KeepAlive: 30 * time.Second,
+	}
+
+	tr := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return dialer.DialContext(ctx, network, addr)
+		},
+		TLSHandshakeTimeout:   timeout,
+		ResponseHeaderTimeout: timeout,
+		IdleConnTimeout:       30 * time.Second,
+
+		// If you are checking HTTPS with self-signed certs, you might be tempted to set
+		// InsecureSkipVerify=true. Avoid that in production; prefer a proper CA/cert setup.
+		TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		},
+	}
+
+	client := &http.Client{
+		Timeout:   timeout, // total time limit including redirects
+		Transport: tr,
+	}
+
+	// Use GET for robustness; discard body quickly.
+	req, err := http.NewRequest(http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return CheckResult{Up: false, Err: fmt.Errorf("build request: %w", err), Duration: time.Since(start)}
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return CheckResult{Up: false, Err: err, Duration: time.Since(start)}
+	}
+	defer resp.Body.Close()
+
+	// "Up" here means we got *an* HTTP response.
+	return CheckResult{Up: true, StatusCode: resp.StatusCode, Duration: time.Since(start)}
 }

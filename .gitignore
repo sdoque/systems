@@ -24,8 +24,7 @@ vendor/
 
 # mbaigo
 *.json
-go.mod
-go.sum
+go.work
 serviceRegistry.db
 *.pem
 **/files/

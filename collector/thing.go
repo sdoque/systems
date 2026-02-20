@@ -138,10 +138,6 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
-		// FluxURL:     uac.FluxURL,
-		// Token:       uac.Token,
-		// Org:         uac.Org,
-		// Bucket:      uac.Bucket,
 		CervicesMap: make(map[string]*components.Cervice), // Initialize map
 	}
 

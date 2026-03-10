@@ -40,7 +40,7 @@ type Traits struct {
 	conn          *net.Conn           `json:"-"`
 	IOtype        ioType              `json:"-"`
 	Address       string              `json:"-"`
-	Access        string              `json:"-"`
+	Rights        string              `json:"-"`
 	DataType      string              `json:"-"`
 }
 
@@ -89,7 +89,7 @@ var _ components.UnitAsset = (*UnitAsset)(nil)
 func initTemplate() components.UnitAsset {
 	// Define the services that expose the capabilities of the unit asset(s)
 	access := components.Service{
-		Definition:  "access",
+		Definition:  "signal",
 		SubPath:     "access",
 		Details:     map[string][]string{"Protocol": {"tcp"}},
 		RegPeriod:   30,
@@ -162,29 +162,41 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 	fmt.Println("Connected")
 
-	var slaveIO []*UnitAsset
+	var assetCollection []*UnitAsset
 	for kind, gio := range ua.RegisterMap {
-		ioKind := typeOfIO(kind)
+		ioKind := typeOfIO(kind) //coil, discrete input, holding register or input register
 		for _, str := range gio {
-			newUA := &UnitAsset{} // Create a pointer to UnitAsset
-			newUA.conn = &slave
-			newUA.IOtype = ioKind
+			newAsset := &UnitAsset{} // Create a pointer to UnitAsset
+			newAsset.conn = &slave
+			newAsset.IOtype = ioKind
 			parts := strings.Split(str, ",")
 			if len(parts) < 4 {
 				log.Fatalf("Bad configuration of %s\n", ioKind)
 			}
-			newUA.Address = parts[0]
-			newUA.Name = parts[1]
-			newUA.Access = parts[2]
-			newUA.DataType = parts[3]
-			newUA.Owner = sys
-			newUA.Details = ua.Details
-			slaveIO = append(slaveIO, newUA) // Use the pointer to newUA
+			newAsset.Address = parts[0]
+			newAsset.Name = parts[1]
+			newAsset.Rights = parts[2]
+			newAsset.DataType = parts[3]
+			newAsset.Owner = sys
+			// Deep copy ua.Details for each asset
+			newDetails := make(map[string][]string)
+			for k, v := range ua.Details {
+				newDetails[k] = v
+			}
+			if kind == "coil" || kind == "discreteInput" {
+				newDetails["Forms"] = []string{"SignalB_v1a"}
+			} else {
+				newDetails["Forms"] = []string{"SignalA_v1a"}
+			}
+			newAsset.Details = newDetails
+			newAsset.ServicesMap = usecases.MakeServiceMap(configuredAsset.Services)
+			newAsset.ServicesMap["access"].Definition = newAsset.Name
+			assetCollection = append(assetCollection, newAsset)
 		}
 	}
 
 	// Return the unit asset(s) and a cleanup function to close any connection
-	return slaveIO, func() {
+	return assetCollection, func() {
 		fmt.Println("Closing the Modbus TCP connection")
 		_ = slave.Close()
 	}

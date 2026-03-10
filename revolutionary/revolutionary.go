@@ -43,6 +43,7 @@ func main() {
 	sys.Husk = &components.Husk{
 		Description: "interacts with the RevPi Connect 4 PLC",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
+		Host:        components.NewDevice(),
 		ProtoPort:   map[string]int{"https": 0, "http": 20153, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/revolutionary",
 		DName: pkix.Name{

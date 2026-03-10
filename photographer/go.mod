@@ -1,6 +1,5 @@
 module github.com/sdoque/systems/photographer
 
-go 1.25.1
+go 1.25.6
 
-
-require github.com/sdoque/mbaigo v0.0.0-00010101000000-000000000000
+require github.com/sdoque/mbaigo v0.1.0-alpha.1

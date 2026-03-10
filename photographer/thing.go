@@ -151,7 +151,7 @@ func (ua *UnitAsset) takePicture() (f forms.FileForm_v1, err error) {
 	if err := cmd.Run(); err != nil {
 		return f, fmt.Errorf("failed to take picture: %w", err)
 	}
-	urlPath := "http://" + ua.Owner.Host.IPAddresses[0] + ":" + strconv.Itoa(int(ua.Owner.Husk.ProtoPort["http"])) + "/" + ua.Owner.Name + "/" + ua.Name
+	urlPath := "http://" + ua.Owner.Husk.Host.IPAddresses[0] + ":" + strconv.Itoa(int(ua.Owner.Husk.ProtoPort["http"])) + "/" + ua.Owner.Name + "/" + ua.Name
 	f.NewForm()
 	f.FileURL = urlPath + filename
 	f.Timestamp = time.Now()

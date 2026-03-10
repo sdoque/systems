@@ -1,7 +1,5 @@
 module github.com/sdoque/systems/thermostat
 
-go 1.25.4
+go 1.25.6
 
-replace github.com/sdoque/mbaigo => /Users/jan/go/src/github.com/sdoque/mbaigo
-
-require github.com/sdoque/mbaigo v0.0.0-00010101000000-000000000000
+require github.com/sdoque/mbaigo v0.1.0-alpha.1

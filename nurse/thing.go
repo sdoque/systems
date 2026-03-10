@@ -38,9 +38,9 @@ type SignalT struct {
 	Details       map[string][]string `json:"details"`
 	Period        time.Duration       `json:"samplingPeriod"`
 	Threshold     float64             `json:"threshold"`
-	TOverCount    int                 `json:"t_over_count"`
-	Operational   bool                `json:"operational"`
-	WorkRequested bool                `json:"work_requested"`
+	TOverCount    int                 `json:"-"`
+	Operational   bool                `json:"-"`
+	WorkRequested bool                `json:"-"`
 }
 
 //-------------------------------------Define the unit asset
@@ -218,9 +218,19 @@ func (ua *UnitAsset) sigMon(name string, period time.Duration) error {
 			}
 
 			point := fmt.Sprintf("Measurement: %s, Value: %.2f, Time: %s", name, tup.Value, time.Now().Format(time.RFC3339))
-
 			log.Printf("%s", point)
 
+			// Check if the value exceeds the threshold
+			if tup.Value > ua.Traits.Signals[0].Threshold {
+				log.Printf("ALERT: %s value %.2f exceeds threshold %.2f\n", name, tup.Value, ua.Traits.Signals[0].Threshold)
+				ua.Traits.Signals[0].TOverCount++
+				if ua.Traits.Signals[0].TOverCount >= ua.Traits.Signals[0].TOverCount {
+					ua.Traits.Signals[0].Operational = false
+					ua.Traits.Signals[0].WorkRequested = true
+					log.Printf("Action required: %s is not operational. Work requested.\n", name)
+				}
+				// Here you would add the code to report the anomaly to the SAP system using ua.SAP_URL
+			}
 		}
 	}
 }

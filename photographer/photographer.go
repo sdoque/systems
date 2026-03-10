@@ -40,7 +40,8 @@ func main() {
 	// instatiate the husk
 	sys.Husk = &components.Husk{
 		Description: " takes a picture using a camera and saves a file",
-		Details:     map[string][]string{"Developer": {"Arrowhead"}},
+		Details:     map[string][]string{"Developer": {"Synecdoque"}},
+		Host:        components.NewDevice(),
 		ProtoPort:   map[string]int{"https": 0, "http": 20160, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/mbaigo/tree/master/photographer",
 		DName: pkix.Name{

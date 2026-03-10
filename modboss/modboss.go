@@ -45,6 +45,7 @@ func main() {
 	sys.Husk = &components.Husk{
 		Description: "interacts with an Modbus slave or server",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
+		Host:        components.NewDevice(),
 		ProtoPort:   map[string]int{"https": 0, "http": 20171, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/modboss",
 		DName: pkix.Name{
@@ -115,7 +116,7 @@ func (ua *UnitAsset) access(w http.ResponseWriter, r *http.Request) {
 	case "GET":
 		valueForm := ua.read()
 		usecases.HTTPProcessGetRequest(w, r, valueForm)
-	case "POST":
+	case "PUT":
 		contentType := r.Header.Get("Content-Type")
 		mediaType, _, err := mime.ParseMediaType(contentType)
 		if err != nil {

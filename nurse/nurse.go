@@ -109,6 +109,8 @@ func (ua *UnitAsset) statusCheck(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		ua.state(w)
+	case "POST":
+		ua.update(w, r)
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}

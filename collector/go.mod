@@ -4,7 +4,7 @@ go 1.25.8
 
 require (
 	github.com/influxdata/influxdb-client-go/v2 v2.14.0
-	github.com/sdoque/mbaigo v0.1.0-alpha.2
+	github.com/sdoque/mbaigo v0.1.0-alpha.3
 )
 
 require (

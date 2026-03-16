@@ -2,4 +2,4 @@ module github.com/sdoque/systems/messenger
 
 go 1.25.8
 
-require github.com/sdoque/mbaigo v0.1.0-alpha.2
+require github.com/sdoque/mbaigo v0.1.0-alpha.3

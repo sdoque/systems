@@ -87,11 +87,10 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		trayChan: make(chan STray),
 	}
 
-	for _, raw := range configuredAsset.Traits {
-		if err := json.Unmarshal(raw, t); err != nil {
+	if len(configuredAsset.Traits) > 0 {
+		if err := json.Unmarshal(configuredAsset.Traits[0], t); err != nil {
 			log.Println("Warning: could not unmarshal traits:", err)
 		}
-		break
 	}
 
 	ua := &components.UnitAsset{

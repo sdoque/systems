@@ -99,11 +99,10 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		name:  configuredAsset.Name,
 	}
 
-	for _, raw := range configuredAsset.Traits {
-		if err := json.Unmarshal(raw, t); err != nil {
+	if len(configuredAsset.Traits) > 0 {
+		if err := json.Unmarshal(configuredAsset.Traits[0], t); err != nil {
 			log.Println("Warning: could not unmarshal traits:", err)
 		}
-		break
 	}
 
 	r := CheckServerUp(t.SAP_URL, 2*time.Second)

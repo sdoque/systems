@@ -58,8 +58,7 @@ func main() {
 
 	// instantiate a template unit asset
 	assetTemplate := initTemplate()
-	assetName := assetTemplate.GetName()
-	sys.UAssets[assetName] = &assetTemplate
+	sys.UAssets[assetTemplate.GetName()] = assetTemplate
 
 	// Configure the system
 	rawResources, err := usecases.Configure(&sys)
@@ -68,16 +67,14 @@ func main() {
 	}
 
 	sys.UAssets = make(map[string]*components.UnitAsset) // clear the unit asset map (from the template)
-	var cleanups []func()
 	for _, raw := range rawResources {
 		var uac usecases.ConfigurableAsset
 		if err := json.Unmarshal(raw, &uac); err != nil {
 			log.Fatalf("Resource configuration error: %+v\n", err)
 		}
 		ua, cleanup := newResource(uac, &sys)
-		cleanups = append(cleanups, cleanup)
-		defer cleanup() // ensure cleanup is called when the program exits
-		sys.UAssets[ua.GetName()] = &ua
+		defer cleanup()
+		sys.UAssets[ua.GetName()] = ua
 	}
 
 	// Generate PKI keys and CSR to obtain a authentication certificate from the CA
@@ -96,27 +93,27 @@ func main() {
 	time.Sleep(3 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
 }
 
-// Serving handles the resources services. NOTE: it expects those names from the request URL path
-func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {
+// serving handles the resources services. NOTE: it expects those names from the request URL path
+func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
 	case "rotation":
-		ua.rotation(w, r)
+		t.rotation(w, r)
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}
 }
 
-func (ua *UnitAsset) rotation(w http.ResponseWriter, r *http.Request) {
+func (t *Traits) rotation(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		positionForm := ua.getPosition()
+		positionForm := t.getPosition()
 		usecases.HTTPProcessGetRequest(w, r, &positionForm)
 	case "PUT":
 		sig, err := usecases.HTTPProcessSetRequest(w, r)
 		if err != nil {
 			log.Println("Error with the setting request of the position ", err)
 		}
-		confirmation, err := ua.setPosition(sig)
+		confirmation, err := t.setPosition(sig)
 		if err != nil {
 			log.Println("Error setting the position ", err)
 		}

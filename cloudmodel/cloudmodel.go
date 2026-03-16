@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2025 Synecdoque
+ * Copyright (c) 2024 Synecdoque
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -11,7 +11,6 @@
  *
  * Contributors:
  *   Jan A. van Deventer, Luleå - initial implementation
- *   Thomas Hedeler, Hamburg - initial implementation
  ***************************************************************************SDG*/
 
 package main
@@ -31,19 +30,19 @@ import (
 
 func main() {
 	// prepare for graceful shutdown
-	ctx, cancel := context.WithCancel(context.Background()) // create a context that can be cancelled
-	defer cancel()                                          // make sure all paths cancel the context to avoid context leak
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// instantiate the System
-	sys := components.NewSystem("nurse", ctx)
+	sys := components.NewSystem("cloudmodel", ctx)
 
-	// Instantiate the husk
+	// instantiate the husk
 	sys.Husk = &components.Husk{
-		Description: " is a system that monitors an asset's measurements and reports to a SAP system in case of anomalies.",
+		Description: "assembles the SysML v2 BDD/IBD models of all systems in a local cloud",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20181, "coap": 0},
-		InfoLink:    "https://github.com/sdoque/systems/tree/main/influxer",
+		ProtoPort:   map[string]int{"https": 0, "http": 20106, "coap": 0},
+		InfoLink:    "https://github.com/sdoque/systems/tree/main/cloudmodel",
 		DName: pkix.Name{
 			CommonName:         sys.Name,
 			Organization:       []string{"Synecdoque"},
@@ -76,36 +75,37 @@ func main() {
 		sys.UAssets[ua.GetName()] = ua
 	}
 
-	// Generate PKI keys and CSR to obtain a authentication certificate from the CA
+	// Generate PKI keys and CSR to obtain an authentication certificate from the CA
 	usecases.RequestCertificate(&sys)
 
-	// Register the (system) and its services
+	// Register the system and its services
 	usecases.RegisterServices(&sys)
 
-	// start the http handler and server
+	// start the request handlers and servers
 	go usecases.SetoutServers(&sys)
 
 	// wait for shutdown signal, and gracefully close properly goroutines with context
-	<-sys.Sigs // wait for a SIGINT (Ctrl+C) signal
-	fmt.Println("\nshuting down system", sys.Name)
-	cancel()                    // cancel the context, signaling the goroutines to stop
-	time.Sleep(2 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
+	<-sys.Sigs
+	fmt.Println("\nshutting down system", sys.Name)
+	cancel()
+	time.Sleep(2 * time.Second)
 }
 
-// serving handles the resources services. NOTE: it expects those names from the request URL path
+// serving handles the resource's services. NOTE: it expects those names from the request URL path.
 func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
-	case "monitor":
-		t.statusCheck(w, r)
+	case "cloudmodel":
+		t.aggregate(w, r)
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}
 }
 
-func (t *Traits) statusCheck(w http.ResponseWriter, r *http.Request) {
+// aggregate handles GET requests to generate the merged cloud SysML v2 model.
+func (t *Traits) aggregate(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		t.state(w)
+		t.assembleModel(w)
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}

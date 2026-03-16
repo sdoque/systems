@@ -17,10 +17,10 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -35,57 +35,19 @@ import (
 )
 
 // -------------------------------------Define the unit asset
+
 // Traits are Asset-specific configurable parameters
 type Traits struct {
 	GpioPin     gpio.PinIO `json:"-"`
 	position    int        `json:"-"`
-	dutyChan    chan int   `json:"-"`
+	dutyChan    chan int    `json:"-"`
 	lastWidthUS int        `json:"-"` // last duty we wrote (µs) to debounce identical updates
 }
-
-// UnitAsset type models the unit asset (interface) of the system
-type UnitAsset struct {
-	Name        string              `json:"name"`
-	Owner       *components.System  `json:"-"`
-	Details     map[string][]string `json:"details"`
-	ServicesMap components.Services `json:"-"`
-	CervicesMap components.Cervices `json:"-"`
-	//
-	Traits
-}
-
-// GetName returns the name of the Resource.
-func (ua *UnitAsset) GetName() string {
-	return ua.Name
-}
-
-// GetServices returns the services of the Resource.
-func (ua *UnitAsset) GetServices() components.Services {
-	return ua.ServicesMap
-}
-
-// GetCervices returns the list of consumed services by the Resource.
-func (ua *UnitAsset) GetCervices() components.Cervices {
-	return ua.CervicesMap
-}
-
-// GetDetails returns the details of the Resource.
-func (ua *UnitAsset) GetDetails() map[string][]string {
-	return ua.Details
-}
-
-// GetTraits returns the traits of the Resource.
-func (ua *UnitAsset) GetTraits() any {
-	return ua.Traits
-}
-
-// ensure UnitAsset implements components.UnitAsset
-var _ components.UnitAsset = (*UnitAsset)(nil)
 
 //-------------------------------------Instantiate a unit asset template
 
 // initTemplate initializes a UnitAsset with default values.
-func initTemplate() components.UnitAsset {
+func initTemplate() *components.UnitAsset {
 	// Define the services that expose the capabilities of the unit asset(s)
 	rotation := components.Service{
 		Definition:  "rotation",
@@ -95,35 +57,36 @@ func initTemplate() components.UnitAsset {
 		Description: "informs of the servo's current position (GET) or updates the position (PUT)",
 	}
 
-	// var uat components.UnitAsset // this is an interface, which we then initialize
-	uat := &UnitAsset{
+	return &components.UnitAsset{
 		Name:    "Servo_1",
+		Mission: "actuate_servo",
 		Details: map[string][]string{"Model": {"standardServo", "halfCircle"}, "Location": {"Kitchen"}},
 		ServicesMap: components.Services{
-			rotation.SubPath: &rotation, // Inline assignment of the rotation service
+			rotation.SubPath: &rotation,
 		},
+		Traits: &Traits{},
 	}
-	return uat
 }
 
 //-------------------------------------Instantiate the unit assets based on configuration
 
 // newResource creates the Resource resource with its pointers and channels based on the configuration using the tConfig structs
-func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {
-	ua := &UnitAsset{
+func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (*components.UnitAsset, func()) {
+	t := &Traits{
+		dutyChan: make(chan int, 1), // buffer=1 enables latest-wins behavior
+	}
+
+	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
+		Mission:     configuredAsset.Mission,
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
+		Traits:      t,
 	}
-
-	traits, err := UnmarshalTraits(configuredAsset.Traits)
-	if err != nil {
-		log.Println("Warning: could not unmarshal traits:", err)
-	} else if len(traits) > 0 {
-		ua.Traits = traits[0]
+	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
+		serving(t, w, r, servicePath)
 	}
-	ua.Traits.dutyChan = make(chan int, 1) // buffer=1 enables latest-wins behavior below
 
 	// Choose the GPIO you wired the servo to. You currently use P1_12 → GPIO18.
 	const servoGPIO = 18
@@ -156,9 +119,9 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		log.Fatalf("Enable PWM: %v", err)
 	}
 
-	// Drive updates from ua.dutyChan (µs → ns)
+	// Drive updates from t.dutyChan (µs → ns)
 	go func() {
-		for pulseWidthUS := range ua.dutyChan {
+		for pulseWidthUS := range t.dutyChan {
 			dutyNS := int64(pulseWidthUS) * 1000
 			if dutyNS < 0 {
 				dutyNS = 0
@@ -182,19 +145,6 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 
 	return ua, cleanup
-}
-
-// UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
-func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
-	var traitsList []Traits
-	for _, raw := range rawTraits {
-		var t Traits
-		if err := json.Unmarshal(raw, &t); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
-		}
-		traitsList = append(traitsList, t)
-	}
-	return traitsList, nil
 }
 
 // --- helpers: sysfs PWM on RP1 ---
@@ -273,16 +223,16 @@ const (
 )
 
 // getPosition provides an analog signal for the servo position in percent and a timestamp
-func (ua *UnitAsset) getPosition() (f forms.SignalA_v1a) {
+func (t *Traits) getPosition() (f forms.SignalA_v1a) {
 	f.NewForm()
-	f.Value = float64(ua.position)
+	f.Value = float64(t.position)
 	f.Unit = "Percent"
 	f.Timestamp = time.Now()
 	return f
 }
 
 // setPosition updates the PWM pulse size based on the requested position [0-100]%
-func (ua *UnitAsset) setPosition(f forms.SignalA_v1a) (forms.SignalA_v1a, error) {
+func (t *Traits) setPosition(f forms.SignalA_v1a) (forms.SignalA_v1a, error) {
 	// Clamp 0–100
 	pos := int(f.Value)
 	if pos < 0 {
@@ -292,33 +242,33 @@ func (ua *UnitAsset) setPosition(f forms.SignalA_v1a) (forms.SignalA_v1a, error)
 	}
 
 	// Log on change
-	if ua.position != pos {
+	if t.position != pos {
 		log.Printf("The new position is %+v\n", f)
 	}
-	ua.position = pos
+	t.position = pos
 
 	// Map [0..100] -> [minPulseWidth..maxPulseWidth] in microseconds
-	widthUS := minPulseWidth + (ua.position*(maxPulseWidth-minPulseWidth))/100
+	widthUS := minPulseWidth + (t.position*(maxPulseWidth-minPulseWidth))/100
 
 	// Debounce: skip if the duty hasn't changed
-	if widthUS == ua.lastWidthUS {
+	if widthUS == t.lastWidthUS {
 		f.Timestamp = time.Now()
 		return f, nil
 	}
-	ua.lastWidthUS = widthUS
+	t.lastWidthUS = widthUS
 
 	// Non-blocking send with "latest wins":
 	// If the single-slot buffer is full, drop the stale value and enqueue the newest.
 	select {
-	case ua.dutyChan <- widthUS:
+	case t.dutyChan <- widthUS:
 		// queued immediately
 	default:
 		// buffer full: drop stale value if present, then send the newest
 		select {
-		case <-ua.dutyChan:
+		case <-t.dutyChan:
 		default:
 		}
-		ua.dutyChan <- widthUS
+		t.dutyChan <- widthUS
 	}
 	f.Timestamp = time.Now()
 	return f, nil

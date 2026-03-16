@@ -56,8 +56,7 @@ func main() {
 
 	// instantiate a template unit asset
 	assetTemplate := initTemplate()
-	assetName := assetTemplate.GetName()
-	sys.UAssets[assetName] = &assetTemplate
+	sys.UAssets[assetTemplate.GetName()] = assetTemplate
 
 	// Configure the system
 	rawResources, err := usecases.Configure(&sys)
@@ -71,10 +70,11 @@ func main() {
 		if err := json.Unmarshal(raw, &uac); err != nil {
 			log.Fatalf("resource configuration error: %+v\n", err)
 		}
-		ua, cleanup := newResource(uac, &sys)
+		uas, cleanup := newResource(uac, &sys)
 		cleanups = append(cleanups, cleanup)
-		// defer cleanup()
-		sys.UAssets[ua.GetName()] = &ua
+		for _, ua := range uas {
+			sys.UAssets[ua.GetName()] = ua
+		}
 	}
 
 	// Generate PKI keys and CSR to obtain a authentication certificate from the CA
@@ -93,34 +93,31 @@ func main() {
 	time.Sleep(3 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
 }
 
-// Serving handles the resources services. NOTE: it expects those names from the request URL path
-func (node *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {
+// serving handles the resources services. NOTE: it expects those names from the request URL path
+func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
 	case "browse":
-		node.browse(w, r)
+		t.browseHandler(w, r)
 	case "access":
-		node.access(w, r)
-
+		t.access(w, r)
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}
 }
 
-func (node *UnitAsset) browse(w http.ResponseWriter, r *http.Request) {
+func (t *Traits) browseHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		node.browseNode(w)
+		t.browseNode(w)
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}
 }
 
-//
-
-func (node *UnitAsset) access(w http.ResponseWriter, r *http.Request) {
+func (t *Traits) access(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		vauleForm := node.read()
+		vauleForm := t.read()
 		usecases.HTTPProcessGetRequest(w, r, &vauleForm)
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)

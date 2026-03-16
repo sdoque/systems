@@ -56,8 +56,7 @@ func main() {
 
 	// instantiate a template unit asset
 	assetTemplate := initTemplate()
-	assetName := assetTemplate.GetName()
-	sys.UAssets[assetName] = &assetTemplate
+	sys.UAssets[assetTemplate.GetName()] = assetTemplate
 
 	// Configure the system
 	rawResources, err := usecases.Configure(&sys)
@@ -72,7 +71,7 @@ func main() {
 		}
 		ua, cleanup := newResource(uac, &sys)
 		defer cleanup()
-		sys.UAssets[ua.GetName()] = &ua
+		sys.UAssets[ua.GetName()] = ua
 	}
 
 	// Generate PKI keys and CSR to obtain a authentication certificate from the CA
@@ -91,13 +90,12 @@ func main() {
 	time.Sleep(3 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
 }
 
-// Serving handles the resources services. NOTE: it expects those names from the request URL path
-func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {
+// serving handles the resources services. NOTE: it expects those names from the request URL path
+func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
 	case "photograph":
-		ua.photograph(w, r)
+		t.photograph(w, r)
 	case "files":
-		// return a 200 OK acknowledgment
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "OK")
 	default:
@@ -105,17 +103,16 @@ func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath
 	}
 }
 
-func (ua *UnitAsset) photograph(w http.ResponseWriter, r *http.Request) {
+func (t *Traits) photograph(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		fileForm, err := ua.takePicture()
+		fileForm, err := t.takePicture()
 		if err != nil {
 			log.Println(err)
 			http.Error(w, "Failed to take a picture, check if PiCam is connected", http.StatusNotFound)
 			return
 		}
 		usecases.HTTPProcessGetRequest(w, r, &fileForm)
-
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}

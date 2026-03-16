@@ -21,7 +21,7 @@ func createTestServiceQuest() forms.ServiceQuest_v1 {
 	return ServiceQuest_v1_temperature
 }
 
-func (ua *UnitAsset) createDelayedBrokenURL(limit int) func() *http.Response {
+func (t *Traits) createDelayedBrokenURL(limit int) func() *http.Response {
 	count := 0
 	return func() *http.Response {
 		resp := &http.Response{
@@ -33,7 +33,7 @@ func (ua *UnitAsset) createDelayedBrokenURL(limit int) func() *http.Response {
 		count++
 		if count == limit {
 			f := createTestServiceRecordListForm()
-			ua.leadingRegistrar = brokenUrl
+			t.leadingRegistrar = brokenUrl
 			resp.Body = io.NopCloser(bytes.NewReader(f))
 			return resp
 		}

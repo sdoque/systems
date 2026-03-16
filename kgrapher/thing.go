@@ -43,52 +43,14 @@ type Traits struct {
 	SystemList     forms.SystemRecordList_v1 `json:"-"`
 	TripleStoreURL string                    `json:"graphDBurl"`
 	LOntologies    map[string]string         `json:"localOntologies"` // map of ontology names to their file paths
+	owner          *components.System        `json:"-"`
+	name           string                    `json:"-"`
 }
-
-// UnitAsset type models the unit asset (interface) of the system
-type UnitAsset struct {
-	Name        string              `json:"name"`
-	Owner       *components.System  `json:"-"`
-	Details     map[string][]string `json:"details"`
-	ServicesMap components.Services `json:"-"`
-	CervicesMap components.Cervices `json:"-"`
-	// Asset-specific parameters
-	Traits
-}
-
-// GetName returns the name of the Resource.
-func (ua *UnitAsset) GetName() string {
-	return ua.Name
-}
-
-// GetServices returns the services of the Resource.
-func (ua *UnitAsset) GetServices() components.Services {
-	return ua.ServicesMap
-}
-
-// GetCervices returns the list of consumed services by the Resource.
-func (ua *UnitAsset) GetCervices() components.Cervices {
-	return ua.CervicesMap
-}
-
-// GetDetails returns the details of the Resource.
-func (ua *UnitAsset) GetDetails() map[string][]string {
-	return ua.Details
-}
-
-// GetTraits returns the traits of the Resource.
-func (ua *UnitAsset) GetTraits() any {
-	return ua.Traits
-}
-
-// ensure UnitAsset implements components.UnitAsset (this check is done at during the compilation)
-var _ components.UnitAsset = (*UnitAsset)(nil)
 
 //-------------------------------------Instantiate a unit asset template
 
 // initTemplate initializes a UnitAsset with default values.
-func initTemplate() components.UnitAsset {
-	// Define the services that expose the capabilities of the unit asset(s)
+func initTemplate() *components.UnitAsset {
 	cloudgraph := components.Service{
 		Definition:  "cloudgraph",
 		SubPath:     "cloudgraph",
@@ -105,81 +67,70 @@ func initTemplate() components.UnitAsset {
 		Description: "provides the list of local ontologies (GET)",
 	}
 
-	// var uat components.UnitAsset // this is an interface, which we then initialize
-	uat := &UnitAsset{
+	return &components.UnitAsset{
 		Name:        "assembler",
-		Owner:       &components.System{},
+		Mission:     "handle_triplestore",
 		Details:     map[string][]string{"Type": {"Interactive"}},
 		ServicesMap: map[string]*components.Service{cloudgraph.SubPath: &cloudgraph, localOntologies.SubPath: &localOntologies},
-		Traits: Traits{
+		Traits: &Traits{
 			TripleStoreURL: "http://localhost:7200/repositories/Arrowhead/statements",
 			LOntologies: map[string]string{
-				"alc": "alc-ontology-local.ttl", // Initialize the map for local ontologies
+				"alc": "alc-ontology-local.ttl",
 			},
 		},
 	}
-	return uat
 }
 
 //-------------------------------------Instantiate unit asset(s) based on configuration
 
 // newResource creates the unit asset with its pointers and channels based on the configuration
-func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {
-	// var ua components.UnitAsset // this is an interface, which we then initialize
-	ua := &UnitAsset{ // this is an interface, which we then initialize
-		Name:        configuredAsset.Name,
-		Owner:       sys,
-		Details:     configuredAsset.Details,
-		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
+func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (*components.UnitAsset, func()) {
+	t := &Traits{
+		owner: sys,
+		name:  configuredAsset.Name,
 	}
 
-	traits, err := UnmarshalTraits(configuredAsset.Traits)
-	if err != nil {
-		log.Println("Warning: could not unmarshal traits:", err)
-	} else if len(traits) > 0 {
-		ua.Traits = traits[0] // or handle multiple traits if needed
+	for _, raw := range configuredAsset.Traits {
+		if err := json.Unmarshal(raw, t); err != nil {
+			log.Println("Warning: could not unmarshal traits:", err)
+		}
+		break
 	}
 
 	// Ensure that you have a valid local ontology directory
 	const dir = "./files"
-	// 1. Ensure ./files exists
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		log.Fatalf("could not create directory %q: %v", dir, err)
 	}
-	serverAddress := ua.Owner.Husk.Host.IPAddresses[0]                                     // Use the first IP address of the system
-	ontologyURL := fmt.Sprintf("http://%s:20105/kgrapher/assembler/files/", serverAddress) //only using http for now TODO: use https
-	// 2. Resolve local ontologies to their full URLs
-	resolveLocalOntologies(ua.LOntologies, dir, ontologyURL)
+	serverAddress := sys.Husk.Host.IPAddresses[0]
+	ontologyURL := fmt.Sprintf("http://%s:20105/kgrapher/assembler/files/", serverAddress)
+	resolveLocalOntologies(t.LOntologies, dir, ontologyURL)
+
+	ua := &components.UnitAsset{
+		Name:        configuredAsset.Name,
+		Mission:     configuredAsset.Mission,
+		Owner:       sys,
+		Details:     configuredAsset.Details,
+		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
+		Traits:      t,
+	}
+	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
+		serving(t, w, r, servicePath)
+	}
 
 	return ua, func() {
 		log.Println("Disconnecting from GraphDB")
 	}
 }
 
-// UnmarshalTraits un-marshals a slice of json.RawMessage into a slice of Traits.
-func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
-	var traitsList []Traits
-	for _, raw := range rawTraits {
-		var t Traits
-		if err := json.Unmarshal(raw, &t); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
-		}
-		traitsList = append(traitsList, t)
-	}
-	return traitsList, nil
-}
-
 // resolveLocalOntologies checks if the local ontology files exist in the specified directory.
-// If they do, it updates the map with the full URL; if not, it removes the entry and logs a warning.
 func resolveLocalOntologies(localOntologies map[string]string, dir string, baseURL string) {
 	for prefix, filename := range localOntologies {
 		fullPath := filepath.Join(dir, filename)
 
 		if _, err := os.Stat(fullPath); err == nil {
-			// File exists: update to full URL
 			localOntologies[prefix] = baseURL + filename
 		} else {
-			// File does not exist: remove entry and warn
 			fmt.Printf("Warning: ontology file %s not found in %s. Removing prefix '%s'.\n", filename, dir, prefix)
 			delete(localOntologies, prefix)
 		}
@@ -188,10 +139,9 @@ func resolveLocalOntologies(localOntologies map[string]string, dir string, baseU
 
 // -------------------------------------Unit asset's function methods
 
-// assembles ontologies gets the list of systems from the lead registrar and then the ontology of each system
-func (ua *UnitAsset) assembleOntologies(w http.ResponseWriter) {
-	// 1) Discover the leading Service Registrar and request the cloud's system list
-	leadingRegistrarURL, err := components.GetRunningCoreSystemURL(ua.Owner, "serviceregistrar")
+// assembleOntologies gets the list of systems from the lead registrar and then the ontology of each system
+func (t *Traits) assembleOntologies(w http.ResponseWriter) {
+	leadingRegistrarURL, err := components.GetRunningCoreSystemURL(t.owner, "serviceregistrar")
 	if err != nil {
 		log.Printf("Error getting the leading service registrar URL: %s\n", err)
 		http.Error(w, "Internal Server Error: unable to get leading service registrar URL", http.StatusInternalServerError)
@@ -235,17 +185,15 @@ func (ua *UnitAsset) assembleOntologies(w http.ResponseWriter) {
 		return
 	}
 
-	// 2) Assert we got a SystemRecordList, which contains the list of system base URLs
 	systemsList, ok := sL.(*forms.SystemRecordList_v1)
 	if !ok {
 		fmt.Println("Problem unpacking the service registration reply")
 		return
 	}
 
-	// 3) Collect prefixes (deduped), and individual TTL blocks (deduped)
-	prefixes := make(map[string]bool)        // "@prefix ..." lines we keep once
-	processedBlocks := make(map[string]bool) // for deduping RDF blocks across systems
-	var uniqueIndividuals []string           // all individuals we will output
+	prefixes := make(map[string]bool)
+	processedBlocks := make(map[string]bool)
+	var uniqueIndividuals []string
 
 	for _, s := range systemsList.List {
 		sysUrl := s + "/kgraph"
@@ -263,11 +211,8 @@ func (ua *UnitAsset) assembleOntologies(w http.ResponseWriter) {
 			continue
 		}
 
-		// Normalize CRLF to LF so splitting works even if a system returns Windows newlines.
 		text := strings.ReplaceAll(string(bodyBytes), "\r\n", "\n")
-
-		// Split into individual RDF blocks; your systems emit blocks separated by a blank line.
-		blocks := strings.Split(text, "\n\n") // :contentReference[oaicite:4]{index=4}
+		blocks := strings.Split(text, "\n\n")
 
 		for _, block := range blocks {
 			normalizedBlock := strings.TrimSpace(block)
@@ -275,10 +220,9 @@ func (ua *UnitAsset) assembleOntologies(w http.ResponseWriter) {
 				continue
 			}
 			if processedBlocks[normalizedBlock] {
-				continue // already seen
+				continue
 			}
 
-			// Collect @prefix lines (keep them out of individuals)
 			if strings.HasPrefix(normalizedBlock, "@prefix") {
 				for _, line := range strings.Split(normalizedBlock, "\n") {
 					if strings.HasPrefix(line, "@prefix") {
@@ -293,23 +237,19 @@ func (ua *UnitAsset) assembleOntologies(w http.ResponseWriter) {
 		}
 	}
 
-	// 4) Detect a single cloud IRI from any afo:System blocks that already declare afo:isContainedIn
-	//    (We do this AFTER collection, to avoid running on an empty slice.)
 	var cloudIRI string
 	{
 		seen := map[string]struct{}{}
 		for _, blk := range uniqueIndividuals {
-			if !isSystemBlock(blk) { // helper in your file
+			if !isSystemBlock(blk) {
 				continue
 			}
-			vals := extractContainedIns(blk) // helper in your file
-			// De-dup per block; error if a single system declares more than one cloud.
+			vals := extractContainedIns(blk)
 			local := map[string]struct{}{}
 			for _, v := range vals {
 				local[v] = struct{}{}
 			}
 			if len(local) > 1 {
-				// report early with the concrete subject for clarity
 				http.Error(w, fmt.Sprintf("Bad Request: system %s has conflicting afo:isContainedIn values", extractSubject(blk)), http.StatusBadRequest)
 				return
 			}
@@ -331,21 +271,18 @@ func (ua *UnitAsset) assembleOntologies(w http.ResponseWriter) {
 			return
 		}
 		for k := range seen {
-			cloudIRI = k // the single agreed value
+			cloudIRI = k
 		}
 	}
 
-	// 5) Ensure every afo:System has afo:isContainedIn cloudIRI (append a separate triple when missing)
 	for i, blk := range uniqueIndividuals {
 		if isSystemBlock(blk) && len(extractContainedIns(blk)) == 0 {
-			uniqueIndividuals[i] = injectContainedIn(blk, cloudIRI) // helper in your file
+			uniqueIndividuals[i] = injectContainedIn(blk, cloudIRI)
 		}
 	}
 
-	// 6a) Prefix all cloud-local individuals with the LocalCloud name
 	uniqueIndividuals = addCloudPrefixToBlocks(uniqueIndividuals, cloudIRI)
 
-	// 6b) Build the final graph: prefixes (once), ontology header with imports, then all blocks
 	var graph string
 
 	for prefix := range prefixes {
@@ -353,7 +290,7 @@ func (ua *UnitAsset) assembleOntologies(w http.ResponseWriter) {
 	}
 
 	ontoImport := "\nalc:ontology a owl:Ontology "
-	for _, uri := range ua.Traits.LOntologies {
+	for _, uri := range t.LOntologies {
 		ontoImport += fmt.Sprintf(";\n    owl:imports <%s> ", uri)
 	}
 	ontoImport += ".\n"
@@ -363,24 +300,17 @@ func (ua *UnitAsset) assembleOntologies(w http.ResponseWriter) {
 		graph += block + "\n\n"
 	}
 
-	// 7) Return to browser and POST to GraphDB (now: snapshot + replace current)
 	w.Header().Set("Content-Type", "text/turtle")
 	w.Write([]byte(graph))
 
-	// Build a snapshot IRI (UTC is simplest to compare later)
-	snapshotT := time.Now().UTC().Format(time.RFC3339) // e.g. 2025-11-14T09:17:23Z
+	snapshotT := time.Now().UTC().Format(time.RFC3339)
 	snapshotIRI := "urn:snapshots:" + snapshotT
 
-	// Derive endpoints from ua.TripleStoreURL
-	statementsURL := ua.TripleStoreURL // expected: .../repositories/<repo>/statements
-	repoBase := strings.TrimSuffix(ua.TripleStoreURL, "/statements")
+	statementsURL := t.TripleStoreURL
+	repoBase := strings.TrimSuffix(t.TripleStoreURL, "/statements")
 
-	// Graph Store HTTP Protocol endpoint for indirectly-referenced graphs
-	// If you pass repo *base* (…/repositories/<repo>) instead, use:
-	// gspURL := repoBase + "/rdf-graphs/service?graph=" + url.QueryEscape(snapshotIRI)
 	gspURL := repoBase + "/rdf-graphs/service?graph=" + url.QueryEscape(snapshotIRI)
 
-	// --- 7a) PUT the TTL into the snapshot named graph
 	req, err = http.NewRequest(http.MethodPut, gspURL, bytes.NewBuffer([]byte(graph)))
 	if err != nil {
 		log.Println("Error creating snapshot PUT:", err)
@@ -401,7 +331,6 @@ func (ua *UnitAsset) assembleOntologies(w http.ResponseWriter) {
 		return
 	}
 
-	// --- 7b) Replace <urn:state:current> with this snapshot (single SPARQL UPDATE)
 	update := fmt.Sprintf(`CLEAR GRAPH <urn:state:current>;
 ADD GRAPH <%s> TO <urn:state:current>;`, snapshotIRI)
 
@@ -427,10 +356,9 @@ ADD GRAPH <%s> TO <urn:state:current>;`, snapshotIRI)
 
 	fmt.Println("Snapshot stored at:", snapshotIRI)
 	fmt.Println("Current graph replaced from snapshot.")
-
 }
 
-// updatePrefix_Target updates the prefixes in the RDF blocks with the new URIs from the local ontologies.
+// updatePrefixes updates the prefixes in the RDF blocks with the new URIs from the local ontologies.
 func updatePrefixes(prefixes map[string]bool, prefixUpdates map[string]string) {
 	updated := make(map[string]bool)
 
@@ -438,9 +366,8 @@ func updatePrefixes(prefixes map[string]bool, prefixUpdates map[string]string) {
 		if strings.HasPrefix(line, "@prefix") {
 			parts := strings.Fields(line)
 			if len(parts) >= 3 {
-				prefix := strings.TrimSuffix(parts[1], ":") // e.g., "alc"
+				prefix := strings.TrimSuffix(parts[1], ":")
 				if newURI, ok := prefixUpdates[prefix]; ok {
-					// Update the line with the new URI
 					line = fmt.Sprintf("@prefix %s: <%s#> .", prefix, newURI)
 				}
 			}
@@ -448,7 +375,6 @@ func updatePrefixes(prefixes map[string]bool, prefixUpdates map[string]string) {
 		updated[line] = true
 	}
 
-	// Replace the original map with the updated one
 	for k := range prefixes {
 		delete(prefixes, k)
 	}
@@ -457,8 +383,7 @@ func updatePrefixes(prefixes map[string]bool, prefixUpdates map[string]string) {
 	}
 }
 
-// addCloudPrefixToBlocks prefixes all alc: subjects (except the cloud itself and "ontology")
-// with "<CloudName>_" and updates all references consistently.
+// addCloudPrefixToBlocks prefixes all alc: subjects with "<CloudName>_".
 func addCloudPrefixToBlocks(blocks []string, cloudIRI string) []string {
 	cloudIRI = ensurePrefixed(cloudIRI)
 	cloudName := extractCloudName(cloudIRI)
@@ -466,7 +391,6 @@ func addCloudPrefixToBlocks(blocks []string, cloudIRI string) []string {
 		return blocks
 	}
 
-	// First pass: build a mapping oldIRI -> newIRI
 	mapping := map[string]string{}
 	for _, blk := range blocks {
 		subj := extractSubject(blk)
@@ -477,11 +401,9 @@ func addCloudPrefixToBlocks(blocks []string, cloudIRI string) []string {
 		if rest == "" {
 			continue
 		}
-		// Don't touch the cloud itself or the ontology individual
 		if rest == cloudName || rest == "ontology" {
 			continue
 		}
-		// Avoid double-prefixing if it's already tagged
 		if strings.HasPrefix(rest, cloudName+"_") {
 			continue
 		}
@@ -493,7 +415,6 @@ func addCloudPrefixToBlocks(blocks []string, cloudIRI string) []string {
 		return blocks
 	}
 
-	// Replace longer IRIs first to avoid partial collisions
 	keys := make([]string, 0, len(mapping))
 	for k := range mapping {
 		keys = append(keys, k)
@@ -513,15 +434,13 @@ func addCloudPrefixToBlocks(blocks []string, cloudIRI string) []string {
 	return out
 }
 
-// extractCloudName gets the local name from a cloud IRI like "alc:AlphaCloud"
-// or "<http://.../AlphaCloud>" or "<http://...#AlphaCloud>".
+// extractCloudName gets the local name from a cloud IRI.
 func extractCloudName(iri string) string {
 	iri = strings.TrimSpace(iri)
 	if iri == "" {
 		return ""
 	}
 
-	// Full IRI in angle brackets
 	if strings.HasPrefix(iri, "<") && strings.HasSuffix(iri, ">") {
 		inner := iri[1 : len(iri)-1]
 		idx := strings.LastIndexAny(inner, "#/")
@@ -531,7 +450,6 @@ func extractCloudName(iri string) string {
 		return inner
 	}
 
-	// Prefixed name like "alc:AlphaCloud"
 	if strings.Contains(iri, ":") {
 		parts := strings.SplitN(iri, ":", 2)
 		if len(parts) == 2 {
@@ -539,13 +457,12 @@ func extractCloudName(iri string) string {
 		}
 	}
 
-	// Fallback: just return whatever we got
 	return iri
 }
 
 // ------------------------------------- Local cloud containing all systems
 
-// ensurePrefixed returns v with "alc:" prefix unless it's already an IRI (<...>) or a prefixed/absolute IRI (contains ':').
+// ensurePrefixed returns v with "alc:" prefix unless it's already an IRI or prefixed.
 func ensurePrefixed(v string) string {
 	v = strings.TrimSpace(v)
 	if v == "" {
@@ -559,7 +476,6 @@ func ensurePrefixed(v string) string {
 
 // isSystemBlock reports whether this TTL block defines an afo:System individual.
 func isSystemBlock(block string) bool {
-	// Heuristic: first line looks like: "alc:foo a afo:System ;" or ends with "."
 	lines := strings.Split(strings.TrimSpace(block), "\n")
 	if len(lines) == 0 {
 		return false
@@ -573,7 +489,7 @@ func extractSubject(block string) string {
 	first := strings.Split(strings.TrimSpace(block), "\n")[0]
 	parts := strings.Fields(first)
 	if len(parts) > 0 {
-		return parts[0] // e.g., "alc:aiko_ds18b20"
+		return parts[0]
 	}
 	return ""
 }
@@ -583,7 +499,6 @@ func extractContainedIns(block string) []string {
 	var found []string
 	for _, line := range strings.Split(block, "\n") {
 		if strings.Contains(line, "afo:isContainedIn ") {
-			// very simple parse: take everything after predicate up to ';' or '.'
 			after := strings.SplitN(line, "afo:isContainedIn", 2)[1]
 			after = strings.TrimSpace(after)
 			after = strings.TrimRight(after, " ;.")
@@ -595,14 +510,10 @@ func extractContainedIns(block string) []string {
 	return found
 }
 
-// injectContainedIn inserts "afo:isContainedIn <iri>" as one of the system's predicates
-// by replacing the final '.' of the block with " ;\n    afo:isContainedIn <iri> ."
-// This keeps the triple *inside* the subject's predicate list (not as a separate triple).
-// If the block doesn't end with '.', we fall back to appending a separate triple.
+// injectContainedIn inserts "afo:isContainedIn <iri>" as one of the system's predicates.
 func injectContainedIn(block, iri string) string {
 	iri = ensurePrefixed(iri)
 
-	// Don't add if it's already present.
 	if len(extractContainedIns(block)) > 0 {
 		return block
 	}
@@ -612,14 +523,11 @@ func injectContainedIn(block, iri string) string {
 		return block
 	}
 
-	// Normal case: the subject block ends with a single '.'
 	if strings.HasSuffix(trim, ".") {
-		// Replace the trailing '.' with " ;\n    afo:isContainedIn <iri> ."
 		core := strings.TrimSuffix(trim, ".")
 		return core + " ;\n    afo:isContainedIn " + iri + " .\n"
 	}
 
-	// Fallback: append as a separate triple with explicit subject.
 	subj := extractSubject(block)
 	if subj == "" {
 		return block
@@ -628,8 +536,6 @@ func injectContainedIn(block, iri string) string {
 }
 
 // detectGlobalCloud validates there is at most one unique LocalCloud across all system blocks.
-// Returns that single IRI (normalized) or an error if conflicting values are found.
-// If none is provided anywhere, returns "" and no error (caller decides policy).
 func detectGlobalCloud(blocks []string) (string, error) {
 	set := map[string]struct{}{}
 	for _, b := range blocks {
@@ -637,13 +543,11 @@ func detectGlobalCloud(blocks []string) (string, error) {
 			continue
 		}
 		vals := extractContainedIns(b)
-		// de-dupe within block and normalize
 		local := map[string]struct{}{}
 		for _, v := range vals {
 			local[ensurePrefixed(v)] = struct{}{}
 		}
 		if len(local) > 1 {
-			// a single system declares conflicting values
 			var ls []string
 			for k := range local {
 				ls = append(ls, k)
@@ -657,7 +561,7 @@ func detectGlobalCloud(blocks []string) (string, error) {
 	}
 	if len(set) <= 1 {
 		for k := range set {
-			return k, nil // the only value, or "" if none
+			return k, nil
 		}
 		return "", nil
 	}
@@ -671,9 +575,8 @@ func detectGlobalCloud(blocks []string) (string, error) {
 
 // ----------- Local Ontologies Service -----------------------------------------------------------
 
-// localOntologiesHandler handles requests to the /localontologies endpoint
-// localOntologies reads the ./ontologies directory and builds an HTML list
-func (ua *UnitAsset) localOntologies(sp string) string {
+// localOntologies reads the ./files directory and builds an HTML list
+func (t *Traits) localOntologies(sp string) string {
 	entries, err := os.ReadDir("./files")
 	if err != nil {
 		return fmt.Sprintf("<p><strong>Error:</strong> could not read files directory: %v</p>", err)
@@ -691,8 +594,7 @@ func (ua *UnitAsset) localOntologies(sp string) string {
 			continue
 		}
 		name := entry.Name()
-		// <a href="/Foo.owl">Foo.owl</a> will now hit your FileServer at "/" and serve ./files/Foo.owl
-		link := sp + ua.Name + "/files/" + name
+		link := sp + t.name + "/files/" + name
 		sb.WriteString(fmt.Sprintf(`<li><a href="%s">%s</a></li>`, link, name))
 	}
 

@@ -58,8 +58,7 @@ func main() {
 
 	// instantiate a template unit asset
 	assetTemplate := initTemplate()
-	assetName := assetTemplate.GetName()
-	sys.UAssets[assetName] = &assetTemplate
+	sys.UAssets[assetTemplate.GetName()] = assetTemplate
 
 	// Configure the system
 	rawResources, err := usecases.Configure(&sys)
@@ -74,7 +73,7 @@ func main() {
 		}
 		ua, cleanup := newResource(uac, &sys)
 		defer cleanup()
-		sys.UAssets[ua.GetName()] = &ua
+		sys.UAssets[ua.GetName()] = ua
 	}
 
 	// Generate PKI keys and CSR to obtain a authentication certificate from the CA
@@ -93,13 +92,13 @@ func main() {
 	time.Sleep(3 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
 }
 
-// Serving handles the resources services. NOTE: it expects those names from the request URL path
-func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {
+// serving handles the resources services. NOTE: it expects those names from the request URL path
+func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
 	case "start":
-		fmt.Fprintln(w, ua.StartStreamURL())
+		fmt.Fprintln(w, t.StartStreamURL())
 	case "stream":
-		ua.StreamTo(w, r)
+		t.StreamTo(w, r)
 	default:
 		http.Error(w, "Invalid service request", http.StatusBadRequest)
 	}

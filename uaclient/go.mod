@@ -1,6 +1,6 @@
 module github.com/sdoque/systems/uaclient
 
-go 1.25.4
+go 1.25.8
 
 replace github.com/sdoque/mbaigo => /Users/jan/go/src/github.com/sdoque/mbaigo
 

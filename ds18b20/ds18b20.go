@@ -59,8 +59,7 @@ func main() {
 
 	// instantiate a template unit asset
 	assetTemplate := initTemplate()
-	assetName := assetTemplate.GetName()
-	sys.UAssets[assetName] = &assetTemplate
+	sys.UAssets[assetTemplate.GetName()] = assetTemplate
 
 	// Configure the system
 	rawResources, err := usecases.Configure(&sys)
@@ -68,16 +67,14 @@ func main() {
 		log.Fatalf("configuration error: %v\n", err)
 	}
 	sys.UAssets = make(map[string]*components.UnitAsset) // clear the unit asset map (from the template)
-	var cleanups []func()
 	for _, raw := range rawResources {
 		var uac usecases.ConfigurableAsset
 		if err := json.Unmarshal(raw, &uac); err != nil {
 			log.Fatalf("resource configuration error: %+v\n", err)
 		}
 		ua, cleanup := newResource(uac, &sys)
-		cleanups = append(cleanups, cleanup)
-		defer cleanup() // ensure cleanup is called when the program exits
-		sys.UAssets[ua.GetName()] = &ua
+		defer cleanup()
+		sys.UAssets[ua.GetName()] = ua
 	}
 
 	// Generate PKI keys and CSR to obtain a authentication certificate from the CA
@@ -96,18 +93,18 @@ func main() {
 	time.Sleep(2 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
 }
 
-// Serving handles the resources services. NOTE: it expects those names from the request URL path
-func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {
+// serving handles the resources services. NOTE: it expects those names from the request URL path
+func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
 	case "temperature":
-		ua.readTemp(w, r)
+		t.readTemp(w, r)
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}
 }
 
 // readTemp gets the unit asset's temperature datum and sends it in a signal form
-func (ua *UnitAsset) readTemp(w http.ResponseWriter, r *http.Request) {
+func (t *Traits) readTemp(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		getMeasuremet := STray{
@@ -115,7 +112,7 @@ func (ua *UnitAsset) readTemp(w http.ResponseWriter, r *http.Request) {
 			ValueP: make(chan forms.SignalA_v1a),
 			Error:  make(chan error),
 		}
-		ua.trayChan <- getMeasuremet
+		t.trayChan <- getMeasuremet
 		select {
 		case err := <-getMeasuremet.Error:
 			fmt.Printf("Logic error in getting measurement, %s\n", err)

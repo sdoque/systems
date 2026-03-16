@@ -58,8 +58,7 @@ func main() {
 
 	// instantiate a template unit asset
 	assetTemplate := initTemplate()
-	assetName := assetTemplate.GetName()
-	sys.UAssets[assetName] = &assetTemplate
+	sys.UAssets[assetTemplate.GetName()] = assetTemplate
 
 	// Configure the system
 	rawResources, err := usecases.Configure(&sys)
@@ -75,8 +74,7 @@ func main() {
 		}
 		ua, cleanup := newResource(uac, &sys)
 		cleanups = append(cleanups, cleanup)
-		// defer cleanup()
-		sys.UAssets[ua.GetName()] = &ua
+		sys.UAssets[ua.GetName()] = ua
 	}
 
 	// Generate PKI keys and CSR to obtain a authentication certificate from the CA
@@ -98,19 +96,18 @@ func main() {
 	time.Sleep(2 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
 }
 
-// Serving handles the resources services. NOTE: it expects those names from the request URL path
-func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {
+// serving handles the resources services. NOTE: it expects those names from the request URL path
+func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
 	case "access":
-		ua.access(w, r)
+		t.access(w, r)
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}
 }
 
 // access gets the unit asset's AIO channel datum and sends it in a signal form
-func (ua *UnitAsset) access(w http.ResponseWriter, r *http.Request) {
-
+func (t *Traits) access(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		// Prepare a fresh tray for this request
@@ -118,7 +115,7 @@ func (ua *UnitAsset) access(w http.ResponseWriter, r *http.Request) {
 			SampledDatum: make(chan forms.SignalA_v1a),
 			Error:        make(chan error),
 		}
-		ua.serviceChannel <- requestTray
+		t.serviceChannel <- requestTray
 		select {
 		case err := <-requestTray.Error:
 			log.Printf("Logic error in getting measurement: %v", err)
@@ -135,7 +132,7 @@ func (ua *UnitAsset) access(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPost, http.MethodPut:
 		// Unpack the incoming form
-		log.Printf("Unpacking output signal form for %s", ua.Name)
+		log.Printf("Unpacking output signal form for %s", t.name)
 		contentType := r.Header.Get("Content-Type")
 		mediaType, _, err := mime.ParseMediaType(contentType)
 		if err != nil {
@@ -155,15 +152,15 @@ func (ua *UnitAsset) access(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
-		outputForm, ok := serviceReq.(*forms.SignalA_v1a) // Ensure the form is of the expected type
+		outputForm, ok := serviceReq.(*forms.SignalA_v1a)
 		if !ok {
 			log.Println("Unexpected form type in access")
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
 
-		ua.outputChannel <- outputForm.Value // Send the value to the output channel for processing
-		w.WriteHeader(http.StatusOK)         // Respond with 200 OK if the write is successful
+		t.outputChannel <- outputForm.Value // Send the value to the output channel for processing
+		w.WriteHeader(http.StatusOK)        // Respond with 200 OK if the write is successful
 
 	default:
 		http.Error(w, "Method not supported", http.StatusMethodNotAllowed)

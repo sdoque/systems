@@ -19,7 +19,7 @@ func TestServing(t *testing.T) {
 	inputR.Header.Set("Content-Type", "application/json")
 	newMockTransport(createMultiHTTPResponse(2, false, string(createTestServiceRecordListForm())), 0, nil)
 	mua := createUnitAsset()
-	mua.Serving(inputW, inputR, "squest")
+	serving(mua, inputW, inputR, "squest")
 
 	var expectedOutput = string(createTestServicePointForm())
 
@@ -34,7 +34,7 @@ func TestServing(t *testing.T) {
 	inputR.Header.Set("Content-Type", "application/json")
 	newMockTransport(createMultiHTTPResponse(2, false, string(createTestServiceRecordListForm())), 0, nil)
 	mua = createUnitAsset()
-	mua.Serving(inputW, inputR, "squests")
+	serving(mua, inputW, inputR, "squests")
 
 	expectedOutput = string(createTestServiceRecordListForm())
 
@@ -48,7 +48,7 @@ func TestServing(t *testing.T) {
 	inputR.Header.Set("Content-Type", "application/json")
 	newMockTransport(createMultiHTTPResponse(2, false, string(createTestServiceRecordListForm())), 0, nil)
 	mua = createUnitAsset()
-	mua.Serving(inputW, inputR, "wrong")
+	serving(mua, inputW, inputR, "wrong")
 
 	if inputW.Code == 200 {
 		t.Errorf("Expected the error code to not be 200 when having servicePath not be squest")

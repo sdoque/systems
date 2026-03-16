@@ -46,7 +46,7 @@ func TestHandleNewMessage(t *testing.T) {
 		},
 	}
 
-	ua := &UnitAsset{
+	ua := &Traits{
 		messages: make(map[string][]message),
 	}
 	for _, test := range table {
@@ -81,8 +81,11 @@ func TestHandleDashboard(t *testing.T) {
 		t.Fatalf("expected no error from template.Parse, got %v", err)
 	}
 	sys := components.NewSystem("test sys", context.Background())
-	ua := &UnitAsset{
-		Owner:         &sys,
+	sys.Husk = &components.Husk{
+		ProtoPort: map[string]int{"http": 0},
+	}
+	ua := &Traits{
+		owner:         &sys,
 		messages:      make(map[string][]message),
 		tmplDashboard: tmpl,
 	}

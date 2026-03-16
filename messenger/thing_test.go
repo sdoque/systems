@@ -30,6 +30,7 @@ func TestNewRegMsg(t *testing.T) {
 	sys := components.NewSystem("test sys", context.Background())
 	sys.Husk = &components.Husk{
 		ProtoPort: map[string]int{"https": 0, "http": 0},
+		Host:      components.NewDevice(),
 	}
 	for _, test := range table {
 		sys.Husk.ProtoPort[test.scheme] = 8080
@@ -169,11 +170,13 @@ func TestFetchSystems(t *testing.T) {
 	}
 
 	sys := components.NewSystem("test sys", context.Background())
-	sys.CoreS = []*components.CoreSystem{
-		{Name: "serviceregistrar", Url: "http://fake"},
+	sys.Husk = &components.Husk{
+		CoreS: []*components.CoreSystem{
+			{Name: "serviceregistrar", Url: "http://fake"},
+		},
 	}
-	ua := &UnitAsset{
-		Owner: &sys,
+	ua := &Traits{
+		owner: &sys,
 	}
 	mock := newTransFetchSystems(t)
 
@@ -203,8 +206,8 @@ func TestNotifySystems(t *testing.T) {
 		"/good",    // All ok
 	}
 	sys := components.NewSystem(name, context.Background())
-	ua := &UnitAsset{
-		Owner: &sys,
+	ua := &Traits{
+		owner: &sys,
 	}
 	mock := newTransSendRequest()
 	mock.status = http.StatusOK
@@ -216,7 +219,7 @@ func TestNotifySystems(t *testing.T) {
 
 func TestAddMessage(t *testing.T) {
 	sys := "test"
-	ua := &UnitAsset{
+	ua := &Traits{
 		messages: make(map[string][]message),
 	}
 	for i := range maxMessages * 2 {

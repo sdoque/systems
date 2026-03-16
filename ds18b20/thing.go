@@ -18,9 +18,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -39,56 +38,19 @@ type STray struct {
 }
 
 // -------------------------------------Define the unit asset
+
 // Traits are Asset-specific configurable parameters
 type Traits struct {
 	temperature float64   `json:"-"`
 	tStamp      time.Time `json:"-"`
+	trayChan    chan STray `json:"-"`
+	name        string    `json:"-"`
 }
-
-// UnitAsset type models the unit asset (interface) of the system.
-type UnitAsset struct {
-	Name        string              `json:"name"`
-	Owner       *components.System  `json:"-"`
-	Details     map[string][]string `json:"details"`
-	ServicesMap components.Services `json:"-"`
-	CervicesMap components.Cervices `json:"-"`
-	//
-	Traits
-	trayChan chan STray `json:"-"` // Add a channel for temperature readings
-}
-
-// GetName returns the name of the Resource.
-func (ua *UnitAsset) GetName() string {
-	return ua.Name
-}
-
-// GetServices returns the services of the Resource.
-func (ua *UnitAsset) GetServices() components.Services {
-	return ua.ServicesMap
-}
-
-// GetCervices returns the list of consumed services by the Resource.
-func (ua *UnitAsset) GetCervices() components.Cervices {
-	return ua.CervicesMap
-}
-
-// GetDetails returns the details of the Resource.
-func (ua *UnitAsset) GetDetails() map[string][]string {
-	return ua.Details
-}
-
-// GetTraits returns the traits of the Resource.
-func (ua *UnitAsset) GetTraits() any {
-	return ua.Traits
-}
-
-// ensure UnitAsset implements components.UnitAsset (this check is done at during the compilation)
-var _ components.UnitAsset = (*UnitAsset)(nil)
 
 //-------------------------------------Instantiate a unit asset template
 
 // initTemplate initializes a UnitAsset with default values.
-func initTemplate() components.UnitAsset {
+func initTemplate() *components.UnitAsset {
 	// Define the services that expose the capabilities of the unit asset(s)
 	temperature := components.Service{
 		Definition:  "temperature",
@@ -98,61 +60,50 @@ func initTemplate() components.UnitAsset {
 		Description: "provides the temperature (GET) of the resource temperature sensor",
 	}
 
-	// var uat components.UnitAsset // this is an interface, which we then initialize
-	uat := &UnitAsset{
+	return &components.UnitAsset{
 		Name:    "sensor_Id",
+		Mission: "measure_temperature",
 		Details: map[string][]string{"Unit": {"Celsius"}, "Location": {"Kitchen"}},
 		ServicesMap: components.Services{
-			temperature.SubPath: &temperature, // Inline assignment of the temperature service
+			temperature.SubPath: &temperature,
 		},
+		Traits: &Traits{},
 	}
-	return uat
 }
 
 //-------------------------------------Instantiate the unit assets based on configuration
 
 // newResource creates the Resource resource with its pointers and channels based on the configuration
-func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {
-	ua := &UnitAsset{ // this a struct that implements the UnitAsset interface
+func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (*components.UnitAsset, func()) {
+	t := &Traits{
+		trayChan: make(chan STray),
+		name:     configuredAsset.Name,
+	}
+
+	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
+		Mission:     configuredAsset.Mission,
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
-		trayChan:    make(chan STray), // Initialize the channel
+		Traits:      t,
+	}
+	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
+		serving(t, w, r, servicePath)
 	}
 
-	traits, err := UnmarshalTraits(configuredAsset.Traits)
-	if err != nil {
-		log.Println("Warning: could not unmarshal traits:", err)
-	} else if len(traits) > 0 {
-		ua.Traits = traits[0] // or handle multiple traits if needed
-	}
-	// start the unit asset(s)
-	go ua.readTemperature(sys.Ctx)
+	go t.readTemperature(sys.Ctx)
 
 	return ua, func() {
-		log.Printf("disconnecting from %s\n", ua.Name)
+		log.Printf("disconnecting from %s\n", configuredAsset.Name)
 	}
-}
-
-// UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
-func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
-	var traitsList []Traits
-	for _, raw := range rawTraits {
-		var t Traits
-		if err := json.Unmarshal(raw, &t); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
-		}
-		traitsList = append(traitsList, t)
-	}
-	return traitsList, nil
 }
 
 //-------------------------------------Unit asset's functionalities
 
 // readTemperature obtains the temperature from respective ds18b20 resource at regular intervals
-func (ua *UnitAsset) readTemperature(ctx context.Context) {
-	defer close(ua.trayChan) // Ensure the channel is closed when the goroutine exits
+func (t *Traits) readTemperature(ctx context.Context) {
+	defer close(t.trayChan) // Ensure the channel is closed when the goroutine exits
 
 	// Create a ticker that triggers every 2 seconds
 	ticker := time.NewTicker(2 * time.Second)
@@ -169,7 +120,7 @@ func (ua *UnitAsset) readTemperature(ctx context.Context) {
 				return
 
 			case <-ticker.C: // Read temperature at regular intervals
-				deviceFile := "/sys/bus/w1/devices/" + ua.Name + "/w1_slave"
+				deviceFile := "/sys/bus/w1/devices/" + t.name + "/w1_slave"
 				rawData, err := os.ReadFile(deviceFile)
 				if err != nil {
 					log.Printf("Error reading temperature file: %s, error: %v\n", deviceFile, err)
@@ -212,15 +163,15 @@ func (ua *UnitAsset) readTemperature(ctx context.Context) {
 			return
 
 		case temp := <-tempChan: // Update temperature and timestamp
-			ua.temperature = temp
-			ua.tStamp = <-tStampChan
+			t.temperature = temp
+			t.tStamp = <-tStampChan
 
-		case order := <-ua.trayChan: // Address a GET request
+		case order := <-t.trayChan: // Address a GET request
 			var f forms.SignalA_v1a
 			f.NewForm()
-			f.Value = ua.temperature
+			f.Value = t.temperature
 			f.Unit = "Celsius"
-			f.Timestamp = ua.tStamp
+			f.Timestamp = t.tStamp
 			order.ValueP <- f
 		}
 	}

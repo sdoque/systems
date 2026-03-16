@@ -59,8 +59,7 @@ func main() {
 
 	// instantiate a template unit asset
 	assetTemplate := initTemplate()
-	assetName := assetTemplate.GetName()
-	sys.UAssets[assetName] = &assetTemplate
+	sys.UAssets[assetTemplate.GetName()] = assetTemplate
 
 	// Configure the system
 	rawResources, err := usecases.Configure(&sys)
@@ -75,7 +74,7 @@ func main() {
 		}
 		ua, cleanup := newResource(uac, &sys)
 		defer cleanup()
-		sys.UAssets[ua.GetName()] = &ua
+		sys.UAssets[ua.GetName()] = ua
 	}
 
 	// Generate PKI keys and CSR to obtain a authentication certificate from the CA
@@ -94,37 +93,37 @@ func main() {
 	time.Sleep(3 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
 }
 
-// Serving handles the resources services. NOTE: it expects those names from the request URL path
-func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {
+// serving handles the resources services. NOTE: it expects those names from the request URL path
+func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
 	case "cloudgraph":
-		ua.aggregate(w, r)
+		t.aggregate(w, r)
 	case "localontologies":
-		ua.listOntologies(w, r)
+		t.listOntologies(w, r)
 	case "files":
-		// this is a catch-all for the files service, which is not implemented in this system
+		// catch-all for the files service
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}
 }
 
-// assembleOntologies writes out the knowledge graph of the local cloud and pushes it to GraphDB
-func (ua *UnitAsset) aggregate(w http.ResponseWriter, r *http.Request) {
+// aggregate writes out the knowledge graph of the local cloud and pushes it to GraphDB
+func (t *Traits) aggregate(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		ua.assembleOntologies(w)
+		t.assembleOntologies(w)
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}
 }
 
 // listOntologies writes out the HTML produced by localOntologies()
-func (ua *UnitAsset) listOntologies(w http.ResponseWriter, r *http.Request) {
+func (t *Traits) listOntologies(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		p := r.Pattern
-		html := ua.localOntologies(p)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8") // set the content type for the response of the HTML page not the ontologies
+		html := t.localOntologies(p)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, html)
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)

@@ -57,8 +57,7 @@ func main() {
 
 	// instantiate a template unit asset
 	assetTemplate := initTemplate()
-	assetName := assetTemplate.GetName()
-	sys.UAssets[assetName] = &assetTemplate
+	sys.UAssets[assetTemplate.GetName()] = assetTemplate
 
 	// Configure the system
 	rawResources, err := usecases.Configure(&sys)
@@ -73,7 +72,7 @@ func main() {
 		}
 		ua, cleanup := newResource(uac, &sys)
 		defer cleanup()
-		sys.UAssets[ua.GetName()] = &ua
+		sys.UAssets[ua.GetName()] = ua
 	}
 
 	// Generate PKI keys and CSR to obtain a authentication certificate from the CA
@@ -88,25 +87,24 @@ func main() {
 	// wait for shutdown signal, and gracefully close properly goroutines with context
 	<-sys.Sigs // wait for a SIGINT (Ctrl+C) signal
 	log.Println("shutting down system", sys.Name)
-	cancel() // signal the goroutines to stop
-	// allow the go routines to be executed, which might take more time than the main routine to end
-	time.Sleep(2 * time.Second)
+	cancel()                    // signal the goroutines to stop
+	time.Sleep(2 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
 }
 
-// Serving handles the resources services. NOTE: it expects those names from the request URL path
-func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {
+// serving handles the resources services. NOTE: it expects those names from the request URL path
+func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
 	case "squest":
-		ua.orchestrate(w, r)
+		t.orchestrate(w, r)
 	case "squests":
-		ua.orchestrateMultiple(w, r)
+		t.orchestrateMultiple(w, r)
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}
 }
 
 // orchestrate receives a service discovery request and responds with the selected service location if found
-func (ua *UnitAsset) orchestrate(w http.ResponseWriter, r *http.Request) {
+func (t *Traits) orchestrate(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "POST":
 		contentType := r.Header.Get("Content-Type")
@@ -133,7 +131,7 @@ func (ua *UnitAsset) orchestrate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		servLocation, err := ua.getServiceURL(*qf)
+		servLocation, err := t.getServiceURL(*qf)
 		if err != nil {
 			log.Println(err)
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -142,7 +140,7 @@ func (ua *UnitAsset) orchestrate(w http.ResponseWriter, r *http.Request) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, err = w.Write(servLocation) // respond with the selected service location
+		_, err = w.Write(servLocation)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -152,7 +150,7 @@ func (ua *UnitAsset) orchestrate(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (ua *UnitAsset) orchestrateMultiple(w http.ResponseWriter, r *http.Request) {
+func (t *Traits) orchestrateMultiple(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "POST":
 		contentType := r.Header.Get("Content-Type")
@@ -179,7 +177,7 @@ func (ua *UnitAsset) orchestrateMultiple(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		servLocation, err := ua.getServicesURL(*qf)
+		servLocation, err := t.getServicesURL(*qf)
 		if err != nil {
 			log.Println(err)
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -188,7 +186,7 @@ func (ua *UnitAsset) orchestrateMultiple(w http.ResponseWriter, r *http.Request)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, err = w.Write(servLocation) // respond with the selected service location
+		_, err = w.Write(servLocation)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

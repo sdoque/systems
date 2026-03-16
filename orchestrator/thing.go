@@ -22,7 +22,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
@@ -35,51 +34,13 @@ import (
 // Traits are Asset-specific configurable parameters and variables
 type Traits struct {
 	leadingRegistrar string
+	owner            *components.System `json:"-"`
 }
-
-// UnitAsset type models the unit asset (interface) of the system.
-type UnitAsset struct {
-	Name        string              `json:"name"`
-	Owner       *components.System  `json:"-"`
-	Details     map[string][]string `json:"details"`
-	ServicesMap components.Services `json:"-"`
-	CervicesMap components.Cervices `json:"-"`
-	//
-	Traits
-}
-
-// GetName returns the name of the Resource.
-func (ua *UnitAsset) GetName() string {
-	return ua.Name
-}
-
-// GetServices returns the services of the Resource.
-func (ua *UnitAsset) GetServices() components.Services {
-	return ua.ServicesMap
-}
-
-// GetCervices returns the list of consumed services by the Resource.
-func (ua *UnitAsset) GetCervices() components.Cervices {
-	return ua.CervicesMap
-}
-
-// GetDetails returns the details of the Resource.
-func (ua *UnitAsset) GetDetails() map[string][]string {
-	return ua.Details
-}
-
-// GetTraits returns the traits of the Resource.
-func (ua *UnitAsset) GetTraits() any {
-	return ua.Traits
-}
-
-// ensure UnitAsset implements components.UnitAsset (this check is done at during the compilation)
-var _ components.UnitAsset = (*UnitAsset)(nil)
 
 //-------------------------------------Instantiate a unit asset template
 
 // initTemplate initializes a UnitAsset with default values.
-func initTemplate() components.UnitAsset {
+func initTemplate() *components.UnitAsset {
 	// Define the services that expose the capabilities of the unit asset(s)
 	squest := components.Service{
 		Definition:  "squest",
@@ -88,96 +49,61 @@ func initTemplate() components.UnitAsset {
 		Description: "looks for the desired service described in a quest form (POST)",
 	}
 
-	assetTraits := Traits{
-		leadingRegistrar: "", // Initialize the leading registrar to nil
-	}
-
-	// create the unit asset template
-	uat := &UnitAsset{
+	return &components.UnitAsset{
 		Name:    "orchestration",
 		Details: map[string][]string{"Platform": {"Independent"}},
-		Traits:  assetTraits,
+		Traits:  &Traits{},
 		ServicesMap: components.Services{
-			squest.SubPath: &squest, // Inline assignment of the temperature service
+			squest.SubPath: &squest,
 		},
 	}
-	return uat
 }
 
 //-------------------------------------Instantiate the unit assets based on configuration
 
 // newResource creates the Resource resource with its pointers and channels based on the configuration using the template
-func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {
-	// var ua components.UnitAsset // this is an interface, which we then initialize
-	ua := &UnitAsset{ // this is an interface, which we then initialize
+func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (*components.UnitAsset, func()) {
+	t := &Traits{
+		owner: sys,
+	}
+
+	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
+		Mission:     configuredAsset.Mission,
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
+		Traits:      t,
 	}
-
-	traits, err := UnmarshalTraits(configuredAsset.Traits)
-	if err != nil {
-		log.Println("Warning: could not unmarshal traits:", err)
-	} else if len(traits) > 0 {
-		ua.Traits = traits[0] // or handle multiple traits if needed
+	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
+		serving(t, w, r, servicePath)
 	}
-
-	// start the unit asset(s)
-	// no need to start the algorithm asset
 
 	return ua, func() {
 		log.Println("Ending orchestration services")
 	}
 }
 
-// UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
-func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
-	var traitsList []Traits
-	for _, raw := range rawTraits {
-		var t Traits
-		if err := json.Unmarshal(raw, &t); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
-		}
-		traitsList = append(traitsList, t)
-	}
-	return traitsList, nil
-}
-
 //-------------------------------------Thing's resource functions
 
 // getServiceURL retrieves the service URL for a given ServiceQuest_v1.
-// It first checks if the leading registrar is still valid and updates it if necessary.
-// If no leading registrar is found, it iterates through the system's core services
-// to find one.
-// Once a valid registrar is found, it sends a query to the registrar to get the
-// service URL.
-//
-// Parameters:
-// - newQuest: The ServiceQuest_v1 containing the service request details.
-//
-// Returns:
-// - servLoc: A byte slice containing the service location in JSON format.
-// - err: An error if any issues occur during the process.
-func (ua *UnitAsset) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []byte, err error) {
+func (t *Traits) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []byte, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	sys := ua.Owner
-	if ua.leadingRegistrar == "" {
-		ua.leadingRegistrar, err = components.GetRunningCoreSystemURL(sys, "serviceregistrar")
+	if t.leadingRegistrar == "" {
+		t.leadingRegistrar, err = components.GetRunningCoreSystemURL(t.owner, "serviceregistrar")
 		if err != nil {
 			return servLoc, err
 		}
 	}
 
-	// Create a new HTTP request to the the Service Registrar
 	mediaType := "application/json"
 	jsonQF, err := usecases.Pack(&newQuest, mediaType)
 	if err != nil {
 		return servLoc, err
 	}
 
-	srURL := ua.leadingRegistrar + "/query"
+	srURL := t.leadingRegistrar + "/query"
 	req, err := http.NewRequest(http.MethodPost, srURL, bytes.NewBuffer(jsonQF))
 	if err != nil {
 		return servLoc, err
@@ -187,7 +113,7 @@ func (ua *UnitAsset) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []by
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		ua.leadingRegistrar = ""
+		t.leadingRegistrar = ""
 		return servLoc, err
 	}
 	defer resp.Body.Close()
@@ -225,25 +151,23 @@ func selectService(serviceList forms.ServiceRecordList_v1) (sp forms.ServicePoin
 	return
 }
 
-func (ua *UnitAsset) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []byte, err error) {
+func (t *Traits) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []byte, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	sys := ua.Owner
-	if ua.leadingRegistrar == "" {
-		ua.leadingRegistrar, err = components.GetRunningCoreSystemURL(sys, "serviceregistrar")
+	if t.leadingRegistrar == "" {
+		t.leadingRegistrar, err = components.GetRunningCoreSystemURL(t.owner, "serviceregistrar")
 		if err != nil {
 			return servLoc, err
 		}
 	}
 
-	// Create a new HTTP request to the the Service Registrar
 	mediaType := "application/json"
 	jsonQF, err := usecases.Pack(&newQuest, mediaType)
 	if err != nil {
 		return servLoc, err
 	}
 
-	srURL := ua.leadingRegistrar + "/query"
+	srURL := t.leadingRegistrar + "/query"
 	req, err := http.NewRequest(http.MethodPost, srURL, bytes.NewBuffer(jsonQF))
 	if err != nil {
 		return servLoc, err
@@ -253,7 +177,7 @@ func (ua *UnitAsset) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []b
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		ua.leadingRegistrar = ""
+		t.leadingRegistrar = ""
 		return servLoc, err
 	}
 	defer resp.Body.Close()

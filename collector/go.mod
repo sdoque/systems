@@ -1,6 +1,6 @@
 module github.com/sdoque/systems/collector
 
-go 1.25.6
+go 1.25.8
 
 require (
 	github.com/influxdata/influxdb-client-go/v2 v2.14.0

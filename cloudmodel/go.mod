@@ -1,4 +1,4 @@
-module github.com/sdoque/systems/messenger
+module github.com/sdoque/systems/cloudmodel
 
 go 1.25.8
 

@@ -58,8 +58,7 @@ func main() {
 
 	// instantiate a template unit asset
 	assetTemplate := initTemplate()
-	assetName := assetTemplate.GetName()
-	sys.UAssets[assetName] = &assetTemplate
+	sys.UAssets[assetTemplate.GetName()] = assetTemplate
 
 	// Configure the system
 	rawResources, err := usecases.Configure(&sys)
@@ -74,7 +73,7 @@ func main() {
 		}
 		ua, cleanup := newResource(uac, &sys)
 		defer cleanup()
-		sys.UAssets[ua.GetName()] = &ua
+		sys.UAssets[ua.GetName()] = ua
 	}
 
 	// Generate PKI keys and CSR to obtain a authentication certificate from the CA
@@ -93,20 +92,20 @@ func main() {
 	time.Sleep(3 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
 }
 
-// Serving handles the resources services. NOTE: it exepcts those names from the request URL path
-func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {
-	svrs := ua.GetServices()
-	if svrs[servicePath] != nil {
-		ua.access(w, r, servicePath)
-	} else {
+// serving handles the resources services. NOTE: it expects those names from the request URL path
+func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
+	switch servicePath {
+	case "access":
+		t.access(w, r, servicePath)
+	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}
 }
 
-func (ua *UnitAsset) access(w http.ResponseWriter, r *http.Request, servicePath string) {
+func (t *Traits) access(w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch r.Method {
 	case "GET":
-		msg := ua.Message
+		msg := t.Message
 		if len(msg) > 0 {
 			w.WriteHeader(http.StatusOK)
 			w.Header().Set("Content-Type", "application/json")
@@ -115,22 +114,14 @@ func (ua *UnitAsset) access(w http.ResponseWriter, r *http.Request, servicePath 
 			http.Error(w, "The subscribed topic is not being published", http.StatusBadRequest)
 		}
 	case "PUT":
-		// data, err := io.ReadAll(r.Body)
-		// if err != nil {
-		// 	http.Error(w, "Failed to read request body", http.StatusBadRequest)
-		// 	return
-		// }
-		// defer r.Body.Close()
+		log.Printf("MQTT client is connected: %v", t.mClient.IsConnected())
 
-		// if err := ua.publishRaw(data); err != nil {
-		log.Printf("MQTT client is connected: %v", ua.mClient.IsConnected())
-
-		if err := ua.publishRaw([]byte(`{"test":123}`)); err != nil {
+		if err := t.publishRaw([]byte(`{"test":123}`)); err != nil {
 			log.Printf("Failed to publish: %v", err)
 			http.Error(w, "MQTT publish failed", http.StatusInternalServerError)
 			return
 		}
-		log.Printf("MQTT client is connected: %v", ua.mClient.IsConnected())
+		log.Printf("MQTT client is connected: %v", t.mClient.IsConnected())
 
 		w.WriteHeader(http.StatusAccepted)
 	default:

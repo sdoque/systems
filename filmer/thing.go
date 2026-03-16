@@ -18,7 +18,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -31,51 +30,14 @@ import (
 // -------------------------------------Define the unit asset
 // Traits are Asset-specific configurable parameters and variables
 type Traits struct {
+	owner *components.System `json:"-"`
+	name  string             `json:"-"`
 }
-
-// UnitAsset type models the unit asset (interface) of the system
-type UnitAsset struct {
-	Name        string              `json:"name"`
-	Owner       *components.System  `json:"-"`
-	Details     map[string][]string `json:"details"`
-	ServicesMap components.Services `json:"-"`
-	CervicesMap components.Cervices `json:"-"`
-	Traits
-}
-
-// GetName returns the name of the Resource.
-func (ua *UnitAsset) GetName() string {
-	return ua.Name
-}
-
-// GetServices returns the services of the Resource.
-func (ua *UnitAsset) GetServices() components.Services {
-	return ua.ServicesMap
-}
-
-// GetCervices returns the list of consumed services by the Resource.
-func (ua *UnitAsset) GetCervices() components.Cervices {
-	return ua.CervicesMap
-}
-
-// GetDetails returns the details of the Resource.
-func (ua *UnitAsset) GetDetails() map[string][]string {
-	return ua.Details
-}
-
-// GetTraits returns the traits of the Resource.
-func (ua *UnitAsset) GetTraits() any {
-	return ua.Traits
-}
-
-// ensure UnitAsset implements components.UnitAsset (this check is done at during the compilation)
-var _ components.UnitAsset = (*UnitAsset)(nil)
 
 //-------------------------------------Instantiate a unit asset template
 
 // initTemplate initializes a UnitAsset with default values.
-func initTemplate() components.UnitAsset {
-	// Define the services that expose the capabilities of the unit asset(s)
+func initTemplate() *components.UnitAsset {
 	stream := components.Service{
 		Definition:  "stream",
 		SubPath:     "start",
@@ -83,32 +45,36 @@ func initTemplate() components.UnitAsset {
 		Description: " provides a video stream from the camera",
 	}
 
-	// var uat components.UnitAsset // this is an interface, which we then initialize
-	uat := &UnitAsset{
+	return &components.UnitAsset{
 		Name:    "PiCam",
+		Mission: "capture_video",
 		Details: map[string][]string{"Model": {"PiCam v3 NoIR"}},
 		ServicesMap: components.Services{
-			stream.SubPath: &stream, // Inline assignment of the temperature service
+			stream.SubPath: &stream,
 		},
+		Traits: &Traits{},
 	}
-	return uat
 }
 
 //-------------------------------------Instantiate the unit assets based on configuration
 
 // newResource creates the Resource resource with its pointers and channels based on the configuration
-func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {
-	ua := &UnitAsset{ // this a struct that implements the UnitAsset interface
+func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (*components.UnitAsset, func()) {
+	t := &Traits{
+		owner: sys,
+		name:  configuredAsset.Name,
+	}
+
+	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
+		Mission:     configuredAsset.Mission,
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
+		Traits:      t,
 	}
-	traits, err := UnmarshalTraits(configuredAsset.Traits)
-	if err != nil {
-		log.Println("Warning: could not unmarshal traits:", err)
-	} else if len(traits) > 0 {
-		ua.Traits = traits[0] // or handle multiple traits if needed
+	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
+		serving(t, w, r, servicePath)
 	}
 
 	return ua, func() {
@@ -116,31 +82,17 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 }
 
-// UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
-func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
-	var traitsList []Traits
-	for _, raw := range rawTraits {
-		var t Traits
-		if err := json.Unmarshal(raw, &t); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
-		}
-		traitsList = append(traitsList, t)
-	}
-	return traitsList, nil
-}
-
 //-------------------------------------Unit asset's resource functions
 
 // StartStreamURL returns the URL to start the video stream.
-func (ua *UnitAsset) StartStreamURL() string {
-	ip := ua.Owner.Husk.Host.IPAddresses[0]
-	port := ua.Owner.Husk.ProtoPort["http"]
-	return fmt.Sprintf("http://%s:%d/filmer/%s/stream", ip, port, ua.Name)
+func (t *Traits) StartStreamURL() string {
+	ip := t.owner.Husk.Host.IPAddresses[0]
+	port := t.owner.Husk.ProtoPort["http"]
+	return fmt.Sprintf("http://%s:%d/filmer/%s/stream", ip, port, t.name)
 }
 
 // StreamTo streams the video from the camera to the HTTP response writer.
-// It uses libcamera-vid to capture video and sends it as a multipart MJPEG stream.
-func (ua *UnitAsset) StreamTo(w http.ResponseWriter, r *http.Request) {
+func (t *Traits) StreamTo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=frame")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -193,7 +145,7 @@ func (ua *UnitAsset) StreamTo(w http.ResponseWriter, r *http.Request) {
 				w.Write(frame)
 
 				if f, ok := w.(http.Flusher); ok {
-					f.Flush() // very important!
+					f.Flush()
 				}
 			} else {
 				break

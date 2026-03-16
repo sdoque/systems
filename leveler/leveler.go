@@ -58,8 +58,7 @@ func main() {
 
 	// instantiate a template unit asset
 	assetTemplate := initTemplate()
-	assetName := assetTemplate.GetName()
-	sys.UAssets[assetName] = &assetTemplate
+	sys.UAssets[assetTemplate.GetName()] = assetTemplate
 
 	// Configure the system
 	rawResources, err := usecases.Configure(&sys)
@@ -74,7 +73,7 @@ func main() {
 		}
 		ua, cleanup := newResource(uac, &sys)
 		defer cleanup()
-		sys.UAssets[ua.GetName()] = &ua
+		sys.UAssets[ua.GetName()] = ua
 	}
 
 	// Generate PKI keys and CSR to obtain a authentication certificate from the CA
@@ -93,8 +92,8 @@ func main() {
 	time.Sleep(2 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
 }
 
-// Serving handles the resources services. NOTE: it expects those names from the request URL path
-func (t *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {
+// serving handles the resources services. NOTE: it expects those names from the request URL path
+func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
 	case "setpoint":
 		t.setpt(w, r)
@@ -107,36 +106,36 @@ func (t *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath 
 	}
 }
 
-func (rsc *UnitAsset) setpt(w http.ResponseWriter, r *http.Request) {
+func (t *Traits) setpt(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		setPointForm := rsc.getSetPoint()
+		setPointForm := t.getSetPoint()
 		usecases.HTTPProcessGetRequest(w, r, &setPointForm)
 	case "PUT":
 		sig, err := usecases.HTTPProcessSetRequest(w, r)
 		if err != nil {
 			log.Println("Error with the setting request of the position ", err)
 		}
-		rsc.setSetPoint(sig)
+		t.setSetPoint(sig)
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}
 }
 
-func (rsc *UnitAsset) diff(w http.ResponseWriter, r *http.Request) {
+func (t *Traits) diff(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		signalErr := rsc.getError()
+		signalErr := t.getError()
 		usecases.HTTPProcessGetRequest(w, r, &signalErr)
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}
 }
 
-func (rsc *UnitAsset) variations(w http.ResponseWriter, r *http.Request) {
+func (t *Traits) variations(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		signalErr := rsc.getJitter()
+		signalErr := t.getJitter()
 		usecases.HTTPProcessGetRequest(w, r, &signalErr)
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)

@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
@@ -39,60 +40,23 @@ type ServiceTray struct {
 }
 
 // -------------------------------------Define the unit asset
+
 // Traits are Asset-specific configurable parameters
 type Traits struct {
-	Address  string  `json:"address"`  // Address of the IO
-	Value    float64 `json:"value"`    // Start up value of the IO
-	MinValue float64 `json:"minValue"` // Minimum value of the IO
-	MaxValue float64 `json:"maxValue"` // Maximum value of the IO
+	Address        string          `json:"address"`  // Address of the IO
+	Value          float64         `json:"value"`    // Start up value of the IO
+	MinValue       float64         `json:"minValue"` // Minimum value of the IO
+	MaxValue       float64         `json:"maxValue"` // Maximum value of the IO
+	tStamp         time.Time       `json:"-"`
+	serviceChannel chan ServiceTray `json:"-"`
+	outputChannel  chan float64     `json:"-"`
+	name           string          `json:"-"`
 }
-
-// UnitAsset type models the unit asset (interface) of the system.
-type UnitAsset struct {
-	Name        string              `json:"name"`
-	Owner       *components.System  `json:"-"`
-	Details     map[string][]string `json:"details"`
-	ServicesMap components.Services `json:"-"`
-	CervicesMap components.Cervices `json:"-"`
-	// Asset-specific parameters
-	Traits
-	tStamp         time.Time        `json:"-"`
-	serviceChannel chan ServiceTray `json:"-"` // Add a channel for signal reading
-	outputChannel  chan float64     `json:"-"` // Channel for output signals
-}
-
-// GetName returns the name of the Resource.
-func (ua *UnitAsset) GetName() string {
-	return ua.Name
-}
-
-// GetServices returns the services of the Resource.
-func (ua *UnitAsset) GetServices() components.Services {
-	return ua.ServicesMap
-}
-
-// GetCervices returns the list of consumed services by the Resource.
-func (ua *UnitAsset) GetCervices() components.Cervices {
-	return ua.CervicesMap
-}
-
-// GetDetails returns the details of the Resource.
-func (ua *UnitAsset) GetDetails() map[string][]string {
-	return ua.Details
-}
-
-// GetTraits returns the traits of the Resource.
-func (ua *UnitAsset) GetTraits() any {
-	return ua.Traits
-}
-
-// ensure UnitAsset implements components.UnitAsset (this check is done at during the compilation)
-var _ components.UnitAsset = (*UnitAsset)(nil)
 
 //-------------------------------------Instantiate a unit asset template
 
 // initTemplate initializes a UnitAsset with default values.
-func initTemplate() components.UnitAsset {
+func initTemplate() *components.UnitAsset {
 	// Define the services that expose the capabilities of the unit asset(s)
 	access := components.Service{
 		Definition:  "level",
@@ -102,68 +66,60 @@ func initTemplate() components.UnitAsset {
 		Description: "reads the input (GET) or changes the output (POST) of the channel",
 	}
 
-	// var uat components.UnitAsset // this is an interface, which we then initialize
-	uat := &UnitAsset{
+	return &components.UnitAsset{
 		Name:    "LevelSensor_1",
+		Mission: "measure_level",
 		Details: map[string][]string{"Unit": {"Percent"}, "Location": {"UpperTank"}, "Description": {"level"}},
-		Traits: Traits{
-			Address: "InputValue_1", // Default address for the Rev Pi AIO channel
-			Value:   0.0,            // Default value for the output
-		},
 		ServicesMap: components.Services{
-			access.SubPath: &access, // add the service to the map
+			access.SubPath: &access,
+		},
+		Traits: &Traits{
+			Address: "InputValue_1",
+			Value:   0.0,
 		},
 	}
-	return uat
 }
 
 //-------------------------------------Instantiate the unit assets based on configuration
 
 // newResource creates the Resource resource with its pointers and channels based on the configuration
-func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {
-	ua := &UnitAsset{ // this a struct that implements the UnitAsset interface
-		Name:           configuredAsset.Name,
-		Owner:          sys,
-		Details:        configuredAsset.Details,
-		ServicesMap:    usecases.MakeServiceMap(configuredAsset.Services),
-		serviceChannel: make(chan ServiceTray), // Initialize the channel
-		outputChannel:  make(chan float64),     // Initialize the output channel
+func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (*components.UnitAsset, func()) {
+	t := &Traits{
+		serviceChannel: make(chan ServiceTray),
+		outputChannel:  make(chan float64),
+		name:           configuredAsset.Name,
 	}
 
-	traits, err := UnmarshalTraits(configuredAsset.Traits)
-	if err != nil {
-		log.Println("Warning: could not unmarshal traits:", err)
-	} else if len(traits) > 0 {
-		ua.Traits = traits[0] // or handle multiple traits if needed
+	for _, raw := range configuredAsset.Traits {
+		if err := json.Unmarshal(raw, t); err != nil {
+			log.Println("Warning: could not unmarshal traits:", err)
+		}
+		break
 	}
 
-	// start the unit asset(s)
-	go ua.sampleSignal(sys.Ctx)
+	ua := &components.UnitAsset{
+		Name:        configuredAsset.Name,
+		Mission:     configuredAsset.Mission,
+		Owner:       sys,
+		Details:     configuredAsset.Details,
+		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
+		Traits:      t,
+	}
+	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
+		serving(t, w, r, servicePath)
+	}
+
+	go t.sampleSignal(sys.Ctx)
 
 	return ua, func() {
-		log.Printf("disconnecting from %s\n", ua.Name)
-		// close(ua.outputChannel)  // Ensure the output channel is closed when the goroutine exits
-		// close(ua.serviceChannel) // Ensure the channel is closed when the goroutine exits
+		log.Printf("disconnecting from %s\n", configuredAsset.Name)
 	}
-}
-
-// UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
-func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
-	var traitsList []Traits
-	for _, raw := range rawTraits {
-		var t Traits
-		if err := json.Unmarshal(raw, &t); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
-		}
-		traitsList = append(traitsList, t)
-	}
-	return traitsList, nil
 }
 
 //-------------------------------------Unit asset's functionalities
 
-// sampleSignal obtains the temperature from respective Rev Pi AIO resource at regular intervals
-func (ua *UnitAsset) sampleSignal(ctx context.Context) {
+// sampleSignal obtains the signal from the Rev Pi AIO resource at regular intervals
+func (t *Traits) sampleSignal(ctx context.Context) {
 	// Create a ticker that triggers every second
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop() // Clean up the ticker when done
@@ -180,13 +136,13 @@ func (ua *UnitAsset) sampleSignal(ctx context.Context) {
 				return
 
 			case <-ticker.C: // sample the signal at regular intervals
-				v, err := readInputVoltage(ua.Address)
+				v, err := readInputVoltage(t.Address)
 				if err != nil {
 					fmt.Println("Read error:", err)
 				} else {
-					fmt.Printf("%s = %.2f V\n", ua.Name, v/1000)
+					fmt.Printf("%s = %.2f V\n", t.name, v/1000)
 				}
-				nv := NormalizeToPercent(v, ua.MinValue, ua.MaxValue) // Normalize the value to a percentage
+				nv := NormalizeToPercent(v, t.MinValue, t.MaxValue)
 
 				// Send the sampled signal and timestamp back to the main loop
 				select {
@@ -202,23 +158,20 @@ func (ua *UnitAsset) sampleSignal(ctx context.Context) {
 	for {
 		select {
 		case sigValue := <-sigChan: // Update signal value and timestamp
-			ua.Value = sigValue
-			ua.tStamp = <-tStampChan
-		case order := <-ua.serviceChannel:
-			// switch order.Action {
-			// case "read":
-			// Send the latest signal value and timestamp to the channel
+			t.Value = sigValue
+			t.tStamp = <-tStampChan
+		case order := <-t.serviceChannel:
 			var f forms.SignalA_v1a
 			f.NewForm()
-			f.Value = ua.Value
+			f.Value = t.Value
 			f.Unit = "Percent"
-			f.Timestamp = ua.tStamp
+			f.Timestamp = t.tStamp
 			order.SampledDatum <- f
-		case requestedOutup := <-ua.outputChannel:
-			log.Printf("Received output request for %s: %.2f%%\n", ua.Name, requestedOutup)
-			rawValue := PercentToRaw(requestedOutup)
+		case requestedOutput := <-t.outputChannel:
+			log.Printf("Received output request for %s: %.2f%%\n", t.name, requestedOutput)
+			rawValue := PercentToRaw(requestedOutput)
 			log.Printf("Converted output value to raw: %d\n", rawValue)
-			err := writeOutput(ua.Address, rawValue)
+			err := writeOutput(t.Address, rawValue)
 			if err != nil {
 				fmt.Printf("Error writing output: %v\n", err)
 				return
@@ -268,10 +221,7 @@ func PercentToRaw(percent float64) int {
 
 // NormalizeToPercent normalizes a reading to a percentage based on the provided min and max values.
 func NormalizeToPercent(reading, min, max float64) float64 {
-	// if max == min {
-	// 	return 0 // or return NaN/error to avoid division by zero
-	// }
-	percent := reading / 100 //* (reading - min) / (max - min)
+	percent := reading / 100
 
 	// Clamp to [0, 100] in case reading is outside the expected range
 	if percent < 0 {

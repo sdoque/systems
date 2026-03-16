@@ -62,8 +62,7 @@ func main() {
 
 	// instantiate a template unit asset
 	assetTemplate := initTemplate()
-	assetName := assetTemplate.GetName()
-	sys.UAssets[assetName] = &assetTemplate
+	sys.UAssets[assetTemplate.GetName()] = assetTemplate
 
 	// Configure the system
 	rawResources, err := usecases.Configure(&sys)
@@ -79,8 +78,7 @@ func main() {
 		uas, cleanup := newResource(uac, &sys)
 		defer cleanup()
 		for _, ua := range uas {
-			var asset components.UnitAsset = ua
-			sys.UAssets[ua.GetName()] = &asset
+			sys.UAssets[ua.GetName()] = ua
 		}
 	}
 
@@ -100,21 +98,20 @@ func main() {
 	time.Sleep(3 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
 }
 
-// Serving handles the resources services. NOTE: it expects those names from the request URL path
-func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {
+// serving handles the resources services. NOTE: it expects those names from the request URL path
+func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
-
 	case "access":
-		ua.access(w, r)
+		t.access(w, r)
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}
 }
 
-func (ua *UnitAsset) access(w http.ResponseWriter, r *http.Request) {
+func (t *Traits) access(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		valueForm := ua.read()
+		valueForm := t.read()
 		usecases.HTTPProcessGetRequest(w, r, valueForm)
 	case "PUT":
 		contentType := r.Header.Get("Content-Type")
@@ -138,15 +135,13 @@ func (ua *UnitAsset) access(w http.ResponseWriter, r *http.Request) {
 		// Perform a type assertion to convert the received form to the expected type
 		switch ns := newState.(type) {
 		case *forms.SignalA_v1a:
-			// v is of type *forms.SignalA_v1a
 			fmt.Printf("Received analog signal: %.2f %s\n", ns.Value, ns.Unit)
-			ua.write(ns.Value)
+			t.write(ns.Value)
 		case *forms.SignalB_v1a:
-			// v is of type *forms.SignalB_v1a
 			fmt.Printf("Received digital signal: %v\n", ns.Value)
-			ua.write(ns.Value)
+			t.write(ns.Value)
 		default:
-			log.Printf("Problem unpacking the new value for %s: unsupported form type %T", ua.Name, ns)
+			log.Printf("Problem unpacking the new value for %s: unsupported form type %T", t.name, ns)
 			http.Error(w, "Unsupported form type", http.StatusBadRequest)
 			return
 		}

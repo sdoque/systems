@@ -37,7 +37,7 @@ func main() {
 	}
 
 	assetTemplate := initTemplate()
-	sys.UAssets[assetTemplate.GetName()] = &assetTemplate
+	sys.UAssets[assetTemplate.GetName()] = assetTemplate
 	rawResources, err := usecases.Configure(&sys)
 	if err != nil {
 		usecases.LogWarn(&sys, "configuration error: %v", err)
@@ -57,7 +57,7 @@ func main() {
 			return
 		}
 		defer cleanup()
-		sys.UAssets[ua.GetName()] = &ua
+		sys.UAssets[ua.GetName()] = ua
 	}
 
 	usecases.RequestCertificate(&sys)
@@ -69,18 +69,18 @@ func main() {
 	time.Sleep(2 * time.Second)
 }
 
-func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {
+func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
 	case "message":
-		ua.handleNewMessage(w, r)
+		t.handleNewMessage(w, r)
 	case "dashboard":
-		ua.handleDashboard(w, r)
+		t.handleDashboard(w, r)
 	default:
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 	}
 }
 
-func (ua *UnitAsset) handleNewMessage(w http.ResponseWriter, r *http.Request) {
+func (t *Traits) handleNewMessage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return
@@ -103,7 +103,7 @@ func (ua *UnitAsset) handleNewMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
-	ua.addMessage(*msg) // Don't want to have to deal with pointers, hence the *
+	t.addMessage(*msg) // Don't want to have to deal with pointers, hence the *
 }
 
 // Encapsulates the regular bytes.Buffer, in order to allow causing mock errors
@@ -125,12 +125,12 @@ func (mock *mockableBuffer) Write(body []byte) (int, error) {
 
 const testBufferHeader string = "x-testing-buffer"
 
-func (ua *UnitAsset) handleDashboard(w http.ResponseWriter, r *http.Request) {
+func (t *Traits) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return
 	}
-	errors, warnings, latest := ua.filterLogs()
+	errors, warnings, latest := t.filterLogs()
 	data := map[string]any{
 		"Errors":   errors,
 		"Warnings": warnings,
@@ -143,8 +143,8 @@ func (ua *UnitAsset) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		// This write error will cause an error in the template.Execute() below
 		buf.setWriteError(fmt.Errorf("mock error"))
 	}
-	if err := ua.tmplDashboard.Execute(buf, data); err != nil {
-		usecases.LogError(ua.Owner, "execute dashboard: %s", err)
+	if err := t.tmplDashboard.Execute(buf, data); err != nil {
+		usecases.LogError(t.owner, "execute dashboard: %s", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}

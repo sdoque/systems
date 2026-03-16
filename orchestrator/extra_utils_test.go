@@ -49,37 +49,18 @@ func createSystemWithUnitAsset() components.System {
 		Name: components.ServiceRegistrarName,
 		Url:  "http://localhost:20102/serviceregistrar/registry",
 	}
-	sys.Husk.CoreS = []*components.CoreSystem{
-		leadingRegistrar,
+	sys.Husk = &components.Husk{
+		CoreS: []*components.CoreSystem{leadingRegistrar},
 	}
 	return sys
 }
 
-func createUnitAsset() *UnitAsset {
-	// Define the services that expose the capabilities of the unit asset(s)
-	squest := components.Service{
-		Definition:  "squest",
-		SubPath:     "squest",
-		Details:     map[string][]string{"DefaultForm": {"ServiceRecord_v1"}, "Location": {"LocalCloud"}},
-		Description: "looks for the desired service described in a quest form (POST)",
-	}
-
-	// create the unit asset template
-	uat := &UnitAsset{
-		Name:    "orchestration",
-		Details: map[string][]string{"Platform": {"Independent"}},
-		ServicesMap: components.Services{
-			squest.SubPath: &squest, // Inline assignment of the temperature service
-		},
-		Traits: Traits{
-			leadingRegistrar: "", // Initialize the leading registrar to nil
-		},
-	}
-
+func createUnitAsset() *Traits {
 	sys := createSystemWithUnitAsset()
-	uat.Owner = &sys
-
-	return uat
+	return &Traits{
+		leadingRegistrar: "",
+		owner:            &sys,
+	}
 }
 
 type errorReader struct{}

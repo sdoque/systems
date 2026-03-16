@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -42,51 +43,13 @@ type Traits struct {
 	Address       string              `json:"-"`
 	Rights        string              `json:"-"`
 	DataType      string              `json:"-"`
+	name          string              `json:"-"` // asset name for logging
 }
-
-// UnitAsset type models the unit asset (interface) of the system
-type UnitAsset struct {
-	Name        string              `json:"assetName"`
-	Owner       *components.System  `json:"-"`
-	Details     map[string][]string `json:"details"`
-	ServicesMap components.Services `json:"-"`
-	CervicesMap components.Cervices `json:"-"`
-	//
-	Traits
-}
-
-// GetName returns the name of the Resource.
-func (ua *UnitAsset) GetName() string {
-	return ua.Name
-}
-
-// GetServices returns the services of the Resource.
-func (ua *UnitAsset) GetServices() components.Services {
-	return ua.ServicesMap
-}
-
-// GetCervices returns the list of consumed services by the Resource.
-func (ua *UnitAsset) GetCervices() components.Cervices {
-	return ua.CervicesMap
-}
-
-// GetDetails returns the details of the Resource.
-func (ua *UnitAsset) GetDetails() map[string][]string {
-	return ua.Details
-}
-
-// GetTraits returns the traits of the Resource.
-func (ua *UnitAsset) GetTraits() any {
-	return ua.Traits
-}
-
-// ensure UnitAsset implements components.UnitAsset (this check is done at during the compilation)
-var _ components.UnitAsset = (*UnitAsset)(nil)
 
 //-------------------------------------Instantiate a unit asset template
 
 // initTemplate initializes a UnitAsset with default values.
-func initTemplate() components.UnitAsset {
+func initTemplate() *components.UnitAsset {
 	// Define the services that expose the capabilities of the unit asset(s)
 	access := components.Service{
 		Definition:  "signal",
@@ -96,11 +59,13 @@ func initTemplate() components.UnitAsset {
 		Description: "accesses the Modbus slave's coil, discrete input, holding and input registers to read (GET) the information or write (PUT), ",
 	}
 
-	// var uat components.UnitAsset // this is an interface, which we then initialize
-	uat := &UnitAsset{
+	return &components.UnitAsset{
 		Name:    "PLC with Modbus slave",
 		Details: map[string][]string{"PLC": {"Wago"}, "Location": {"A2307"}},
-		Traits: Traits{
+		ServicesMap: components.Services{
+			access.SubPath: &access,
+		},
+		Traits: &Traits{
 			ServerAddress: "192.168.1.6:502",
 			RegisterMap: map[string][]string{
 				"coil": {
@@ -108,53 +73,45 @@ func initTemplate() components.UnitAsset {
 					"00002,ConveyorStop,rw,Boolean",
 					"00003,EmergencyStop,ro,Boolean",
 				},
-				"discreteInput": { // 100xxx with protocol offset
+				"discreteInput": {
 					"00001,MotorRunning,ro,Boolean",
 					"00002,LimitSwitchReached,ro,Boolean",
 					"00003,OverloadDetected,ro,Boolean",
 				},
-				"holdingRegister": { // 400xxx with protocol offset
+				"holdingRegister": {
 					"00001,TargetSpeed,rw,16-bit INT",
 					"00002,CurrentSpeed,ro,16-bit INT",
 					"00003,BatchCounter,rw,16-bit INT",
 				},
-				"inputRegister": { //3000xx with protocol offset
+				"inputRegister": {
 					"00002,TemperatureSensor2,ro,16-bit INT",
 					"00003,VibrationSensor,ro,16-bit INT",
 				},
 			},
 		},
-
-		ServicesMap: components.Services{
-			access.SubPath: &access,
-		},
 	}
-	return uat
 }
 
 //-------------------------------------Instantiate the unit assets based on configuration
 
 // newResource creates the Resource resource with its pointers and channels based on the configuration
-func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) ([]*UnitAsset, func()) {
-	ua := &UnitAsset{
-		Name:        configuredAsset.Name,
-		Owner:       sys,
-		Details:     configuredAsset.Details,
-		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
-		CervicesMap: make(map[string]*components.Cervice), // Initialize map
+func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) ([]*components.UnitAsset, func()) {
+	baseT := &Traits{}
+	if len(configuredAsset.Traits) > 0 {
+		for _, raw := range configuredAsset.Traits {
+			var t Traits
+			if err := json.Unmarshal(raw, &t); err != nil {
+				log.Println("Warning: could not unmarshal traits:", err)
+			} else {
+				baseT = &t
+				break
+			}
+		}
 	}
 
-	traits, err := UnmarshalTraits(configuredAsset.Traits)
-	if err != nil {
-		log.Println("Warning: could not unmarshal traits:", err)
-	} else if len(traits) > 0 {
-		ua.Traits = traits[0] // or handle multiple traits if needed
-	}
-
-	endpoint := ua.ServerAddress
+	endpoint := baseT.ServerAddress
 	fmt.Printf("Trying to connect to server @ %s\n", endpoint)
 
-	// Set a 5-second timeout
 	timeout := 5 * time.Second
 	slave, err := net.DialTimeout("tcp", endpoint, timeout)
 	if err != nil {
@@ -162,25 +119,25 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 	fmt.Println("Connected")
 
-	var assetCollection []*UnitAsset
-	for kind, gio := range ua.RegisterMap {
-		ioKind := typeOfIO(kind) //coil, discrete input, holding register or input register
+	var assetCollection []*components.UnitAsset
+	for kind, gio := range baseT.RegisterMap {
+		ioKind := typeOfIO(kind)
 		for _, str := range gio {
-			newAsset := &UnitAsset{} // Create a pointer to UnitAsset
-			newAsset.conn = &slave
-			newAsset.IOtype = ioKind
 			parts := strings.Split(str, ",")
 			if len(parts) < 4 {
 				log.Fatalf("Bad configuration of %s\n", ioKind)
 			}
-			newAsset.Address = parts[0]
-			newAsset.Name = parts[1]
-			newAsset.Rights = parts[2]
-			newAsset.DataType = parts[3]
-			newAsset.Owner = sys
-			// Deep copy ua.Details for each asset
+			t := &Traits{
+				conn:     &slave,
+				IOtype:   ioKind,
+				Address:  parts[0],
+				Rights:   parts[2],
+				DataType: parts[3],
+				name:     parts[1],
+			}
+
 			newDetails := make(map[string][]string)
-			for k, v := range ua.Details {
+			for k, v := range configuredAsset.Details {
 				newDetails[k] = v
 			}
 			if kind == "coil" || kind == "discreteInput" {
@@ -188,10 +145,21 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			} else {
 				newDetails["Forms"] = []string{"SignalA_v1a"}
 			}
-			newAsset.Details = newDetails
-			newAsset.ServicesMap = usecases.MakeServiceMap(configuredAsset.Services)
-			newAsset.ServicesMap["access"].Definition = newAsset.Name
-			assetCollection = append(assetCollection, newAsset)
+
+			ua := &components.UnitAsset{
+				Name:        parts[1],
+				Owner:       sys,
+				Details:     newDetails,
+				ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
+				Traits:      t,
+			}
+			ua.ServicesMap["access"].Definition = parts[1]
+			// Capture t for the closure
+			tc := t
+			ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
+				serving(tc, w, r, servicePath)
+			}
+			assetCollection = append(assetCollection, ua)
 		}
 	}
 
@@ -200,19 +168,6 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		fmt.Println("Closing the Modbus TCP connection")
 		_ = slave.Close()
 	}
-}
-
-// UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
-func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
-	var traitsList []Traits
-	for _, raw := range rawTraits {
-		var t Traits
-		if err := json.Unmarshal(raw, &t); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
-		}
-		traitsList = append(traitsList, t)
-	}
-	return traitsList, nil
 }
 
 // -------------------------------------Unit asset's function methods
@@ -250,10 +205,10 @@ func (iot ioType) String() string {
 	return dayNames[iot]
 }
 
-// Read reads the value of the unit asset
-func (ua *UnitAsset) read() (f forms.Form) {
+// read reads the value of the unit asset
+func (t *Traits) read() (f forms.Form) {
 	const unitID uint8 = 1 // Simplified Unit ID
-	address, err := strconv.ParseUint(ua.Address, 10, 16)
+	address, err := strconv.ParseUint(t.Address, 10, 16)
 	if err != nil {
 		log.Printf("Invalid address: %v", err)
 		return nil
@@ -267,7 +222,7 @@ func (ua *UnitAsset) read() (f forms.Form) {
 	request[6] = unitID                         // Unit ID
 
 	// Function code based on IO type
-	switch ua.IOtype {
+	switch t.IOtype {
 	case Coil:
 		request[7] = 1
 	case DiscreteInput:
@@ -277,14 +232,14 @@ func (ua *UnitAsset) read() (f forms.Form) {
 	case InputRegister:
 		request[7] = 4
 	default:
-		log.Printf("Unknown IO type: %v", ua.IOtype)
+		log.Printf("Unknown IO type: %v", t.IOtype)
 		return nil
 	}
 
 	binary.BigEndian.PutUint16(request[8:10], uint16(address))
 	binary.BigEndian.PutUint16(request[10:12], 1)
 
-	_, err = (*ua.conn).Write(request)
+	_, err = (*t.conn).Write(request)
 	if err != nil {
 		log.Printf("Failed to send request: %v", err)
 		return nil
@@ -294,7 +249,7 @@ func (ua *UnitAsset) read() (f forms.Form) {
 
 	// Read response
 	response := make([]byte, 256)
-	n, err := (*ua.conn).Read(response)
+	n, err := (*t.conn).Read(response)
 	if err != nil {
 		log.Printf("Failed to read response: %v", err)
 		return nil
@@ -319,12 +274,12 @@ func (ua *UnitAsset) read() (f forms.Form) {
 		if !ok {
 			desc = "Unknown Exception"
 		}
-		log.Printf("⚠️ Modbus exception for address %s: Function 0x%X, Code 0x%X (%s)", ua.Address, response[7], exceptionCode, desc)
+		log.Printf("⚠️ Modbus exception for address %s: Function 0x%X, Code 0x%X (%s)", t.Address, response[7], exceptionCode, desc)
 		return nil
 	}
 
 	// Parse response
-	if ua.IOtype == Coil || ua.IOtype == DiscreteInput {
+	if t.IOtype == Coil || t.IOtype == DiscreteInput {
 		status := response[9] & 0x01
 		fmt.Println("Binary value:", status)
 		var binaryForm forms.SignalB_v1a
@@ -332,7 +287,7 @@ func (ua *UnitAsset) read() (f forms.Form) {
 		binaryForm.Value = (status != 0)
 		binaryForm.Timestamp = time.Now()
 		f = &binaryForm
-	} else if ua.IOtype == HoldingRegister || ua.IOtype == InputRegister {
+	} else if t.IOtype == HoldingRegister || t.IOtype == InputRegister {
 		if n < 11 {
 			log.Printf("Incomplete response for register value (only %d bytes)", n)
 			return nil
@@ -350,11 +305,11 @@ func (ua *UnitAsset) read() (f forms.Form) {
 	return f
 }
 
-// Write writes the value of the unit asset (coil or holding register)
-func (ua *UnitAsset) write(value interface{}) error {
+// write writes the value of the unit asset (coil or holding register)
+func (t *Traits) write(value interface{}) error {
 	const unitID uint8 = 1 // same as in read()
 
-	address, err := strconv.ParseUint(ua.Address, 10, 16)
+	address, err := strconv.ParseUint(t.Address, 10, 16)
 	if err != nil {
 		return fmt.Errorf("invalid address: %v", err)
 	}
@@ -364,7 +319,7 @@ func (ua *UnitAsset) write(value interface{}) error {
 	binary.BigEndian.PutUint16(request[2:4], 0) // Protocol ID
 	request[6] = unitID                         // Unit ID
 
-	switch ua.IOtype {
+	switch t.IOtype {
 	case Coil:
 		// Function Code 5: Write Single Coil
 		request[7] = 5
@@ -398,12 +353,12 @@ func (ua *UnitAsset) write(value interface{}) error {
 		binary.BigEndian.PutUint16(request[10:12], uint16(intVal))
 
 	default:
-		return fmt.Errorf("write not supported for IO type %v", ua.IOtype)
+		return fmt.Errorf("write not supported for IO type %v", t.IOtype)
 	}
 
 	binary.BigEndian.PutUint16(request[4:6], 6) // Length: always 6 bytes after header
 
-	_, err = (*ua.conn).Write(request)
+	_, err = (*t.conn).Write(request)
 	if err != nil {
 		return fmt.Errorf("failed to send write request: %v", err)
 	}
@@ -412,7 +367,7 @@ func (ua *UnitAsset) write(value interface{}) error {
 
 	// Read response
 	response := make([]byte, 256)
-	n, err := (*ua.conn).Read(response)
+	n, err := (*t.conn).Read(response)
 	if err != nil || n < 12 {
 		return fmt.Errorf("failed to read response or response too short: %v", err)
 	}

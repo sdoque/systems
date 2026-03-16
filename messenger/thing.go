@@ -35,30 +35,16 @@ func (m message) String() string {
 	)
 }
 
-type UnitAsset struct {
-	Name        string              `json:"name"`
-	Owner       *components.System  `json:"-"`
-	Details     map[string][]string `json:"details"`
-	ServicesMap components.Services `json:"-"`
-	CervicesMap components.Cervices `json:"-"`
-
+// Traits holds the asset-specific runtime state for the messenger
+type Traits struct {
 	cachedRegMsg  []byte               // Caches the MessengerRegistration form
 	messages      map[string][]message // Per system msg log
 	mutex         sync.RWMutex         // Protects concurrent access to previous field
 	tmplDashboard *template.Template   // The HTML template loaded from file
+	owner         *components.System
 }
 
-func (ua *UnitAsset) GetName() string { return ua.Name }
-
-func (ua *UnitAsset) GetServices() components.Services { return ua.ServicesMap }
-
-func (ua *UnitAsset) GetCervices() components.Cervices { return ua.CervicesMap }
-
-func (ua *UnitAsset) GetDetails() map[string][]string { return ua.Details }
-
-var _ components.UnitAsset = (*UnitAsset)(nil)
-
-func initTemplate() components.UnitAsset {
+func initTemplate() *components.UnitAsset {
 	service := components.Service{
 		Definition:  "message",
 		SubPath:     "message",
@@ -66,7 +52,7 @@ func initTemplate() components.UnitAsset {
 		RegPeriod:   30,
 		Description: "stores a new message in the log database",
 	}
-	return &UnitAsset{
+	return &components.UnitAsset{
 		Name:        "log",
 		Details:     map[string][]string{},
 		ServicesMap: components.Services{service.SubPath: &service},
@@ -78,25 +64,34 @@ func initTemplate() components.UnitAsset {
 //go:embed dashboard.html
 var tmplDashboard string
 
-func newResource(ca usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func(), error) {
-	ua := &UnitAsset{
+func newResource(ca usecases.ConfigurableAsset, sys *components.System) (*components.UnitAsset, func(), error) {
+	t := &Traits{
+		messages: make(map[string][]message),
+		owner:    sys,
+	}
+	ua := &components.UnitAsset{
 		Name:        ca.Name,
 		Owner:       sys,
 		Details:     ca.Details,
 		ServicesMap: usecases.MakeServiceMap(ca.Services),
-		messages:    make(map[string][]message),
+		Traits:      t,
 	}
 
 	var err error
-	ua.tmplDashboard, err = template.New("dashboard").Parse(tmplDashboard)
+	t.tmplDashboard, err = template.New("dashboard").Parse(tmplDashboard)
 	if err != nil {
 		return nil, nil, err
 	}
-	ua.cachedRegMsg, err = newRegMsg(sys)
+	t.cachedRegMsg, err = newRegMsg(sys)
 	if err != nil {
 		return nil, nil, err
 	}
-	go ua.runBeacon()
+
+	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
+		serving(t, w, r, servicePath)
+	}
+
+	go t.runBeacon()
 	f := func() {}
 	return ua, f, nil
 }
@@ -110,7 +105,7 @@ func newRegMsg(sys *components.System) ([]byte, error) {
 	// in getUniqueSystems(). Using url.URL instead for safer string assembly.
 	// https://github.com/lmas/mbaigo_systems/blob/dev/esr/thing.go#L404-L407
 	var systemURL url.URL
-	systemURL.Host = sys.Host.IPAddresses[0]
+	systemURL.Host = sys.Husk.Host.IPAddresses[0]
 	systemURL.Scheme = "https"
 	port := sys.Husk.ProtoPort[systemURL.Scheme]
 	if port == 0 {
@@ -130,16 +125,16 @@ const beaconPeriod int = 30
 
 // runBeacon runs periodically in the background (in a goroutine at startup).
 // It fetches a list of systems and then sends out a MessengerRegistration to each.
-func (ua *UnitAsset) runBeacon() {
+func (t *Traits) runBeacon() {
 	for {
-		systems, err := ua.fetchSystems()
+		systems, err := t.fetchSystems()
 		if err != nil {
-			usecases.LogInfo(ua.Owner, "error fetching system list: %s", err)
+			usecases.LogInfo(t.owner, "error fetching system list: %s", err)
 		}
-		ua.notifySystems(systems)
+		t.notifySystems(systems)
 		select {
 		case <-time.Tick(time.Duration(beaconPeriod) * time.Second):
-		case <-ua.Owner.Ctx.Done():
+		case <-t.owner.Ctx.Done():
 			return
 		}
 	}
@@ -165,9 +160,9 @@ func sendRequest(method, url string, body []byte) ([]byte, error) {
 }
 
 // fetchSystems asks the registrar for a list of online systems.
-func (ua *UnitAsset) fetchSystems() (systems []string, err error) {
+func (t *Traits) fetchSystems() (systems []string, err error) {
 	url, err := components.GetRunningCoreSystemURL(
-		ua.Owner, components.ServiceRegistrarName)
+		t.owner, components.ServiceRegistrarName)
 	if err != nil {
 		return
 	}
@@ -189,18 +184,18 @@ func (ua *UnitAsset) fetchSystems() (systems []string, err error) {
 
 // notifySystems sends a pre-packed MessengerRegistration form to a list of online systems.
 // Any systems with incorrect URLs, any messengers, and any http errors will be ignored.
-func (ua *UnitAsset) notifySystems(list []string) {
+func (t *Traits) notifySystems(list []string) {
 	for _, sys := range list {
 		sysURL, err := url.Parse(sys)
 		if err != nil {
 			continue // Skip misconfigured systems
 		}
-		if strings.HasPrefix(sysURL.Path, "/"+ua.Owner.Name) {
+		if strings.HasPrefix(sysURL.Path, "/"+t.owner.Name) {
 			continue // Skip itself and other messengers
 		}
 		// Don't care about any errors or any systems that don't want to talk with us
 		// (using empty variable names to shut up the linter warning about unhandled errors)
-		_, _ = sendRequest("POST", sys+"/msg", ua.cachedRegMsg)
+		_, _ = sendRequest("POST", sys+"/msg", t.cachedRegMsg)
 	}
 }
 
@@ -209,18 +204,18 @@ const maxMessages int = 10
 // addMessage adds the new message m to a system's log and optionally removes the
 // oldest, if the log's size is larger than maxMessages.
 // Note that this function sets the timestamp of the incoming msg too.
-func (ua *UnitAsset) addMessage(msg forms.SystemMessage_v1) {
-	ua.mutex.Lock()
-	defer ua.mutex.Unlock()
-	ua.messages[msg.System] = append(ua.messages[msg.System], message{
+func (t *Traits) addMessage(msg forms.SystemMessage_v1) {
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	t.messages[msg.System] = append(t.messages[msg.System], message{
 		time:   time.Now(),
 		level:  msg.Level,
 		system: msg.System,
 		body:   msg.Body,
 	})
-	if len(ua.messages[msg.System]) > maxMessages {
+	if len(t.messages[msg.System]) > maxMessages {
 		// Strips the oldest msg from the front of the slice
-		ua.messages[msg.System] = ua.messages[msg.System][1:]
+		t.messages[msg.System] = t.messages[msg.System][1:]
 	}
 }
 
@@ -230,12 +225,12 @@ func (ua *UnitAsset) addMessage(msg forms.SystemMessage_v1) {
 // chronological order.
 // NOTE: No tests are provided for this function, as it's most likely subject
 // to later changes.
-func (ua *UnitAsset) filterLogs() (errors, warnings map[string]message, all []message) {
+func (t *Traits) filterLogs() (errors, warnings map[string]message, all []message) {
 	errors = make(map[string]message)
 	warnings = make(map[string]message)
-	ua.mutex.RLock()
-	for system := range ua.messages {
-		for _, msg := range ua.messages[system] {
+	t.mutex.RLock()
+	for system := range t.messages {
+		for _, msg := range t.messages[system] {
 			all = append(all, msg)
 			switch msg.level {
 			case forms.LevelError:
@@ -245,7 +240,7 @@ func (ua *UnitAsset) filterLogs() (errors, warnings map[string]message, all []me
 			}
 		}
 	}
-	ua.mutex.RUnlock()
+	t.mutex.RUnlock()
 	// Reverse order
 	sort.Slice(all, func(i, j int) bool {
 		return all[i].time.After(all[j].time)

@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -43,57 +44,19 @@ type STray struct {
 }
 
 // -------------------------------------Define the unit asset
+
 // Traits are Asset-specific configurable parameters
 type Traits struct {
 	InputFile string    `json:"inputFile"`
 	sample    float64   `json:"-"`
 	tStamp    time.Time `json:"-"`
+	trayChan  chan STray `json:"-"`
 }
-
-// UnitAsset type models the unit asset (interface) of the system.
-type UnitAsset struct {
-	Name        string              `json:"name"`
-	Owner       *components.System  `json:"-"`
-	Details     map[string][]string `json:"details"`
-	ServicesMap components.Services `json:"-"`
-	CervicesMap components.Cervices `json:"-"`
-	//
-	Traits
-	trayChan chan STray `json:"-"` // Add a channel for samples signal information transfer
-}
-
-// GetName returns the name of the Resource.
-func (ua *UnitAsset) GetName() string {
-	return ua.Name
-}
-
-// GetServices returns the services of the Resource.
-func (ua *UnitAsset) GetServices() components.Services {
-	return ua.ServicesMap
-}
-
-// GetCervices returns the list of consumed services by the Resource.
-func (ua *UnitAsset) GetCervices() components.Cervices {
-	return ua.CervicesMap
-}
-
-// GetDetails returns the details of the Resource.
-func (ua *UnitAsset) GetDetails() map[string][]string {
-	return ua.Details
-}
-
-// GetTraits returns the traits of the Resource.
-func (ua *UnitAsset) GetTraits() any {
-	return ua.Traits
-}
-
-// ensure UnitAsset implements components.UnitAsset (this check is done at during the compilation)
-var _ components.UnitAsset = (*UnitAsset)(nil)
 
 //-------------------------------------Instantiate a unit asset template
 
 // initTemplate initializes a UnitAsset with default values.
-func initTemplate() components.UnitAsset {
+func initTemplate() *components.UnitAsset {
 	// Define the services that expose the capabilities of the unit asset(s)
 	stream := components.Service{
 		Definition:  "signal",
@@ -103,59 +66,51 @@ func initTemplate() components.UnitAsset {
 		Description: "provides the (value, timestamp) signal as a service from the input file",
 	}
 
-	assetTraits := Traits{
-		InputFile: "data/signal_data.json",
-	}
-
-	// var uat components.UnitAsset // this is an interface, which we then initialize
-	uat := &UnitAsset{
+	return &components.UnitAsset{
 		Name:    "signal",
+		Mission: "replay_signal",
 		Details: map[string][]string{"Unit": {"Celsius"}, "Location": {"Kitchen"}},
-		Traits:  assetTraits,
 		ServicesMap: components.Services{
 			stream.SubPath: &stream,
 		},
+		Traits: &Traits{
+			InputFile: "data/signal_data.json",
+		},
 	}
-	return uat
 }
 
 //-------------------------------------Instantiate the unit assets based on configuration
 
 // newResource creates the Resource resource with its pointers and channels based on the configuration
-func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {
-	ua := &UnitAsset{ // this a struct that implements the UnitAsset interface
+func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (*components.UnitAsset, func()) {
+	t := &Traits{
+		trayChan: make(chan STray),
+	}
+
+	for _, raw := range configuredAsset.Traits {
+		if err := json.Unmarshal(raw, t); err != nil {
+			log.Println("Warning: could not unmarshal traits:", err)
+		}
+		break
+	}
+
+	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
+		Mission:     configuredAsset.Mission,
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
-		trayChan:    make(chan STray), // Initialize the channel
+		Traits:      t,
+	}
+	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
+		serving(t, w, r, servicePath)
 	}
 
-	traits, err := UnmarshalTraits(configuredAsset.Traits)
-	if err != nil {
-		log.Println("Warning: could not unmarshal traits:", err)
-	} else if len(traits) > 0 {
-		ua.Traits = traits[0] // or handle multiple traits if needed
-	}
-	// start the unit asset(s)
-	go ua.emulateAsset(sys.Ctx)
+	go t.emulateAsset(sys.Ctx, configuredAsset.Details)
 
 	return ua, func() {
-		log.Printf("disconnecting from %s\n", ua.Name)
+		log.Printf("disconnecting from %s\n", configuredAsset.Name)
 	}
-}
-
-// UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
-func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
-	var traitsList []Traits
-	for _, raw := range rawTraits {
-		var t Traits
-		if err := json.Unmarshal(raw, &t); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
-		}
-		traitsList = append(traitsList, t)
-	}
-	return traitsList, nil
 }
 
 //-------------------------------------Unit asset's functionalities
@@ -173,20 +128,20 @@ type XMLSamples struct {
 }
 
 // emulateAsset runs the emulation loop for the unit asset.
-func (ua *UnitAsset) emulateAsset(ctx context.Context) {
-	samples, err := loadSamples(ua.InputFile)
+func (t *Traits) emulateAsset(ctx context.Context, details map[string][]string) {
+	samples, err := loadSamples(t.InputFile)
 	if err != nil {
-		log.Fatalf("failed to load samples from %s: %v", ua.InputFile, err)
+		log.Fatalf("failed to load samples from %s: %v", t.InputFile, err)
 	}
 	if len(samples) == 0 {
-		log.Fatalf("no samples found in %s", ua.InputFile)
+		log.Fatalf("no samples found in %s", t.InputFile)
 	}
 
 	interval := detectInterval(samples)
 
 	var sigUnit string
-	if ua.Details != nil {
-		if sigU, ok := ua.Details["Unit"]; ok && len(sigU) > 0 {
+	if details != nil {
+		if sigU, ok := details["Unit"]; ok && len(sigU) > 0 {
 			sigUnit = sigU[0]
 		}
 	}
@@ -196,8 +151,8 @@ func (ua *UnitAsset) emulateAsset(ctx context.Context) {
 
 	i := 0
 	// initialize immediately
-	ua.sample = samples[i].Value
-	ua.tStamp = time.Now()
+	t.sample = samples[i].Value
+	t.tStamp = time.Now()
 
 	for {
 		select {
@@ -205,16 +160,16 @@ func (ua *UnitAsset) emulateAsset(ctx context.Context) {
 			return
 
 		case <-ticker.C:
-			i = (i + 1) % len(samples) // or stop at end if you prefer
-			ua.sample = samples[i].Value
-			ua.tStamp = time.Now()
+			i = (i + 1) % len(samples)
+			t.sample = samples[i].Value
+			t.tStamp = time.Now()
 
-		case order := <-ua.trayChan:
+		case order := <-t.trayChan:
 			var f forms.SignalA_v1a
 			f.NewForm()
-			f.Value = ua.sample
+			f.Value = t.sample
 			f.Unit = sigUnit
-			f.Timestamp = ua.tStamp
+			f.Timestamp = t.tStamp
 			order.ValueP <- f
 		}
 	}

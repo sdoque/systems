@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
 	"time"
 
@@ -48,52 +49,14 @@ type Traits struct {
 	Topic    string      `json:"-"`      // Topic is the MQTT topic to which the unit asset subscribes or publishes
 	Period   int         `json:"period"` // Period is the time interval for periodic service consumption, e.g., 30 seconds
 	Message  []byte      `json:"-"`
+	owner    *components.System  `json:"-"`
+	cervices components.Cervices `json:"-"`
 }
-
-// UnitAsset type models the unit asset (interface) of the system
-type UnitAsset struct {
-	Name        string              `json:"topic"`
-	Owner       *components.System  `json:"-"`
-	Details     map[string][]string `json:"details"`
-	ServicesMap components.Services `json:"-"`
-	CervicesMap components.Cervices `json:"-"`
-	//
-	Traits
-}
-
-// GetName returns the name of the Resource.
-func (ua *UnitAsset) GetName() string {
-	return ua.Name
-}
-
-// GetServices returns the services of the Resource.
-func (ua *UnitAsset) GetServices() components.Services {
-	return ua.ServicesMap
-}
-
-// GetCervices returns the list of consumed services by the Resource.
-func (ua *UnitAsset) GetCervices() components.Cervices {
-	return ua.CervicesMap
-}
-
-// GetDetails returns the details of the Resource.
-func (ua *UnitAsset) GetDetails() map[string][]string {
-	return ua.Details
-}
-
-// GetTraits returns the traits of the Resource.
-func (ua *UnitAsset) GetTraits() any {
-	return ua.Traits
-}
-
-// ensure UnitAsset implements components.UnitAsset (this check is done at during the compilation)
-var _ components.UnitAsset = (*UnitAsset)(nil)
 
 //-------------------------------------Instantiate a unit asset template
 
 // initTemplate initializes a UnitAsset with default values.
-func initTemplate() components.UnitAsset {
-	// Define the services that expose the capabilities of the unit asset(s)
+func initTemplate() *components.UnitAsset {
 	access := components.Service{
 		Definition:  "temperature",
 		SubPath:     "access",
@@ -102,30 +65,27 @@ func initTemplate() components.UnitAsset {
 		Description: "Read the current topic message (GET) or publish to it (PUT)",
 	}
 
-	assetTraits := Traits{
-		Broker:   "tcp://localhost:1883",
-		Username: "user",
-		Password: "password",
-		// Topic:    "kitchen/temperature", // Default topics
-		Pattern: []string{"Room"}, // Default patterns e.g. "House", "Room" as in "MyHouse/Kitchen"
-		Period:  -1,               // a negative value indicates that the unit asset subscribe to the topic and does not publish periodically
-	}
-
-	uat := &UnitAsset{
+	return &components.UnitAsset{
 		Name:    "Kitchen/temperature",
+		Mission: "passon_message",
 		Details: map[string][]string{"mqtt": {"home"}},
-		Traits:  assetTraits,
 		ServicesMap: components.Services{
 			access.SubPath: &access,
 		},
+		Traits: &Traits{
+			Broker:   "tcp://localhost:1883",
+			Username: "user",
+			Password: "password",
+			Pattern:  []string{"Room"},
+			Period:   -1,
+		},
 	}
-	return uat
 }
 
 //-------------------------------------Instantiate the unit assets based on configuration
 
 // newResource creates the Resource resource with its pointers and channels based on the configuration using the tConig structs
-func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {
+func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (*components.UnitAsset, func()) {
 	topic := configuredAsset.Name
 	lastSlashIndex := strings.LastIndex(topic, "/")
 	if lastSlashIndex == -1 {
@@ -135,55 +95,56 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	asset := topic[:lastSlashIndex]
 	service := topic[lastSlashIndex+1:]
 	assetName := strings.ReplaceAll(asset, "/", "_")
-	// instantiate the unit asset
-	ua := &UnitAsset{
-		Name:    assetName,
-		Owner:   sys,
-		Details: configuredAsset.Details,
-		// ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
+
+	t := &Traits{
+		owner: sys,
 	}
 
-	traits, err := UnmarshalTraits(configuredAsset.Traits)
-	if err != nil {
-		log.Println("Warning: could not unmarshal traits:", err)
-	} else if len(traits) > 0 {
-		ua.Traits = traits[0] // or handle multiple traits if needed
+	for _, raw := range configuredAsset.Traits {
+		if err := json.Unmarshal(raw, t); err != nil {
+			log.Println("Warning: could not unmarshal traits:", err)
+		}
+		break
 	}
 
-	ua.Topic = topic
-	// Validate the traits and topic
-	if len(ua.Pattern) <= 0 {
+	t.Topic = topic
+
+	if len(t.Pattern) <= 0 {
 		log.Fatal("Error: UnitAsset must have at least one pattern defined in Traits")
 	}
 
 	// Fill Details from pattern and topic
 	metaDetails := strings.Split(asset, "/")
 	topicDetrails := make(map[string][]string)
-	for i := 0; i < len(ua.Pattern) && i < len(metaDetails); i++ {
-		topicDetrails[ua.Pattern[i]] = append(ua.Details[ua.Pattern[i]], metaDetails[i])
+	for i := 0; i < len(t.Pattern) && i < len(metaDetails); i++ {
+		topicDetrails[t.Pattern[i]] = append(configuredAsset.Details[t.Pattern[i]], metaDetails[i])
 	}
-	if ua.Details == nil {
-		ua.Details = make(map[string][]string)
+	if configuredAsset.Details == nil {
+		configuredAsset.Details = make(map[string][]string)
 	}
-	ua.Details = components.MergeDetails(ua.Details, topicDetrails)
+	configuredAsset.Details = components.MergeDetails(configuredAsset.Details, topicDetrails)
+
+	ua := &components.UnitAsset{
+		Name:    assetName,
+		Owner:   sys,
+		Details: configuredAsset.Details,
+		Traits:  t,
+	}
 
 	// Make the topic an Arrowhead service (since we are subscribing to it)
-	if ua.Period < 0 {
+	if t.Period < 0 {
 		access := components.Service{
 			Definition:  service,
 			SubPath:     "access",
-			Details:     map[string][]string{"forms": {"mqttPayload"}}, // TODO: this logic needs to be reviewed
+			Details:     map[string][]string{"forms": {"mqttPayload"}},
 			RegPeriod:   30,
 			Description: "Read the current topic message (GET) or publish to it (PUT)",
 		}
-		if ua.ServicesMap == nil {
-			ua.ServicesMap = make(components.Services)
-		}
-		ua.ServicesMap[access.SubPath] = &access
+		ua.ServicesMap = components.Services{access.SubPath: &access}
 	}
 
 	// Make the topic a consumed service to be published (since we are consuming it)
-	if ua.Period >= 0 {
+	if t.Period >= 0 {
 		sProtocols := components.SProtocols(sys.Husk.ProtoPort)
 		newCervice := &components.Cervice{
 			Definition: service,
@@ -191,18 +152,21 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			Nodes:      make(map[string][]string),
 		}
 		newCervice.Details = topicDetrails
-		if ua.CervicesMap == nil {
-			ua.CervicesMap = make(components.Cervices)
-		}
-		ua.CervicesMap[newCervice.Definition] = newCervice
+		cervMap := components.Cervices{newCervice.Definition: newCervice}
+		t.cervices = cervMap
+		ua.CervicesMap = cervMap
+	}
+
+	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
+		serving(t, w, r, servicePath)
 	}
 
 	// Create MQTT client options
 	opts := mqtt.NewClientOptions()
-	opts.AddBroker(ua.Broker)
-	if ua.Username != "" { // Password can be empty string for some brokers
-		opts.SetUsername(ua.Username)
-		opts.SetPassword(ua.Password)
+	opts.AddBroker(t.Broker)
+	if t.Username != "" {
+		opts.SetUsername(t.Username)
+		opts.SetPassword(t.Password)
 	}
 	opts.SetConnectionLostHandler(func(client mqtt.Client, err error) {
 		log.Printf("Connection lost: %v", err)
@@ -211,101 +175,86 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		log.Println("MQTT connection established")
 	})
 
-	// Create and start the MQTT connection
-	log.Println("Connecting to broker:", ua.Traits.Broker)
-	ua.mClient = mqtt.NewClient(opts)
-	if token := ua.mClient.Connect(); token.Wait() && token.Error() != nil {
+	log.Println("Connecting to broker:", t.Broker)
+	t.mClient = mqtt.NewClient(opts)
+	if token := t.mClient.Connect(); token.Wait() && token.Error() != nil {
 		log.Fatalf("Error connecting to MQTT broker: %v", token.Error())
 	}
 
 	log.Println("Connected to MQTT broker")
 
-	// Define the message handler callback if subscribing to a topic
-	if ua.Period < 0 {
+	if t.Period < 0 {
 		messageHandler := func(client mqtt.Client, msg mqtt.Message) {
 			fmt.Printf("Received message: %s from topic: %s\n", msg.Payload(), msg.Topic())
 
-			// Ensure the map is initialized (just in case)
 			if messageList == nil {
 				messageList = make(map[string][]byte)
 			}
-			ua.Message = msg.Payload() // Assign message to topic in the map
+			t.Message = msg.Payload()
 		}
 
-		// Subscribe to the topic
-		if token := ua.mClient.Subscribe(topic, 0, messageHandler); token.Wait() && token.Error() != nil {
+		if token := t.mClient.Subscribe(topic, 0, messageHandler); token.Wait() && token.Error() != nil {
 			log.Fatalf("Error subscribing to topic: %v", token.Error())
 		}
 		fmt.Printf("Subscribed to topic: %s\n", topic)
 	}
-	// Periodically publish a message to the topic
-	if ua.Period > 0 {
-		go func(ua *UnitAsset) {
-			ticker := time.NewTicker(time.Duration(ua.Period) * time.Second)
+
+	if t.Period > 0 {
+		go func() {
+			ticker := time.NewTicker(time.Duration(t.Period) * time.Second)
 			defer ticker.Stop()
 			for {
 				select {
 				case <-ticker.C:
-					payload, err := usecases.GetState(ua.CervicesMap[service], ua.Owner)
+					payload, err := usecases.GetState(t.cervices[service], t.owner)
 					if err != nil {
 						log.Printf("\nUnable to obtain a %s reading with error %s\n", service, err)
-						continue // return fmt.Errorf("unsupported measurement: %s", name)
+						continue
 					}
 					fmt.Printf("%+v\n", payload)
-					payload, ok := payload.(*forms.SignalA_v1a)
+					sigForm, ok := payload.(*forms.SignalA_v1a)
 					if !ok {
 						log.Println("Problem unpacking the signal form")
-						continue // return fmt.Errorf("problem unpacking measurement: %s", name)
+						continue
 					}
-					message, err := usecases.Pack(payload, "application/json")
-					if err := ua.publishRaw(message); err != nil {
-						log.Printf("Periodic publish failed for topic %s: %v", ua.Topic, err)
+					message, err := usecases.Pack(sigForm, "application/json")
+					if err != nil {
+						log.Printf("Failed to pack signal form: %v", err)
+						continue
+					}
+					if err := t.publishRaw(message); err != nil {
+						log.Printf("Periodic publish failed for topic %s: %v", t.Topic, err)
 					} else {
-						log.Printf("Periodic message sent to topic %s", ua.Topic)
+						log.Printf("Periodic message sent to topic %s", t.Topic)
 					}
-				case <-sys.Ctx.Done():
-					log.Printf("Stopping periodic publishing for %s", ua.Topic)
+				case <-t.owner.Ctx.Done():
+					log.Printf("Stopping periodic publishing for %s", t.Topic)
 					return
 				}
 			}
-		}(ua)
+		}()
 	}
 
 	return ua, func() {
 		log.Println("Disconnecting from MQTT broker")
-		ua.mClient.Disconnect(250)
+		t.mClient.Disconnect(250)
 	}
-}
-
-// UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
-func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
-	var traitsList []Traits
-	for _, raw := range rawTraits {
-		var t Traits
-		if err := json.Unmarshal(raw, &t); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
-		}
-		traitsList = append(traitsList, t)
-	}
-	return traitsList, nil
 }
 
 //-------------------------------------Unit asset's resource functions
 
 // publishToTopic publishes a payload to the MQTT topic of the unit asset.
-func (ua *UnitAsset) publishToTopic(payload map[string]interface{}, contentType string) error {
-	if ua.mClient == nil {
+func (t *Traits) publishToTopic(payload map[string]interface{}, contentType string) error {
+	if t.mClient == nil {
 		return fmt.Errorf("MQTT client not initialized")
 	}
 
-	// Serialize the message based on content type
 	var data []byte
 	var err error
 	switch contentType {
 	case "application/json":
 		data, err = json.Marshal(payload)
 	default:
-		// Fallback to JSON encoding for now
 		data, err = json.Marshal(payload)
 	}
 	if err != nil {
@@ -313,7 +262,7 @@ func (ua *UnitAsset) publishToTopic(payload map[string]interface{}, contentType 
 	}
 	log.Println(contentType)
 
-	token := ua.mClient.Publish(ua.Topic, 0, false, data)
+	token := t.mClient.Publish(t.Topic, 0, false, data)
 	token.Wait()
 	if token.Error() != nil {
 		return fmt.Errorf("publish error: %w", token.Error())
@@ -322,9 +271,8 @@ func (ua *UnitAsset) publishToTopic(payload map[string]interface{}, contentType 
 }
 
 // publishRaw publishes raw data to the MQTT topic of the unit asset.
-func (ua *UnitAsset) publishRaw(data []byte) error {
-	// Just publish and return immediately
-	token := ua.mClient.Publish(ua.Topic, 0, false, data)
+func (t *Traits) publishRaw(data []byte) error {
+	token := t.mClient.Publish(t.Topic, 0, false, data)
 
 	go func() {
 		token.Wait()

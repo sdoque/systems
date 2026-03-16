@@ -19,51 +19,30 @@ import (
 // Help functions and structs to test roleStatus()
 // ----------------------------------------------- //
 
-func createLeadingRegistrar() *UnitAsset {
-	return &UnitAsset{
-		Name: "testRegistrar",
-		Details: map[string][]string{
-			"testDetail": []string{"detail1", "detail2"},
-		},
-		ServicesMap: components.Services{},
-		Traits: Traits{
-			leading:      true,
-			leadingSince: time.Now(),
-		},
+func createLeadingRegistrar() *Traits {
+	return &Traits{
+		leading:      true,
+		leadingSince: time.Now(),
 	}
 }
 
-func createNonLeadingRegistrar() *UnitAsset {
-	return &UnitAsset{
-		Name: "testRegistrar",
-		Details: map[string][]string{
-			"testDetail": []string{"detail1", "detail2"},
-		},
-		ServicesMap: components.Services{},
-		Traits: Traits{
-			leading:          false,
-			leadingRegistrar: &components.CoreSystem{Name: "otherRegistrar", Url: "otherURL"}, // or URL if your field is URL
-		},
+func createNonLeadingRegistrar() *Traits {
+	return &Traits{
+		leading:          false,
+		leadingRegistrar: &components.CoreSystem{Name: "otherRegistrar", Url: "otherURL"},
 	}
 }
 
-func createServiceUnavailableRegistrar() *UnitAsset {
-	return &UnitAsset{
-		Name: "testRegistrar",
-		Details: map[string][]string{
-			"testDetail": []string{"detail1", "detail2"},
-		},
-		ServicesMap: components.Services{},
-		Traits: Traits{
-			leading:          false,
-			leadingRegistrar: nil,
-		},
+func createServiceUnavailableRegistrar() *Traits {
+	return &Traits{
+		leading:          false,
+		leadingRegistrar: nil,
 	}
 }
 
 type roleStatusParams struct {
 	expectedStatuscode int
-	setup              func() *UnitAsset
+	setup              func() *Traits
 	request            *http.Request
 	testCase           string
 }
@@ -72,35 +51,35 @@ func TestRoleStatus(t *testing.T) {
 	params := []roleStatusParams{
 		{
 			200,
-			func() *UnitAsset { return createLeadingRegistrar() },
+			func() *Traits { return createLeadingRegistrar() },
 			httptest.NewRequest(http.MethodGet, "http://localhost/test", nil),
 			"Good case, leading registrar",
 		},
 		{
 			503,
-			func() *UnitAsset { return createNonLeadingRegistrar() },
+			func() *Traits { return createNonLeadingRegistrar() },
 			httptest.NewRequest(http.MethodGet, "http://localhost/test", nil),
 			"Good case, leading registrar",
 		},
 		{
 			503,
-			func() *UnitAsset { return createServiceUnavailableRegistrar() },
+			func() *Traits { return createServiceUnavailableRegistrar() },
 			httptest.NewRequest(http.MethodGet, "http://localhost/test", nil),
 			"Bad case, service unavailable",
 		},
 		{
 			200,
-			func() *UnitAsset { return &UnitAsset{} },
+			func() *Traits { return &Traits{} },
 			httptest.NewRequest(http.MethodPost, "http://localhost/test", nil),
 			"Bad case, unsupported http method",
 		},
 	}
 	for _, c := range params {
-		ua := c.setup()
+		tr := c.setup()
 		w := httptest.NewRecorder()
 		r := c.request
 
-		ua.roleStatus(w, r)
+		tr.roleStatus(w, r)
 		statusCode := w.Result().StatusCode
 		if statusCode != c.expectedStatuscode {
 			t.Errorf("Failed '%s', expected statuscode %d got: %d", c.testCase, c.expectedStatuscode, statusCode)
@@ -189,12 +168,10 @@ func TestPeersList(t *testing.T) {
 // Help functions and structs to test systemList()
 // ----------------------------------------------- //
 
-func createFilledRegistrar() *UnitAsset {
+func createFilledRegistrar() *Traits {
 	ua := createLeadingRegistrar()
 	ua.serviceRegistry = make(map[int]forms.ServiceRecord_v1)
-	var serviceAmount int
 	for x := range 5 {
-		serviceAmount++
 		ua.serviceRegistry[x] = forms.ServiceRecord_v1{
 			Id:          x,
 			SystemName:  fmt.Sprintf("testSys%d", x),
@@ -212,7 +189,7 @@ type expectedBody struct {
 
 type systemListParams struct {
 	expectedStatuscode int
-	setup              func() *UnitAsset
+	setup              func() *Traits
 	request            *http.Request
 	testCase           string
 }
@@ -221,24 +198,24 @@ func TestSystemList(t *testing.T) {
 	params := []systemListParams{
 		{
 			200,
-			func() *UnitAsset { return createFilledRegistrar() },
+			func() *Traits { return createFilledRegistrar() },
 			httptest.NewRequest(http.MethodGet, "http://localhost", nil),
 			"Best case",
 		},
 		{
 			405,
-			func() *UnitAsset { return createFilledRegistrar() },
+			func() *Traits { return createFilledRegistrar() },
 			httptest.NewRequest(http.MethodPost, "http://localhost", nil),
 			"Bad case, unsupported http method",
 		},
 	}
 
 	for _, c := range params {
-		ua := c.setup()
+		tr := c.setup()
 		w := httptest.NewRecorder()
 		r := c.request
 
-		ua.systemList(w, r)
+		tr.systemList(w, r)
 		res := w.Result()
 		data, err := io.ReadAll(res.Body)
 		if err != nil {
@@ -368,11 +345,10 @@ func TestUpdateDB(t *testing.T) {
 
 	for _, c := range params {
 		// Setup
-		var ua *UnitAsset
 		sys := createTestSystem()
 		confAsset := createConfAssetMultipleTraits()
 		temp, shutdown := newResource(confAsset, &sys)
-		ua = temp.(*UnitAsset)
+		ua := temp.Traits.(*Traits)
 		ua.leading = c.leading
 		w := httptest.NewRecorder()
 		var r *http.Request
@@ -471,11 +447,10 @@ func TestQueryDB(t *testing.T) {
 
 	for _, c := range params {
 		// Setup
-		var ua *UnitAsset
 		sys := createTestSystem()
 		confAsset := createConfAssetMultipleTraits()
 		temp, shutdown := newResource(confAsset, &sys)
-		ua = temp.(*UnitAsset)
+		ua := temp.Traits.(*Traits)
 		ua.leading = c.leading
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(c.method, "http://localhost/reg", c.body)
@@ -526,11 +501,10 @@ func TestCleanDB(t *testing.T) {
 	}
 
 	for _, c := range params {
-		var ua *UnitAsset
 		sys := createTestSystem()
 		confAsset := createConfAssetMultipleTraits()
 		temp, shutdown := newResource(confAsset, &sys)
-		ua = temp.(*UnitAsset)
+		ua := temp.Traits.(*Traits)
 		ua.leading = c.leading
 
 		w := httptest.NewRecorder()

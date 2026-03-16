@@ -51,52 +51,16 @@ type Traits struct {
 	Org          string         `json:"organization"`
 	Bucket       string         `json:"bucket"`
 	Measurements []MeasurementT `json:"measurements"`
+	client       influxdb2.Client
+	owner        *components.System  `json:"-"`
+	cervices     components.Cervices `json:"-"`
+	name         string              `json:"-"`
 }
-
-// UnitAsset type models the unit asset (interface) of the system
-type UnitAsset struct {
-	Name        string              `json:"bucket_name"`
-	Owner       *components.System  `json:"-"`
-	Details     map[string][]string `json:"details"`
-	ServicesMap components.Services `json:"-"`
-	CervicesMap components.Cervices `json:"-"`
-	//
-	Traits
-	client influxdb2.Client // InfluxDB client
-}
-
-// GetName returns the name of the Resource.
-func (ua *UnitAsset) GetName() string {
-	return ua.Name
-}
-
-// GetServices returns the services of the Resource.
-func (ua *UnitAsset) GetServices() components.Services {
-	return ua.ServicesMap
-}
-
-// GetCervices returns the list of consumed services by the Resource.
-func (ua *UnitAsset) GetCervices() components.Cervices {
-	return ua.CervicesMap
-}
-
-// GetDetails returns the details of the Resource.
-func (ua *UnitAsset) GetDetails() map[string][]string {
-	return ua.Details
-}
-
-// GetTraits returns the traits of the Resource.
-func (ua *UnitAsset) GetTraits() any {
-	return ua.Traits
-}
-
-// ensure UnitAsset implements components.UnitAsset (this check is done at during the compilation)
-var _ components.UnitAsset = (*UnitAsset)(nil)
 
 //-------------------------------------Instantiate a unit asset template
 
 // initTemplate initializes a UnitAsset with default values.
-func initTemplate() components.UnitAsset {
+func initTemplate() *components.UnitAsset {
 	mqueryService := components.Service{
 		Definition:  "mquery",
 		SubPath:     "mquery",
@@ -106,10 +70,14 @@ func initTemplate() components.UnitAsset {
 		Description: "provides the list of measurements in the bucket (GET)",
 	}
 
-	uat := &UnitAsset{
+	return &components.UnitAsset{
 		Name:    "demo",
+		Mission: "handle_timeseries",
 		Details: map[string][]string{"Database": {"InfluxDB"}},
-		Traits: Traits{
+		ServicesMap: components.Services{
+			mqueryService.SubPath: &mqueryService,
+		},
+		Traits: &Traits{
 			FluxURL: "http://10.0.0.33:8086",
 			Token:   "K1NTWNlToyUNXdii7IwNJ1W-kMsagUr8w1r4cRVYqK-N-R9vVT1MCJwHFBxOgiW85iKiMSsUpbrxQsQZJA8IzA==",
 			Org:     "mbaigo",
@@ -122,145 +90,137 @@ func initTemplate() components.UnitAsset {
 				},
 			},
 		},
-		ServicesMap: components.Services{
-			mqueryService.SubPath: &mqueryService,
-		},
 	}
-	return uat
 }
 
 //-------------------------------------Instantiate the unit assets based on configuration
 
 // newResource creates a new UnitAsset resource based on the configuration
-func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (components.UnitAsset, func()) {
-	ua := &UnitAsset{
-		Name:        configuredAsset.Name,
-		Owner:       sys,
-		Details:     configuredAsset.Details,
-		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
-		CervicesMap: make(map[string]*components.Cervice), // Initialize map
+func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (*components.UnitAsset, func()) {
+	t := &Traits{
+		owner: sys,
+		name:  configuredAsset.Name,
 	}
 
-	traits, err := UnmarshalTraits(configuredAsset.Traits)
-	if err != nil {
-		log.Println("Warning: could not unmarshal traits:", err)
-	} else if len(traits) > 0 {
-		ua.Traits = traits[0] // or handle multiple traits if needed
+	for _, raw := range configuredAsset.Traits {
+		if err := json.Unmarshal(raw, t); err != nil {
+			log.Println("Warning: could not unmarshal traits:", err)
+		}
+		break
 	}
 
-	if ua.FluxURL == "" || ua.Token == "" || ua.Org == "" || ua.Bucket == "" {
+	if t.FluxURL == "" || t.Token == "" || t.Org == "" || t.Bucket == "" {
 		log.Fatal("Invalid InfluxDB configuration: missing required parameters")
 	}
 
 	// Create a new client for InfluxDB
-	ua.client = influxdb2.NewClient(ua.FluxURL, ua.Token)
+	t.client = influxdb2.NewClient(t.FluxURL, t.Token)
 
 	// Create a non-blocking write API
-	writeAPI := ua.client.WriteAPI(ua.Org, ua.Bucket)
+	writeAPI := t.client.WriteAPI(t.Org, t.Bucket)
 
-	// Collect and ingest measurements
-	var wg sync.WaitGroup
+	// Build cervices map from measurements
 	sProtocols := components.SProtocols(sys.Husk.ProtoPort)
-	for _, measurement := range ua.Traits.Measurements {
-		// determine the protocols that the system supports
-		cMeasurement := components.Cervice{
+	cervMap := make(components.Cervices)
+	for _, measurement := range t.Measurements {
+		cMeasurement := &components.Cervice{
 			Definition: measurement.Name,
 			Details:    measurement.Details,
 			Protos:     sProtocols,
-			Nodes:      make(map[string][]string, 0),
+			Nodes:      make(map[string][]string),
 		}
-		ua.CervicesMap[cMeasurement.Definition] = &cMeasurement
+		cervMap[cMeasurement.Definition] = cMeasurement
+	}
+	t.cervices = cervMap
 
+	ua := &components.UnitAsset{
+		Name:        configuredAsset.Name,
+		Mission:     configuredAsset.Mission,
+		Owner:       sys,
+		Details:     configuredAsset.Details,
+		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
+		CervicesMap: cervMap,
+		Traits:      t,
+	}
+	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
+		serving(t, w, r, servicePath)
+	}
+
+	// Collect and ingest measurements
+	var wg sync.WaitGroup
+	for _, measurement := range t.Measurements {
 		wg.Add(1)
 		go func(name string, period time.Duration) {
 			defer wg.Done()
-			if err := ua.collectIngest(name, period, writeAPI); err != nil {
+			if err := t.collectIngest(name, period, writeAPI); err != nil {
 				log.Printf("Error in collectIngest for measurement: %v", err)
 			}
 		}(measurement.Name, measurement.Period*time.Second)
 	}
 
-	// Return the unit asset and a cleanup function to close the InfluxDB client
 	return ua, func() {
 		log.Println("Waiting for all goroutines to finish...")
 		wg.Wait()
 		log.Println("Disconnecting from InfluxDB")
-		ua.client.Close()
+		t.client.Close()
 	}
-}
-
-// UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
-func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
-	var traitsList []Traits
-	for _, raw := range rawTraits {
-		var t Traits
-		if err := json.Unmarshal(raw, &t); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
-		}
-		traitsList = append(traitsList, t)
-	}
-	return traitsList, nil
 }
 
 //-------------------------------------Unit asset's functionalities
 
-// collectIngest
-func (ua *UnitAsset) collectIngest(name string, period time.Duration, writeAPI api.WriteAPI) error {
+// collectIngest collects measurements and ingests them into InfluxDB
+func (t *Traits) collectIngest(name string, period time.Duration, writeAPI api.WriteAPI) error {
 	ticker := time.NewTicker(period)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-ua.Owner.Ctx.Done():
+		case <-t.owner.Ctx.Done():
 			log.Printf("Stopping data collection for measurement: %s", name)
-			return ua.Owner.Ctx.Err()
+			return t.owner.Ctx.Err()
 
 		case <-ticker.C:
-			tf, err := usecases.GetState(ua.CervicesMap[name], ua.Owner)
+			tf, err := usecases.GetState(t.cervices[name], t.owner)
 			if err != nil {
 				log.Printf("\nUnable to obtain a %s reading with error %s\n", name, err)
-				continue // return fmt.Errorf("unsupported measurement: %s", name)
+				continue
 			}
 			fmt.Printf("%+v\n", tf)
-			// Perform a type assertion to convert the returned Form to SignalA_v1a
 			tup, ok := tf.(*forms.SignalA_v1a)
 			if !ok {
 				log.Println("Problem unpacking the signal form")
-				continue // return fmt.Errorf("problem unpacking measurement: %s", name)
+				continue
 			}
 
-			metaD := ua.CervicesMap[name].Details
+			metaD := t.cervices[name].Details
 
 			// Convert metaD (map[string][]string) into InfluxDB tags (map[string]string)
 			tags := make(map[string]string)
 			for key, values := range metaD {
-				// Join all values in the slice with a comma
 				tags[key] = strings.Join(values, ",")
 			}
 
-			// Create an InfluxDB point using metaD as tags
 			point := write.NewPoint(
 				name,
-				tags, // Transformed metaD as tags
-				map[string]interface{}{"value": tup.Value}, // Field value
-				time.Now(), // Timestamp
+				tags,
+				map[string]interface{}{"value": tup.Value},
+				time.Now(),
 			)
 
-			// Write point to InfluxDB using WriteAPI
 			writeAPI.WritePoint(point)
 		}
 	}
 }
 
 // q4measurements queries the bucket for the list of measurements
-func (ua *UnitAsset) q4measurements(w http.ResponseWriter) {
-	text := "The list of measurements in the " + ua.Name + " bucket is:\n"
-	queryAPI := ua.client.QueryAPI(ua.Org)
+func (t *Traits) q4measurements(w http.ResponseWriter) {
+	text := "The list of measurements in the " + t.name + " bucket is:\n"
+	queryAPI := t.client.QueryAPI(t.Org)
 
 	query := fmt.Sprintf(`
 		 import "influxdata/influxdb/schema"
 		 schema.measurements(bucket: "%s")
-	 `, ua.Name)
+	 `, t.name)
 
 	results, err := queryAPI.Query(context.Background(), query)
 	if err != nil {

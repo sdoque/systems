@@ -37,8 +37,8 @@ import (
 
 func main() {
 	// prepare for graceful shutdown
-	ctx, cancel := context.WithCancel(context.Background()) // create a context that can be cancelled
-	defer cancel()                                          // make sure all paths cancel the context to avoid context leak
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// instantiate the System
 	sys := components.NewSystem("serviceregistrar", ctx)
@@ -64,8 +64,7 @@ func main() {
 
 	// instantiate a template unit asset
 	assetTemplate := initTemplate()
-	assetName := assetTemplate.GetName()
-	sys.UAssets[assetName] = &assetTemplate
+	sys.UAssets[assetTemplate.GetName()] = assetTemplate
 
 	// Configure the system
 	rawResources, err := usecases.Configure(&sys)
@@ -80,7 +79,7 @@ func main() {
 		}
 		ua, cleanup := newResource(uac, &sys)
 		defer cleanup()
-		sys.UAssets[ua.GetName()] = &ua
+		sys.UAssets[ua.GetName()] = ua
 	}
 
 	// Generate PKI keys and CSR to obtain a authentication certificate from the CA
@@ -93,36 +92,35 @@ func main() {
 	go usecases.SetoutServers(&sys)
 
 	// wait for shutdown signal, and gracefully close properly goroutines with context
-	<-sys.Sigs // wait for a SIGINT (Ctrl+C) signal
+	<-sys.Sigs
 	fmt.Println("\nShutting down system", sys.Name)
-	cancel() // cancel the context, signaling the goroutines to stop
-	// allow the go routines to be executed, which might take more time than the main routine to end
+	cancel()
 	time.Sleep(3 * time.Second)
 }
 
 // ---------------------------------------------------------------------------- end of main()
 
-// Serving handles the resources services. NOTE: it expects those names from the request URL path
-func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {
+// serving dispatches an incoming HTTP request to the appropriate handler.
+func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
 	case "register":
-		ua.updateDB(w, r)
+		t.updateDB(w, r)
 	case "query":
-		ua.queryDB(w, r)
+		t.queryDB(w, r)
 	case "unregister":
-		ua.cleanDB(w, r)
+		t.cleanDB(w, r)
 	case "status":
-		ua.roleStatus(w, r)
+		t.roleStatus(w, r)
 	case "syslist":
-		ua.systemList(w, r)
+		t.systemList(w, r)
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}
 }
 
-// updateDB is used to add a new service record or to extend its registration life
-func (ua *UnitAsset) updateDB(w http.ResponseWriter, r *http.Request) {
-	if !ua.leading {
+// updateDB adds a new service record or extends its registration life.
+func (t *Traits) updateDB(w http.ResponseWriter, r *http.Request) {
+	if !t.leading {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		if _, err := w.Write([]byte("Service Unavailable")); err != nil {
 			log.Printf("error occurred while writing to responsewriter: %v", err)
@@ -153,23 +151,18 @@ func (ua *UnitAsset) updateDB(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Create a struct to send on a channel to handle the request
 		addRecord := ServiceRegistryRequest{
 			Action: "add",
 			Record: record,
 			Error:  make(chan error),
 		}
-
-		// Send request to add a record to the unit asset
-		ua.requests <- addRecord
-		// Check the error back from the unit asset
+		t.requests <- addRecord
 		err = <-addRecord.Error
 		if err != nil {
 			log.Printf("Error adding the new service: %v", err)
 			http.Error(w, "Error registering service", http.StatusInternalServerError)
 			return
 		}
-		// fmt.Println(record)
 		updatedRecordBytes, err := usecases.Pack(record, mediaType)
 		if err != nil {
 			log.Printf("Error confirming new service: %s", err)
@@ -177,10 +170,8 @@ func (ua *UnitAsset) updateDB(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", mediaType)
 		w.WriteHeader(http.StatusOK)
-		_, err = w.Write([]byte(updatedRecordBytes))
-		if err != nil {
+		if _, err = w.Write([]byte(updatedRecordBytes)); err != nil {
 			log.Printf("Error occurred while writing to response: %v", err)
-			return
 		}
 
 	default:
@@ -188,21 +179,17 @@ func (ua *UnitAsset) updateDB(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// queryDB looks for service records in the service registry
-func (ua *UnitAsset) queryDB(w http.ResponseWriter, r *http.Request) {
+// queryDB looks for service records in the service registry.
+func (t *Traits) queryDB(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
-	case "GET": // from a web browser
-		// Create a struct to send on a channel to handle the request
+	case "GET":
 		recordsRequest := ServiceRegistryRequest{
 			Action: "read",
 			Result: make(chan []forms.ServiceRecord_v1),
 			Error:  make(chan error),
 		}
+		t.requests <- recordsRequest
 
-		// Send request to the `ua.requests` channel
-		ua.requests <- recordsRequest
-
-		// Use a select statement to wait for responses on either the Result or Error channel
 		select {
 		case err := <-recordsRequest.Error:
 			if err != nil {
@@ -210,7 +197,6 @@ func (ua *UnitAsset) queryDB(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "Error retrieving service records", http.StatusInternalServerError)
 			}
 		case servicesList := <-recordsRequest.Result:
-			// Build the HTML response
 			text := "<!DOCTYPE html><html><body>"
 			if _, err := w.Write([]byte(text)); err != nil {
 				log.Printf("Error occurred while writing to responsewriter: %v", err)
@@ -232,16 +218,15 @@ func (ua *UnitAsset) queryDB(w http.ResponseWriter, r *http.Request) {
 					log.Printf("Error occurred while writing to responsewriter: %v", err)
 				}
 			}
-			text = "</ul></body></html>"
-			if _, err := w.Write([]byte(text)); err != nil {
+			if _, err := w.Write([]byte("</ul></body></html>")); err != nil {
 				log.Printf("Error occurred while writing to responsewriter: %v", err)
 			}
-		case <-time.After(5 * time.Second): // Optional timeout
+		case <-time.After(5 * time.Second):
 			http.Error(w, "Request timed out", http.StatusGatewayTimeout)
 			log.Println("Failure to process service listing request")
 		}
 
-	case "POST": // from the orchestrator
+	case "POST":
 		contentType := r.Header.Get("Content-Type")
 		mediaType, _, err := mime.ParseMediaType(contentType)
 		if err != nil {
@@ -264,18 +249,14 @@ func (ua *UnitAsset) queryDB(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Create a struct to send on a channel to handle the request
 		readRecord := ServiceRegistryRequest{
 			Action: "read",
 			Record: record,
 			Result: make(chan []forms.ServiceRecord_v1),
 			Error:  make(chan error),
 		}
+		t.requests <- readRecord
 
-		// Send request to add a record to the unit asset
-		ua.requests <- readRecord
-
-		// Use a select statement to wait for responses on either the Result or Error channel
 		select {
 		case err := <-readRecord.Error:
 			if err != nil {
@@ -294,43 +275,38 @@ func (ua *UnitAsset) queryDB(w http.ResponseWriter, r *http.Request) {
 			}
 			w.Header().Set("Content-Type", mediaType)
 			w.WriteHeader(http.StatusOK)
-			_, err = w.Write([]byte(updatedRecordBytes))
-			if err != nil {
+			if _, err = w.Write([]byte(updatedRecordBytes)); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-		case <-time.After(5 * time.Second): // Optional timeout
+		case <-time.After(5 * time.Second):
 			log.Println("Failure to process service discovery request")
 			http.Error(w, "Request timed out", http.StatusGatewayTimeout)
 			return
 		}
+
 	default:
 		http.Error(w, "Unsupported HTTP request method", http.StatusMethodNotAllowed)
 	}
 }
 
-// cleanDB deletes service records upon request (e.g., when a system shuts down)
-func (ua *UnitAsset) cleanDB(w http.ResponseWriter, r *http.Request) {
+// cleanDB deletes service records upon request (e.g., when a system shuts down).
+func (t *Traits) cleanDB(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "DELETE":
 		parts := strings.Split(r.URL.Path, "/")
-		idStr := parts[len(parts)-1]   // the ID is the last part of the URL path
-		id, err := strconv.Atoi(idStr) // convert the ID to an integer
+		idStr := parts[len(parts)-1]
+		id, err := strconv.Atoi(idStr)
 		if err != nil {
-			// handle the error
 			http.Error(w, "Invalid record ID", http.StatusBadRequest)
 			return
 		}
-		// Create a struct to send on a channel to handle the request
 		addRecord := ServiceRegistryRequest{
 			Action: "delete",
 			Id:     int64(id),
 			Error:  make(chan error),
 		}
-
-		// Send request to add a record to the unit asset
-		ua.requests <- addRecord
-		// Check the error back from the unit asset
+		t.requests <- addRecord
 		err = <-addRecord.Error
 		if err != nil {
 			log.Printf("Error deleting the service with id: %d, %s\n", id, err)
@@ -342,18 +318,16 @@ func (ua *UnitAsset) cleanDB(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// roleStatus returns the current activity of a service registrar (i.e., leading or on stand by)
-func (ua *UnitAsset) roleStatus(w http.ResponseWriter, r *http.Request) {
+// roleStatus returns the current role of the service registrar (leading or standby).
+func (t *Traits) roleStatus(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		if ua.leading {
-			text := fmt.Sprintf("lead Service Registrar since %s", ua.leadingSince)
-			fmt.Fprint(w, text)
+		if t.leading {
+			fmt.Fprintf(w, "lead Service Registrar since %s", t.leadingSince)
 			return
 		}
-		if ua.leadingRegistrar != nil {
-			text := fmt.Sprintf("On standby, leading registrar is %s", ua.leadingRegistrar.Url)
-			http.Error(w, text, http.StatusServiceUnavailable)
+		if t.leadingRegistrar != nil {
+			http.Error(w, fmt.Sprintf("On standby, leading registrar is %s", t.leadingRegistrar.Url), http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -365,9 +339,9 @@ func (ua *UnitAsset) roleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Role repeatedly check which service registrar in the local cloud is the leading service registrar
-func (ua *UnitAsset) Role() {
-	peersList, err := peersList(ua.Owner)
+// startRole repeatedly checks which service registrar in the local cloud is the leader.
+func (t *Traits) startRole(sys *components.System) {
+	peersList, err := peersList(sys)
 	if err != nil {
 		panic(err)
 	}
@@ -379,17 +353,16 @@ func (ua *UnitAsset) Role() {
 			for _, cSys := range peersList {
 				resp, err := http.Get(cSys.Url + "/status")
 				if err != nil {
-					break // that system registrar is not up
+					break
 				}
 				defer resp.Body.Close()
 
-				// Handle status codes
 				switch resp.StatusCode {
 				case http.StatusOK:
 					standby = true
-					ua.leading = false
-					ua.leadingSince = time.Time{} // reset lead timer
-					ua.leadingRegistrar = cSys
+					t.leading = false
+					t.leadingSince = time.Time{}
+					t.leadingRegistrar = cSys
 					break foundLead
 				case http.StatusServiceUnavailable:
 					// Service unavailable
@@ -397,18 +370,33 @@ func (ua *UnitAsset) Role() {
 					log.Printf("Received unexpected status code: %d\n", resp.StatusCode)
 				}
 			}
-			if !standby && !ua.leading {
-				ua.leading = true
-				ua.leadingSince = time.Now()
-				ua.leadingRegistrar = nil
-				log.Printf("Taking the service registry lead at %s\n", ua.leadingSince)
+			if !standby && !t.leading {
+				t.leading = true
+				t.leadingSince = time.Now()
+				t.leadingRegistrar = nil
+				log.Printf("Taking the service registry lead at %s\n", t.leadingSince)
 			}
 			<-ticker.C
 		}
 	}()
 }
 
-// peerslist provides a list of the other service registrars in the local cloud
+// systemList returns the list of unique systems registered in the local cloud.
+func (t *Traits) systemList(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		systemsList, err := getUniqueSystems(t)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("System list error: %s", err), http.StatusInternalServerError)
+			return
+		}
+		usecases.HTTPProcessGetRequest(w, r, systemsList)
+	default:
+		http.Error(w, "Unsupported HTTP request method", http.StatusMethodNotAllowed)
+	}
+}
+
+// peersList provides a list of the other service registrars in the local cloud.
 func peersList(sys *components.System) (peers []*components.CoreSystem, err error) {
 	for _, cs := range sys.Husk.CoreS {
 		if cs.Name != "serviceregistrar" {
@@ -428,19 +416,4 @@ func peersList(sys *components.System) (peers []*components.CoreSystem, err erro
 		peers = append(peers, cs)
 	}
 	return peers, nil
-}
-
-// queryDB looks for service records in the service registry
-func (ua *UnitAsset) systemList(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case "GET":
-		systemsList, err := getUniqueSystems(ua)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("System list error: %s", err), http.StatusInternalServerError)
-			return
-		}
-		usecases.HTTPProcessGetRequest(w, r, systemsList)
-	default:
-		http.Error(w, "Unsupported HTTP request method", http.StatusMethodNotAllowed)
-	}
 }

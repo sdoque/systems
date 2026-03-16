@@ -48,6 +48,7 @@ func createTestSystem() components.System {
 		Details:     map[string][]string{"Developer": {"Arrowhead"}},
 		ProtoPort:   map[string]int{"https": 0, "http": 8870, "coap": 0},
 		InfoLink:    "https://for.testing.purposes",
+		Host:        components.NewDevice(),
 	}
 	leadingRegistrar := &components.CoreSystem{
 		Name: components.ServiceRegistrarName,
@@ -96,8 +97,7 @@ func createNewSys() components.System {
 
 	// instantiate a template unit asset
 	assetTemplate := initTemplate()
-	assetName := assetTemplate.GetName()
-	sys.UAssets[assetName] = &assetTemplate
+	sys.UAssets[assetTemplate.GetName()] = assetTemplate
 	return sys
 }
 
@@ -156,7 +156,7 @@ func sendBrokenAddRequest(num int64, ch chan ServiceRegistryRequest) error {
 
 type serviceRegistryHandlerParams struct {
 	expectError bool
-	request     func(*UnitAsset) error
+	request     func(*Traits) error
 	testCase    string
 }
 
@@ -164,19 +164,19 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 	params := []serviceRegistryHandlerParams{
 		{
 			false,
-			func(ua *UnitAsset) error {
+			func(ua *Traits) error {
 				return sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
 			},
 			"Best case, successful request",
 		},
 		{
 			true,
-			func(ua *UnitAsset) error { return sendBrokenAddRequest(0, ua.requests) },
+			func(ua *Traits) error { return sendBrokenAddRequest(0, ua.requests) },
 			"Bad case, unable to convert to correct form",
 		},
 		{
 			true,
-			func(ua *UnitAsset) error {
+			func(ua *Traits) error {
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
 				if err != nil {
 					t.Fatalf("Failed sending first request")
@@ -188,7 +188,7 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 		},
 		{
 			true,
-			func(ua *UnitAsset) error {
+			func(ua *Traits) error {
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
 				if err != nil {
 					t.Fatalf("Failed sending first request")
@@ -200,7 +200,7 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 		},
 		{
 			true,
-			func(ua *UnitAsset) error {
+			func(ua *Traits) error {
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
 				if err != nil {
 					t.Fatalf("Failed sending first request")
@@ -212,7 +212,7 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 		},
 		{
 			true,
-			func(ua *UnitAsset) error {
+			func(ua *Traits) error {
 				ch := ua.requests
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
 				if err != nil {
@@ -225,7 +225,7 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 		},
 		{
 			false,
-			func(ua *UnitAsset) error {
+			func(ua *Traits) error {
 				ch := ua.requests
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
 				if err != nil {
@@ -238,7 +238,7 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 		},
 		{
 			false,
-			func(ua *UnitAsset) error {
+			func(ua *Traits) error {
 				ch := ua.requests
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
 				if err != nil {
@@ -256,7 +256,7 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 		temp := createConfAssetMultipleTraits()
 		sys := createNewSys()
 		res, shutdown := newResource(temp, &sys)
-		ua, _ := res.(*UnitAsset)
+		ua := res.Traits.(*Traits)
 
 		// Test and check
 		err := c.request(ua)
@@ -375,7 +375,7 @@ func sendBrokenReadRequest(ch chan ServiceRegistryRequest) ([]forms.ServiceRecor
 type serviceRegistryHandlerReadParams struct {
 	expectError bool
 	expectedLen int
-	request     func(ua *UnitAsset) ([]forms.ServiceRecord_v1, error)
+	request     func(ua *Traits) ([]forms.ServiceRecord_v1, error)
 	testCase    string
 }
 
@@ -384,7 +384,7 @@ func TestServiceRegistryHandlerRead(t *testing.T) {
 		{
 			false,
 			1,
-			func(ua *UnitAsset) ([]forms.ServiceRecord_v1, error) {
+			func(ua *Traits) ([]forms.ServiceRecord_v1, error) {
 				return sendReadRequest(0, "", []string{""}, ua.requests)
 			},
 			"Best case, successful read request returning all items",
@@ -392,7 +392,7 @@ func TestServiceRegistryHandlerRead(t *testing.T) {
 		{
 			false,
 			1,
-			func(ua *UnitAsset) ([]forms.ServiceRecord_v1, error) {
+			func(ua *Traits) ([]forms.ServiceRecord_v1, error) {
 				return sendReadRequest(1, "test", []string{"detail6"}, ua.requests)
 			},
 			"Best case, successful read request returning specific items",
@@ -400,7 +400,7 @@ func TestServiceRegistryHandlerRead(t *testing.T) {
 		{
 			true,
 			0,
-			func(ua *UnitAsset) ([]forms.ServiceRecord_v1, error) {
+			func(ua *Traits) ([]forms.ServiceRecord_v1, error) {
 				return sendBrokenReadRequest(ua.requests)
 			},
 			"Bad case, wrong form",
@@ -412,7 +412,7 @@ func TestServiceRegistryHandlerRead(t *testing.T) {
 		temp := createConfAssetMultipleTraits()
 		sys := createNewSys()
 		res, shutdown := newResource(temp, &sys)
-		ua, _ := res.(*UnitAsset)
+		ua := res.Traits.(*Traits)
 		time.Sleep(25 * time.Millisecond)
 		// Add some services to the serviceregistrar with details: detail1 detail2 ... detailN
 		sendAddRequestWithDetails(1, "test", "sub1", time.Now().Format(time.RFC3339), ua.requests)
@@ -449,7 +449,7 @@ func TestServiceRegistryHandlerDelete(t *testing.T) {
 	temp := createConfAssetMultipleTraits()
 	sys := createNewSys()
 	res, shutdown := newResource(temp, &sys)
-	ua, _ := res.(*UnitAsset)
+	ua := res.Traits.(*Traits)
 	time.Sleep(25 * time.Millisecond)
 	// Add a services to the serviceregistrar
 	sendAddRequestWithDetails(1, "test", "sub1", time.Now().Format(time.RFC3339), ua.requests)
@@ -464,16 +464,11 @@ func TestServiceRegistryHandlerDelete(t *testing.T) {
 // ------------------------------------------------------------------------ //
 
 // Creates an asset multiple services in its registry
-func createRegistryWithServices(broken bool) (ua *UnitAsset, err error) {
-	initTemp := initTemplate()
-	ua, ok := initTemp.(*UnitAsset)
-	if !ok {
-		return nil, fmt.Errorf("Failed while typecasting to local UnitAsset")
-	}
+func createRegistryWithServices(broken bool) (ua *Traits, err error) {
+	ua = &Traits{serviceRegistry: make(map[int]forms.ServiceRecord_v1)}
 
 	var locations = []string{"Kitchen", "Bathroom", "Livingroom"}
 
-	ua.serviceRegistry = make(map[int]forms.ServiceRecord_v1)
 	for i, location := range locations {
 		var form forms.ServiceRecord_v1
 		form.ServiceDefinition = "testDef"
@@ -492,7 +487,7 @@ func createRegistryWithServices(broken bool) (ua *UnitAsset, err error) {
 
 type filterByServDefAndDetailsParams struct {
 	expectMatch bool
-	setup       func() (*UnitAsset, error)
+	setup       func() (*Traits, error)
 	testCase    string
 }
 
@@ -500,12 +495,12 @@ func TestFilterByServiceDefAndDetails(t *testing.T) {
 	params := []filterByServDefAndDetailsParams{
 		{
 			true,
-			func() (ua *UnitAsset, err error) { return createRegistryWithServices(false) },
+			func() (ua *Traits, err error) { return createRegistryWithServices(false) },
 			"Best case",
 		},
 		{
 			false,
-			func() (ua *UnitAsset, err error) { return createRegistryWithServices(true) },
+			func() (ua *Traits, err error) { return createRegistryWithServices(true) },
 			"Bad case, key doesn't exist",
 		},
 	}
@@ -530,13 +525,10 @@ func TestFilterByServiceDefAndDetails(t *testing.T) {
 // Help functions and structs to test checkExpiration()
 // ---------------------------------------------------- //
 
-func createRegistryWithService(year any) (ua *UnitAsset, cancel func(), err error) {
+func createRegistryWithService(year any) (ua *Traits, cancel func(), err error) {
 	sys := createNewSys()
 	temp, cancel := newResource(createConfAssetMultipleTraits(), &sys)
-	ua, ok := temp.(*UnitAsset)
-	if !ok {
-		return nil, nil, fmt.Errorf("Failed while typecasting to local UnitAsset")
-	}
+	ua = temp.Traits.(*Traits)
 
 	var test forms.ServiceRecord_v1
 	test.SystemName = "testSystem"
@@ -549,7 +541,7 @@ func createRegistryWithService(year any) (ua *UnitAsset, cancel func(), err erro
 
 type checkExpirationParams struct {
 	servicePresent bool
-	setup          func() (*UnitAsset, func(), error)
+	setup          func() (*Traits, func(), error)
 	testCase       string
 }
 
@@ -557,17 +549,17 @@ func TestCheckExpiration(t *testing.T) {
 	params := []checkExpirationParams{
 		{
 			true,
-			func() (ua *UnitAsset, cancel func(), err error) { return createRegistryWithService(2026) },
+			func() (ua *Traits, cancel func(), err error) { return createRegistryWithService(2099) },
 			"Best case, service not past expiration",
 		},
 		{
 			false,
-			func() (ua *UnitAsset, cancel func(), err error) { return createRegistryWithService(2006) },
+			func() (ua *Traits, cancel func(), err error) { return createRegistryWithService(2006) },
 			"Bad case, service past expiration",
 		},
 		{
 			true,
-			func() (ua *UnitAsset, cancel func(), err error) { return createRegistryWithService("faulty") },
+			func() (ua *Traits, cancel func(), err error) { return createRegistryWithService("faulty") },
 			"Bad case, time parsing problem",
 		},
 	}
@@ -593,56 +585,33 @@ func TestCheckExpiration(t *testing.T) {
 // Help functions and structs to test getUniqueSystems()
 // ----------------------------------------------------- //
 
-func createServRegistryHttp() (ua *UnitAsset, err error) {
-	initTemp := initTemplate()
-	ua, ok := initTemp.(*UnitAsset)
-	if !ok {
-		return nil, fmt.Errorf("Failed while typecasting to local UnitAsset")
-	}
-
+func createServRegistryHttp() (ua *Traits, err error) {
 	var test forms.ServiceRecord_v1
 	test.SystemName = "testSystem"
 	test.ProtoPort = map[string]int{"http": 1234}
 	test.IPAddresses = []string{"999.999.999.999"}
-	ua.serviceRegistry = map[int]forms.ServiceRecord_v1{0: test}
-
-	return ua, nil
+	return &Traits{serviceRegistry: map[int]forms.ServiceRecord_v1{0: test}}, nil
 }
 
-func createServRegistryHttps() (ua *UnitAsset, err error) {
-	initTemp := initTemplate()
-	ua, ok := initTemp.(*UnitAsset)
-	if !ok {
-		return nil, fmt.Errorf("Failed while typecasting to local UnitAsset")
-	}
-
+func createServRegistryHttps() (ua *Traits, err error) {
 	var test forms.ServiceRecord_v1
 	test.SystemName = "testSystem"
 	test.ProtoPort = map[string]int{"https": 4321}
 	test.IPAddresses = []string{"888.888.888.888"}
-	ua.serviceRegistry = map[int]forms.ServiceRecord_v1{0: test}
-
-	return ua, nil
+	return &Traits{serviceRegistry: map[int]forms.ServiceRecord_v1{0: test}}, nil
 }
 
-func createBrokenServRegistry() (ua *UnitAsset, err error) {
-	initTemp := initTemplate()
-	ua, ok := initTemp.(*UnitAsset)
-	if !ok {
-		return nil, fmt.Errorf("Failed while typecasting to local UnitAsset")
-	}
-
+func createBrokenServRegistry() (ua *Traits, err error) {
 	var test forms.ServiceRecord_v1
 	test.SystemName = "testSystem"
 	test.ProtoPort = map[string]int{"https": 0}
 	test.IPAddresses = []string{"888.888.888.888"}
-	ua.serviceRegistry = map[int]forms.ServiceRecord_v1{0: test}
-	return ua, nil
+	return &Traits{serviceRegistry: map[int]forms.ServiceRecord_v1{0: test}}, nil
 }
 
 type getUniqueSystemsParams struct {
 	expectError bool
-	setup       func() (ua *UnitAsset, err error)
+	setup       func() (ua *Traits, err error)
 	testCase    string
 }
 
@@ -650,17 +619,17 @@ func TestGetUniqueSystems(t *testing.T) {
 	params := []getUniqueSystemsParams{
 		{
 			false,
-			func() (ua *UnitAsset, err error) { return createServRegistryHttp() },
+			func() (ua *Traits, err error) { return createServRegistryHttp() },
 			"Best case, http",
 		},
 		{
 			false,
-			func() (ua *UnitAsset, err error) { return createServRegistryHttps() },
+			func() (ua *Traits, err error) { return createServRegistryHttps() },
 			"Best case, https",
 		},
 		{
 			false,
-			func() (ua *UnitAsset, err error) { return createBrokenServRegistry() },
+			func() (ua *Traits, err error) { return createBrokenServRegistry() },
 			"Bad case, http/https not found",
 		},
 	}

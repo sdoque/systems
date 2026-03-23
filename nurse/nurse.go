@@ -36,7 +36,6 @@ func main() {
 
 	// instantiate the System
 	sys := components.NewSystem("nurse", ctx)
-	sys.Mission = "monitor_anomalies"
 
 	// Instantiate the husk
 	sys.Husk = &components.Husk{
@@ -44,7 +43,7 @@ func main() {
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
 		ProtoPort:   map[string]int{"https": 0, "http": 20181, "coap": 0},
-		InfoLink:    "https://github.com/sdoque/systems/tree/main/influxer",
+		InfoLink:    "https://github.com/sdoque/systems/tree/main/nurse",
 		DName: pkix.Name{
 			CommonName:         sys.Name,
 			Organization:       []string{"Synecdoque"},
@@ -59,8 +58,7 @@ func main() {
 
 	// instantiate a template unit asset
 	assetTemplate := initTemplate()
-	assetName := assetTemplate.GetName()
-	sys.UAssets[assetName] = &assetTemplate
+	sys.UAssets[assetTemplate.GetName()] = assetTemplate
 
 	// Configure the system
 	rawResources, err := usecases.Configure(&sys)
@@ -75,7 +73,7 @@ func main() {
 		}
 		ua, cleanup := newResource(uac, &sys)
 		defer cleanup()
-		sys.UAssets[ua.GetName()] = &ua
+		sys.UAssets[ua.GetName()] = ua
 	}
 
 	// Generate PKI keys and CSR to obtain a authentication certificate from the CA
@@ -94,24 +92,19 @@ func main() {
 	time.Sleep(2 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
 }
 
-// Serving handles the resources services. NOTE: it expects those names from the request URL path
-func (ua *UnitAsset) Serving(w http.ResponseWriter, r *http.Request, servicePath string) {
+// serving handles the resources services. NOTE: it expects those names from the request URL path
+func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
 	case "monitor":
-		ua.statusCheck(w, r)
-
+		switch r.Method {
+		case http.MethodGet:
+			t.state(w)
+		case http.MethodPost:
+			t.update(w, r)
+		default:
+			http.Error(w, "Method is not supported.", http.StatusMethodNotAllowed)
+		}
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
-	}
-}
-
-func (ua *UnitAsset) statusCheck(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case "GET":
-		ua.state(w)
-	case "POST":
-		ua.update(w, r)
-	default:
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}
 }

@@ -17,14 +17,19 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
+	"path"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
@@ -38,6 +43,7 @@ type SignalT struct {
 	Details       map[string][]string `json:"details"`
 	Period        time.Duration       `json:"samplingPeriod"`
 	Threshold     float64             `json:"threshold"`
+	EquipmentID   string              `json:"equipmentId"`
 	TOverCount    int                 `json:"-"`
 	Operational   bool                `json:"-"`
 	WorkRequested bool                `json:"-"`
@@ -45,20 +51,20 @@ type SignalT struct {
 
 //-------------------------------------Define the unit asset
 
-// Traits are Asset-specific configurable parameters
+// Traits holds the configurable parameters for the nurse unit asset.
 type Traits struct {
-	SAP_URL  string              `json:"sap_url"`
-	Signals  []SignalT           `json:"signals"`
-	owner    *components.System  `json:"-"`
-	cervices components.Cervices `json:"-"`
-	name     string              `json:"-"`
+	SAP_URL       string            `json:"sap_url"`
+	Signals       []SignalT         `json:"signals"`
+	pendingOrders map[string]string // orderID → signalName; not serialized
+	owner         *components.System
+	ua            *components.UnitAsset
 }
 
 //-------------------------------------Instantiate a unit asset template
 
 // initTemplate initializes a UnitAsset with default values.
 func initTemplate() *components.UnitAsset {
-	Operational := components.Service{
+	monitorService := components.Service{
 		Definition:  "SignalMonitoring",
 		SubPath:     "monitor",
 		Details:     map[string][]string{},
@@ -68,20 +74,20 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "HealthTracker",
-		Mission: "monitor_signal",
 		Details: map[string][]string{},
 		ServicesMap: components.Services{
-			Operational.SubPath: &Operational,
+			monitorService.SubPath: &monitorService,
 		},
 		Traits: &Traits{
-			SAP_URL: "http://sap.example.com",
+			SAP_URL: "http://192.168.1.4:8080/api/v1/maintenance-orders",
 			Signals: []SignalT{
 				{
 					Name:          "temperature",
 					Details:       map[string][]string{"Unit": {"Celsius"}},
 					Period:        4,
 					Threshold:     75.0,
-					TOverCount:    3,
+					EquipmentID:   "10000045",
+					TOverCount:    0,
 					Operational:   true,
 					WorkRequested: false,
 				},
@@ -90,13 +96,13 @@ func initTemplate() *components.UnitAsset {
 	}
 }
 
-//-------------------------------------Instantiate the unit assets based on configuration
+//-------------------------------------Instantiate unit assets based on configuration
 
-// newResource creates a new UnitAsset resource based on the configuration
+// newResource creates the unit asset with its pointers and channels based on the configuration.
 func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (*components.UnitAsset, func()) {
 	t := &Traits{
-		owner: sys,
-		name:  configuredAsset.Name,
+		owner:         sys,
+		pendingOrders: make(map[string]string),
 	}
 
 	if len(configuredAsset.Traits) > 0 {
@@ -105,7 +111,18 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		}
 	}
 
-	r := CheckServerUp(t.SAP_URL, 2*time.Second)
+	// Default all signals to operational at startup.
+	for i := range t.Signals {
+		t.Signals[i].Operational = true
+	}
+
+	// Derive the health endpoint from the SAP URL (replace the API path with /health)
+	sapHealthURL := t.SAP_URL
+	if u, err := url.Parse(t.SAP_URL); err == nil {
+		u.Path = "/health"
+		sapHealthURL = u.String()
+	}
+	r := CheckServerUp(sapHealthURL, 2*time.Second)
 	if r.Up {
 		fmt.Printf("SAP server is up (status=%d, in %s)\n", r.StatusCode, r.Duration)
 	} else {
@@ -113,31 +130,33 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 
 	sProtocols := components.SProtocols(sys.Husk.ProtoPort)
-	cervMap := make(components.Cervices)
+	cervices := make(components.Cervices)
 	for _, signal := range t.Signals {
-		cSignal := &components.Cervice{
+		cSignal := components.Cervice{
 			Definition: signal.Name,
 			Details:    signal.Details,
 			Protos:     sProtocols,
 			Nodes:      make(map[string][]string),
 		}
-		cervMap[cSignal.Definition] = cSignal
-
-		go t.sigMon(signal.Name, signal.Period*time.Second)
+		cervices[cSignal.Definition] = &cSignal
 	}
-	t.cervices = cervMap
 
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
-		Mission:     configuredAsset.Mission,
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
-		CervicesMap: cervMap,
+		CervicesMap: cervices,
 		Traits:      t,
 	}
+	t.ua = ua
 	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
 		serving(t, w, r, servicePath)
+	}
+
+	// Start a monitoring goroutine for each signal.
+	for _, signal := range t.Signals {
+		go t.sigMon(signal.Name, signal.Period*time.Second)
 	}
 
 	return ua, func() {
@@ -145,9 +164,33 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 }
 
-//-------------------------------------Unit asset's functionalities
+// findSignal returns a pointer to the named signal, or nil if not found.
+func (t *Traits) findSignal(name string) *SignalT {
+	for i := range t.Signals {
+		if t.Signals[i].Name == name {
+			return &t.Signals[i]
+		}
+	}
+	return nil
+}
 
-// sigMon periodically monitors the measurement and if it exceeds the threshold, it reports to the SAP system
+// UnmarshalTraits unmarshals a slice of json.RawMessage into a slice of Traits.
+func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
+	var traitsList []Traits
+	for _, raw := range rawTraits {
+		var t Traits
+		if err := json.Unmarshal(raw, &t); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal trait: %w", err)
+		}
+		traitsList = append(traitsList, t)
+	}
+	return traitsList, nil
+}
+
+//-------------------------------------Unit asset's function methods
+
+// sigMon periodically monitors a signal and requests maintenance when the threshold
+// is exceeded too many times. It stops monitoring once a work order is pending.
 func (t *Traits) sigMon(name string, period time.Duration) error {
 	ticker := time.NewTicker(period)
 	defer ticker.Stop()
@@ -155,43 +198,58 @@ func (t *Traits) sigMon(name string, period time.Duration) error {
 	for {
 		select {
 		case <-t.owner.Ctx.Done():
-			log.Printf("Stopping data collection for measurement: %s", name)
+			log.Printf("Stopping monitoring for signal: %s", name)
 			return t.owner.Ctx.Err()
 
 		case <-ticker.C:
-			tf, err := usecases.GetState(t.cervices[name], t.owner)
+			tf, err := usecases.GetState(t.ua.CervicesMap[name], t.owner)
 			if err != nil {
-				log.Printf("\nUnable to obtain a %s reading with error %s\n", name, err)
+				log.Printf("Unable to obtain a %s reading: %s\n", name, err)
 				continue
 			}
-			fmt.Printf("%+v\n", tf)
 			tup, ok := tf.(*forms.SignalA_v1a)
 			if !ok {
 				log.Println("Problem unpacking the signal form")
 				continue
 			}
 
-			point := fmt.Sprintf("Measurement: %s, Value: %.2f, Time: %s", name, tup.Value, time.Now().Format(time.RFC3339))
-			log.Printf("%s", point)
+			sig := t.findSignal(name)
+			if sig == nil {
+				log.Printf("Signal %s not found in configuration\n", name)
+				continue
+			}
 
-			// Check if the value exceeds the threshold
-			if tup.Value > t.Signals[0].Threshold {
-				log.Printf("ALERT: %s value %.2f exceeds threshold %.2f\n", name, tup.Value, t.Signals[0].Threshold)
-				t.Signals[0].TOverCount++
-				if t.Signals[0].TOverCount >= t.Signals[0].TOverCount {
-					t.Signals[0].Operational = false
-					t.Signals[0].WorkRequested = true
-					log.Printf("Action required: %s is not operational. Work requested.\n", name)
+			log.Printf("Measurement: %s, Value: %.2f, Time: %s\n", name, tup.Value, time.Now().Format(time.RFC3339))
+
+			// Skip while a maintenance order is already pending.
+			if sig.WorkRequested {
+				continue
+			}
+
+			if tup.Value > sig.Threshold {
+				sig.TOverCount++
+				log.Printf("ALERT: %s value %.2f exceeds threshold %.2f (count: %d/5)\n",
+					name, tup.Value, sig.Threshold, sig.TOverCount)
+				if sig.TOverCount >= 5 {
+					sig.Operational = false
+					sig.WorkRequested = true // block further retries while we attempt the order
+					log.Printf("Signal %s non-operational, requesting maintenance\n", name)
+					orderID := t.requestMaintenanceOrder(sig)
+					if orderID != "" {
+						t.pendingOrders[orderID] = name
+						log.Printf("Maintenance order %s created for signal %s\n", orderID, name)
+					} else {
+						log.Printf("SAP order failed for signal %s; monitoring paused until system restart\n", name)
+					}
 				}
-				// Here you would add the code to report the anomaly to the SAP system using t.SAP_URL
 			}
 		}
 	}
 }
 
-// state queries the bucket for the list of measurements
+// state reports the current status of all monitored signals.
 func (t *Traits) state(w http.ResponseWriter) {
-	text := "The list of measurements that are monitored by " + t.name + "\n"
+	text := "The list of measurements that are monitored by " + t.ua.Name + "\n"
 	for _, signal := range t.Signals {
 		text += fmt.Sprintf("Signal: %s, Threshold: %f, TOverCount: %d, Operational: %t, WorkRequested: %t\n",
 			signal.Name, signal.Threshold, signal.TOverCount, signal.Operational, signal.WorkRequested)
@@ -199,7 +257,67 @@ func (t *Traits) state(w http.ResponseWriter) {
 	w.Write([]byte(text))
 }
 
+// update handles an incoming completion notification and restores the signal to operational.
+// It accepts both the nurse's MaintenanceDoneEvent format (orderId) and the SAP adaptor's
+// notifyDigitalTwin format (maintenanceOrder), so either party can call this endpoint.
+func (t *Traits) update(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	log.Printf("← monitor POST from %s\n%s\n", r.RemoteAddr, string(body))
+
+	var event MaintenanceDoneEvent
+	if err := json.Unmarshal(body, &event); err != nil {
+		http.Error(w, "failed to unmarshal request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// The SAP adaptor's notifyDigitalTwin sends "maintenanceOrder" instead of "orderId".
+	// Fall back to that field if orderId was not set.
+	if event.OrderID == "" {
+		var raw map[string]json.RawMessage
+		if json.Unmarshal(body, &raw) == nil {
+			if v, ok := raw["maintenanceOrder"]; ok {
+				json.Unmarshal(v, &event.OrderID)
+			}
+			if event.Status == "" {
+				if v, ok := raw["status"]; ok {
+					json.Unmarshal(v, &event.Status)
+				}
+			}
+		}
+	}
+
+	// Find the signal that raised this order and restore it to operational.
+	if signalName, ok := t.pendingOrders[event.OrderID]; ok {
+		if sig := t.findSignal(signalName); sig != nil {
+			sig.Operational = true
+			sig.WorkRequested = false
+			sig.TOverCount = 0
+			delete(t.pendingOrders, event.OrderID)
+			log.Printf("Signal %s restored to operational (order %s: %s)\n",
+				signalName, event.OrderID, event.Status)
+		}
+	} else {
+		log.Printf("Received completion for unknown order %s\n", event.OrderID)
+	}
+
+	ttl, err := ConvertMaintenanceDoneEventToTurtle(event, "https://sinetiq.se/sap/")
+	if err != nil {
+		http.Error(w, "failed to convert to turtle: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/turtle")
+	w.Write([]byte(ttl))
+}
+
 // //-------------------------------------SAP server interaction functions
+
 type CheckResult struct {
 	Up         bool
 	StatusCode int
@@ -250,4 +368,196 @@ func CheckServerUp(rawURL string, timeout time.Duration) CheckResult {
 	defer resp.Body.Close()
 
 	return CheckResult{Up: true, StatusCode: resp.StatusCode, Duration: time.Since(start)}
+}
+
+// requestMaintenanceOrder posts a maintenance order to the SAP system for the given signal
+// and returns the SAP order ID on success, or an empty string on failure.
+func (t *Traits) requestMaintenanceOrder(sig *SignalT) string {
+	start := time.Now().Add(24 * time.Hour)
+	end := start.Add(8 * time.Hour)
+
+	payload := MaintenanceOrderEvent{
+		EquipmentID:          sig.EquipmentID,
+		FunctionalLocation:   "FL100-200-300",
+		Plant:                "1000",
+		Description:          fmt.Sprintf("Signal %s exceeded threshold %.2f", sig.Name, sig.Threshold),
+		Priority:             "3",
+		MaintenanceOrderType: "PM01",
+		PlannedStartTime:     &start,
+		PlannedEndTime:       &end,
+		Operations: []MaintenanceOperation{
+			{
+				Text:         fmt.Sprintf("Inspect and service equipment for signal %s", sig.Name),
+				WorkCenter:   "MAINT-WC01",
+				Duration:     4,
+				DurationUnit: "H",
+			},
+		},
+	}
+
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("requestMaintenanceOrder: marshal payload: %v\n", err)
+		return ""
+	}
+
+	log.Printf("→ SAP POST %s\n%s\n", t.SAP_URL, string(bodyBytes))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.SAP_URL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		log.Printf("requestMaintenanceOrder: new request: %v\n", err)
+		return ""
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("requestMaintenanceOrder: do request: %v\n", err)
+		return ""
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("requestMaintenanceOrder: read response: %v\n", err)
+		return ""
+	}
+
+	log.Printf("← SAP %s\n%s\n", resp.Status, string(respBody))
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return ""
+	}
+
+	var out MaintenanceOrderResponse
+	if err := json.Unmarshal(respBody, &out); err != nil {
+		log.Printf("requestMaintenanceOrder: unmarshal response: %v\n", err)
+		return ""
+	}
+
+	log.Printf("Maintenance order %s created for equipment %s\n", out.MaintenanceOrder, sig.EquipmentID)
+	return out.MaintenanceOrder
+}
+
+// -----------------------------Turtle conversion functions
+
+// Ack represents the incoming JSON acknowledgment from the SAP simulator.
+type Ack struct {
+	MaintenanceOrder        string `json:"maintenanceOrder"`
+	MaintenanceNotification string `json:"maintenanceNotification"`
+	Status                  string `json:"status"`
+	Message                 string `json:"message"`
+	CreatedAt               string `json:"createdAt"`
+}
+
+// ConvertAckJSONToTurtle converts the provided JSON bytes (in the Ack format) into a Turtle TTL string.
+// If baseIRI is empty, it defaults to "https://sinetiq.se/sap/".
+// Returns the TTL text or an error.
+func ConvertAckJSONToTurtle(jsonBytes []byte, baseIRI string) (string, error) {
+	var ack Ack
+	if err := json.Unmarshal(jsonBytes, &ack); err != nil {
+		return "", fmt.Errorf("unmarshal ack json: %w", err)
+	}
+
+	if baseIRI == "" {
+		baseIRI = "https://sinetiq.se/sap/"
+	}
+
+	u, err := url.Parse(baseIRI)
+	if err != nil {
+		return "", fmt.Errorf("invalid base IRI: %w", err)
+	}
+	if !strings.HasSuffix(u.Path, "/") {
+		u.Path = path.Join(u.Path, "/")
+	}
+	base := u.String()
+
+	buildIRI := func(kind, id string) string {
+		parsed, _ := url.Parse(base)
+		parsed.Path = path.Join(parsed.Path, kind, id)
+		return "<" + parsed.String() + ">"
+	}
+
+	escapeLiteral := func(s string) string {
+		return strconv.Quote(s)
+	}
+
+	var b strings.Builder
+
+	b.WriteString("@prefix ex:   <" + base + "> .\n")
+	b.WriteString("@prefix schema: <http://schema.org/> .\n")
+	b.WriteString("@prefix dcterms: <http://purl.org/dc/terms/> .\n")
+	b.WriteString("@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n\n")
+
+	orderIRI := buildIRI("MaintenanceOrder", ack.MaintenanceOrder)
+	notifIRI := buildIRI("MaintenanceNotification", ack.MaintenanceNotification)
+
+	b.WriteString(orderIRI + "\n")
+	b.WriteString("    a ex:MaintenanceOrder ;\n")
+	b.WriteString("    ex:orderNumber " + escapeLiteral(ack.MaintenanceOrder) + " ;\n")
+	b.WriteString("    ex:status " + escapeLiteral(ack.Status) + " ;\n")
+	if ack.Message != "" {
+		b.WriteString("    schema:description " + escapeLiteral(ack.Message) + " ;\n")
+	}
+	if ack.CreatedAt != "" {
+		b.WriteString("    dcterms:created " + escapeLiteral(ack.CreatedAt) + "^^xsd:dateTime ;\n")
+	}
+	b.WriteString("    ex:hasNotification " + notifIRI + " .\n\n")
+
+	b.WriteString(notifIRI + "\n")
+	b.WriteString("    a ex:MaintenanceNotification ;\n")
+	b.WriteString("    ex:notificationNumber " + escapeLiteral(ack.MaintenanceNotification) + " ;\n")
+	b.WriteString("    dcterms:isPartOf " + orderIRI + " .\n")
+
+	return b.String(), nil
+}
+
+// ConvertMaintenanceDoneEventToTurtle converts a MaintenanceDoneEvent into a Turtle TTL string.
+func ConvertMaintenanceDoneEventToTurtle(event MaintenanceDoneEvent, baseIRI string) (string, error) {
+	if baseIRI == "" {
+		baseIRI = "https://sinetiq.se/sap/"
+	}
+
+	u, err := url.Parse(baseIRI)
+	if err != nil {
+		return "", fmt.Errorf("invalid base IRI: %w", err)
+	}
+	if !strings.HasSuffix(u.Path, "/") {
+		u.Path = path.Join(u.Path, "/")
+	}
+	base := u.String()
+
+	buildIRI := func(kind, id string) string {
+		parsed, _ := url.Parse(base)
+		parsed.Path = path.Join(parsed.Path, kind, id)
+		return "<" + parsed.String() + ">"
+	}
+
+	var b strings.Builder
+	b.WriteString("@prefix ex:   <" + base + "> .\n")
+	b.WriteString("@prefix schema: <http://schema.org/> .\n")
+	b.WriteString("@prefix dcterms: <http://purl.org/dc/terms/> .\n")
+	b.WriteString("@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n\n")
+
+	orderIRI := buildIRI("MaintenanceOrder", event.OrderID)
+	b.WriteString(orderIRI + "\n")
+	b.WriteString("    a ex:MaintenanceOrder ;\n")
+	b.WriteString("    ex:orderNumber " + strconv.Quote(event.OrderID) + " ;\n")
+	b.WriteString("    ex:status " + strconv.Quote(event.Status) + " ;\n")
+	if event.CompletedAt != nil {
+		b.WriteString("    dcterms:date " + strconv.Quote(event.CompletedAt.Format(time.RFC3339)) + "^^xsd:dateTime ;\n")
+	}
+	if event.ActualWorkHours > 0 {
+		b.WriteString("    ex:actualWorkHours \"" + strconv.FormatFloat(event.ActualWorkHours, 'f', -1, 64) + "\"^^xsd:decimal ;\n")
+	}
+	if event.Notes != "" {
+		b.WriteString("    schema:description " + strconv.Quote(event.Notes) + " ;\n")
+	}
+	b.WriteString("    .\n")
+
+	return b.String(), nil
 }

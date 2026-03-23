@@ -43,7 +43,7 @@ func main() {
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
 		ProtoPort:   map[string]int{"https": 0, "http": 20181, "coap": 0},
-		InfoLink:    "https://github.com/sdoque/systems/tree/main/influxer",
+		InfoLink:    "https://github.com/sdoque/systems/tree/main/nurse",
 		DName: pkix.Name{
 			CommonName:         sys.Name,
 			Organization:       []string{"Synecdoque"},
@@ -96,17 +96,15 @@ func main() {
 func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
 	case "monitor":
-		t.statusCheck(w, r)
+		switch r.Method {
+		case http.MethodGet:
+			t.state(w)
+		case http.MethodPost:
+			t.update(w, r)
+		default:
+			http.Error(w, "Method is not supported.", http.StatusMethodNotAllowed)
+		}
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
-	}
-}
-
-func (t *Traits) statusCheck(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case "GET":
-		t.state(w)
-	default:
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}
 }

@@ -79,7 +79,7 @@ func initTemplate() *components.UnitAsset {
 			monitorService.SubPath: &monitorService,
 		},
 		Traits: &Traits{
-			SAP_URL: "http://192.168.1.4:8080/api/v1/maintenance-orders",
+			SAP_URL: "http://192.168.1.4:20191/api/v1/maintenance-orders",
 			Signals: []SignalT{
 				{
 					Name:          "temperature",

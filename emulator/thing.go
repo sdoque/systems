@@ -47,10 +47,11 @@ type STray struct {
 
 // Traits are Asset-specific configurable parameters
 type Traits struct {
-	InputFile string    `json:"inputFile"`
-	sample    float64   `json:"-"`
-	tStamp    time.Time `json:"-"`
-	trayChan  chan STray `json:"-"`
+	InputFile     string     `json:"inputFile"`
+	PlaybackSpeed float64    `json:"playbackSpeed"` // multiplier: 1 = real-time, 60 = 60× faster
+	sample        float64    `json:"-"`
+	tStamp        time.Time  `json:"-"`
+	trayChan      chan STray `json:"-"`
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -87,11 +88,10 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		trayChan: make(chan STray),
 	}
 
-	for _, raw := range configuredAsset.Traits {
-		if err := json.Unmarshal(raw, t); err != nil {
+	if len(configuredAsset.Traits) > 0 {
+		if err := json.Unmarshal(configuredAsset.Traits[0], t); err != nil {
 			log.Println("Warning: could not unmarshal traits:", err)
 		}
-		break
 	}
 
 	ua := &components.UnitAsset{
@@ -138,6 +138,9 @@ func (t *Traits) emulateAsset(ctx context.Context, details map[string][]string) 
 	}
 
 	interval := detectInterval(samples)
+	if t.PlaybackSpeed > 0 {
+		interval = time.Duration(float64(interval) / t.PlaybackSpeed)
+	}
 
 	var sigUnit string
 	if details != nil {

@@ -9,6 +9,7 @@
 *_amac
 *_ilin
 *.sh
+*.orig
 Makefile
 
 # Test binary, built with `go test -c`

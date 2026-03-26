@@ -11,7 +11,6 @@
  *
  * Contributors:
  *   Jan A. van Deventer, Luleå - initial implementation
- *   Thomas Hedeler, Hamburg - initial implementation
  ***************************************************************************SDG*/
 
 package main
@@ -31,19 +30,19 @@ import (
 
 func main() {
 	// prepare for graceful shutdown
-	ctx, cancel := context.WithCancel(context.Background()) // create a context that can be cancelled
-	defer cancel()                                          // make sure all paths cancel the context to avoid context leak
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// instantiate the System
-	sys := components.NewSystem("nurse", ctx)
+	sys := components.NewSystem("sapper", ctx)
 
 	// Instantiate the husk
 	sys.Husk = &components.Husk{
-		Description: " is a system that monitors an asset's measurements and reports to a SAP system in case of anomalies.",
+		Description: "simulates a SAP maintenance order system, exposing order creation and status as Arrowhead services.",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20181, "coap": 0},
-		InfoLink:    "https://github.com/sdoque/systems/tree/main/nurse",
+		ProtoPort:   map[string]int{"https": 0, "http": 20191, "coap": 0},
+		InfoLink:    "https://github.com/sdoque/systems/tree/main/sapper",
 		DName: pkix.Name{
 			CommonName:         sys.Name,
 			Organization:       []string{"Synecdoque"},
@@ -63,48 +62,48 @@ func main() {
 	// Configure the system
 	rawResources, err := usecases.Configure(&sys)
 	if err != nil {
-		log.Fatalf("Configuration error: %v\n", err)
+		log.Fatalf("configuration error: %v\n", err)
 	}
 	sys.UAssets = make(map[string]*components.UnitAsset) // clear the unit asset map (from the template)
 	for _, raw := range rawResources {
 		var uac usecases.ConfigurableAsset
 		if err := json.Unmarshal(raw, &uac); err != nil {
-			log.Fatalf("Resource configuration error: %+v\n", err)
+			log.Fatalf("resource configuration error: %+v\n", err)
 		}
 		ua, cleanup := newResource(uac, &sys)
 		defer cleanup()
 		sys.UAssets[ua.GetName()] = ua
 	}
 
-	// Generate PKI keys and CSR to obtain a authentication certificate from the CA
+	// Generate PKI keys and CSR to obtain an authentication certificate from the CA
 	usecases.RequestCertificate(&sys)
 
-	// Register the (system) and its services
+	// Register the system and its services
 	usecases.RegisterServices(&sys)
 
-	// start the http handler and server
+	// Start the HTTP handler and server
 	go usecases.SetoutServers(&sys)
 
-	// wait for shutdown signal, and gracefully close properly goroutines with context
-	<-sys.Sigs // wait for a SIGINT (Ctrl+C) signal
+	// Wait for shutdown signal
+	<-sys.Sigs
 	fmt.Println("\nshuting down system", sys.Name)
-	cancel()                    // cancel the context, signaling the goroutines to stop
-	time.Sleep(2 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
+	cancel()
+	time.Sleep(2 * time.Second)
 }
 
-// serving handles the resources services. NOTE: it expects those names from the request URL path
+// serving dispatches incoming HTTP requests to the appropriate handler.
 func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
-	case "monitor":
+	case "orders":
 		switch r.Method {
-		case http.MethodGet:
-			t.state(w)
 		case http.MethodPost:
-			t.update(w, r)
+			t.createOrderHandler(w, r)
+		case http.MethodGet:
+			t.queryOrderHandler(w, r)
 		default:
-			http.Error(w, "Method is not supported.", http.StatusMethodNotAllowed)
+			http.Error(w, "Method not supported", http.StatusMethodNotAllowed)
 		}
 	default:
-		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
+		http.Error(w, "Invalid service path [do not modify subpath in configuration file]", http.StatusBadRequest)
 	}
 }

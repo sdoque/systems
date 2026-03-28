@@ -136,7 +136,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			Definition: signal.Name,
 			Details:    signal.Details,
 			Protos:     sProtocols,
-			Nodes:      make(map[string][]string),
+			Nodes:      make(map[string][]components.NodeInfo),
 		}
 		cervices[cSignal.Definition] = &cSignal
 	}
@@ -242,6 +242,9 @@ func (t *Traits) sigMon(name string, period time.Duration) error {
 						log.Printf("SAP order failed for signal %s; monitoring paused until system restart\n", name)
 					}
 				}
+			} else if sig.TOverCount > 0 {
+				log.Printf("Signal %s back below threshold (resetting consecutive count from %d)\n", name, sig.TOverCount)
+				sig.TOverCount = 0
 			}
 		}
 	}

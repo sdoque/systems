@@ -100,12 +100,12 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	levelCervice := &components.Cervice{
 		Definition: "level",
 		Protos:     sProtocols,
-		Nodes:      make(map[string][]string),
+		Nodes:      make(map[string][]components.NodeInfo),
 	}
 	pumpCervice := &components.Cervice{
 		Definition: "pumpSpeed",
 		Protos:     sProtocols,
-		Nodes:      make(map[string][]string),
+		Nodes:      make(map[string][]components.NodeInfo),
 	}
 	cervMap := components.Cervices{
 		levelCervice.Definition: levelCervice,

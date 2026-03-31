@@ -41,10 +41,10 @@ type STray struct {
 
 // Traits are Asset-specific configurable parameters
 type Traits struct {
-	temperature float64   `json:"-"`
-	tStamp      time.Time `json:"-"`
+	temperature float64    `json:"-"`
+	tStamp      time.Time  `json:"-"`
 	trayChan    chan STray `json:"-"`
-	name        string    `json:"-"`
+	name        string     `json:"-"`
 }
 
 //-------------------------------------Instantiate a unit asset template

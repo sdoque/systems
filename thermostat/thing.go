@@ -32,14 +32,14 @@ import (
 
 // Traits are Asset-specific configurable parameters
 type Traits struct {
-	SetPt     float64       `json:"setPoint"`
-	Period    time.Duration `json:"samplingPeriod"`
-	Kp        float64       `json:"kp"`
-	Lambda    float64       `json:"lambda"`
-	Ki        float64       `json:"ki"`
-	jitter    time.Duration `json:"-"`
-	deviation float64       `json:"-"`
-	previousT float64       `json:"-"`
+	SetPt     float64             `json:"setPoint"`
+	Period    time.Duration       `json:"samplingPeriod"`
+	Kp        float64             `json:"kp"`
+	Lambda    float64             `json:"lambda"`
+	Ki        float64             `json:"ki"`
+	jitter    time.Duration       `json:"-"`
+	deviation float64             `json:"-"`
+	previousT float64             `json:"-"`
 	owner     *components.System  `json:"-"`
 	cervices  components.Cervices `json:"-"`
 }

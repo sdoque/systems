@@ -38,9 +38,9 @@ type mockWriteAPI struct {
 	points []*write.Point
 }
 
-func (m *mockWriteAPI) WriteRecord(_ string)                           {}
-func (m *mockWriteAPI) Flush()                                         {}
-func (m *mockWriteAPI) Errors() <-chan error                           { return make(chan error) }
+func (m *mockWriteAPI) WriteRecord(_ string)                             {}
+func (m *mockWriteAPI) Flush()                                           {}
+func (m *mockWriteAPI) Errors() <-chan error                             { return make(chan error) }
 func (m *mockWriteAPI) SetWriteFailedCallback(_ api.WriteFailedCallback) {}
 func (m *mockWriteAPI) WritePoint(p *write.Point) {
 	m.mu.Lock()

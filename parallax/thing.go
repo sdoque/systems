@@ -40,7 +40,7 @@ import (
 type Traits struct {
 	GpioPin     gpio.PinIO `json:"-"`
 	position    int        `json:"-"`
-	dutyChan    chan int    `json:"-"`
+	dutyChan    chan int   `json:"-"`
 	lastWidthUS int        `json:"-"` // last duty we wrote (µs) to debounce identical updates
 }
 

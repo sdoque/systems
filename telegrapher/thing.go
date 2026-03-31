@@ -41,14 +41,14 @@ func init() {
 // -------------------------------------Define the unit asset
 // Traits are Asset-specific configurable parameters and variables
 type Traits struct {
-	Broker   string      `json:"broker"`
-	mClient  mqtt.Client `json:"-"`
-	Pattern  []string    `json:"pattern"`
-	Username string      `json:"username"`
-	Password string      `json:"password"`
-	Topic    string      `json:"-"`      // Topic is the MQTT topic to which the unit asset subscribes or publishes
-	Period   int         `json:"period"` // Period is the time interval for periodic service consumption, e.g., 30 seconds
-	Message  []byte      `json:"-"`
+	Broker   string              `json:"broker"`
+	mClient  mqtt.Client         `json:"-"`
+	Pattern  []string            `json:"pattern"`
+	Username string              `json:"username"`
+	Password string              `json:"password"`
+	Topic    string              `json:"-"`      // Topic is the MQTT topic to which the unit asset subscribes or publishes
+	Period   int                 `json:"period"` // Period is the time interval for periodic service consumption, e.g., 30 seconds
+	Message  []byte              `json:"-"`
 	owner    *components.System  `json:"-"`
 	cervices components.Cervices `json:"-"`
 }

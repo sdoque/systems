@@ -85,7 +85,7 @@ func initTemplate() *components.UnitAsset {
 			Measurements: []MeasurementT{
 				{
 					Name:    "temperature",
-					Details: map[string][]string{"Location": {"Kitchen"}},
+					Details: map[string][]string{"FunctionalLocation": {"Kitchen"}},
 					Period:  3,
 				},
 			},

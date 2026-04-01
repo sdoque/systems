@@ -280,7 +280,9 @@ INSERT
             workrequestassignment:AssignedWorkRequest <%s> .
     }
 }
-WHERE {}`,
+where
+{
+}`,
 		// WorkOrder
 		orderURI, orderURI, orderURI,
 		o.Status, createdAt, notifURI,
@@ -299,14 +301,15 @@ WHERE {}`,
 	)
 }
 
-// insertToGraphDB prints the SPARQL UPDATE to the terminal and POSTs it to GraphDB.
-// It is a no-op when GraphDBURL is empty.
+// insertToGraphDB prints the SPARQL UPDATE to the terminal and, when GraphDBURL
+// is configured, POSTs it to GraphDB.
 func (t *Traits) insertToGraphDB(o *Order) {
+	sparql := t.buildSPARQL(o)
+	log.Printf("→ GraphDB INSERT order=%s\n%s\n", o.ID, sparql)
+
 	if t.GraphDBURL == "" {
 		return
 	}
-	sparql := t.buildSPARQL(o)
-	log.Printf("→ GraphDB INSERT order=%s\n%s\n", o.ID, sparql)
 
 	resp, err := http.Post(t.GraphDBURL, "application/sparql-update", strings.NewReader(sparql))
 	if err != nil {

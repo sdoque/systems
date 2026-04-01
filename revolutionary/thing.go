@@ -69,7 +69,7 @@ func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:    "LevelSensor_1",
 		Mission: "measure_level",
-		Details: map[string][]string{"Unit": {"Percent"}, "Location": {"UpperTank"}, "Description": {"level"}},
+		Details: map[string][]string{"Unit": {"Percent"}, "FunctionalLocation": {"UpperTank"}, "Description": {"level"}},
 		ServicesMap: components.Services{
 			access.SubPath: &access,
 		},

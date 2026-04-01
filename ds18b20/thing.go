@@ -63,7 +63,7 @@ func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:    "sensor_Id",
 		Mission: "measure_temperature",
-		Details: map[string][]string{"Unit": {"Celsius"}, "Location": {"Kitchen"}},
+		Details: map[string][]string{"Unit": {"Celsius"}, "FunctionalLocation": {"Kitchen"}},
 		ServicesMap: components.Services{
 			temperature.SubPath: &temperature,
 		},

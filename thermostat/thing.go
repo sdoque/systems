@@ -74,7 +74,7 @@ func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:    "controller_1",
 		Mission: "control_heater",
-		Details: map[string][]string{"Location": {"Kitchen"}},
+		Details: map[string][]string{"FunctionalLocation": {"Kitchen"}},
 		ServicesMap: components.Services{
 			setPointService.SubPath:     &setPointService,
 			thermalErrorService.SubPath: &thermalErrorService,

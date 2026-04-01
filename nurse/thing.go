@@ -43,10 +43,9 @@ type SignalT struct {
 	Details       map[string][]string `json:"details"`
 	Period        time.Duration       `json:"samplingPeriod"`
 	Threshold     float64             `json:"threshold"`
-	EquipmentID   string              `json:"equipmentId"`
-	TOverCount    map[string]int      `json:"-"` // consecutive over-threshold count per source node
-	Operational   bool                `json:"-"`
-	WorkRequested bool                `json:"-"`
+	TOverCount    map[string]int  `json:"-"` // consecutive over-threshold count per source node
+	WorkRequested map[string]bool `json:"-"` // pending maintenance order per source node
+	Operational   bool            `json:"-"` // false when any node has a pending order
 }
 
 //-------------------------------------Define the unit asset
@@ -79,16 +78,14 @@ func initTemplate() *components.UnitAsset {
 			monitorService.SubPath: &monitorService,
 		},
 		Traits: &Traits{
-			SAP_URL: "http://192.168.1.4:20191/api/v1/maintenance-orders",
+			SAP_URL: "http://192.168.1.108:20191/sapper/SAPSimulator/orders",
 			Signals: []SignalT{
 				{
 					Name:          "temperature",
 					Details:       map[string][]string{"Unit": {"Celsius"}},
 					Period:        4,
 					Threshold:     75.0,
-					EquipmentID:   "10000045",
-					Operational:   true,
-					WorkRequested: false,
+					Operational: true,
 				},
 			},
 		},
@@ -114,6 +111,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	for i := range t.Signals {
 		t.Signals[i].Operational = true
 		t.Signals[i].TOverCount = make(map[string]int)
+		t.Signals[i].WorkRequested = make(map[string]bool)
 	}
 
 	// Derive the health endpoint from the SAP URL (replace the API path with /health)
@@ -208,11 +206,6 @@ func (t *Traits) sigMon(name string, period time.Duration) error {
 				continue
 			}
 
-			// Skip while a maintenance order is already pending.
-			if sig.WorkRequested {
-				continue
-			}
-
 			cer := t.ua.CervicesMap[name]
 
 			// Discover all providers on the first tick or after a failure cleared the list.
@@ -231,6 +224,10 @@ func (t *Traits) sigMon(name string, period time.Duration) error {
 					break
 				}
 				for _, ni := range nodeInfos {
+					// Skip this node while its maintenance order is pending.
+					if sig.WorkRequested[node] {
+						continue
+					}
 					tmp := &components.Cervice{
 						Definition: cer.Definition,
 						Details:    ni.Details,
@@ -259,9 +256,14 @@ func (t *Traits) sigMon(name string, period time.Duration) error {
 							name, node, tup.Value, sig.Threshold, sig.TOverCount[node])
 						if sig.TOverCount[node] >= 5 {
 							sig.Operational = false
-							sig.WorkRequested = true
+							sig.WorkRequested[node] = true
 							log.Printf("Signal %s/%s non-operational, requesting maintenance\n", name, node)
-							orderID := t.requestMaintenanceOrder(sig)
+							equipmentID := assetNameFromURL(ni.URL)
+							location := ""
+							if locs, ok := ni.Details["FunctionalLocation"]; ok && len(locs) > 0 {
+								location = locs[0]
+							}
+							orderID := t.requestMaintenanceOrder(sig, equipmentID, location)
 							if orderID != "" {
 								t.pendingOrders[orderID] = name
 								log.Printf("Maintenance order %s created for signal %s/%s\n", orderID, name, node)
@@ -291,8 +293,15 @@ func (t *Traits) state(w http.ResponseWriter) {
 		if counts == "" {
 			counts = " none"
 		}
-		text += fmt.Sprintf("Signal: %s, Threshold: %f, TOverCount:[%s], Operational: %t, WorkRequested: %t\n",
-			signal.Name, signal.Threshold, counts, signal.Operational, signal.WorkRequested)
+		pending := ""
+		for node := range signal.WorkRequested {
+			pending += " " + node
+		}
+		if pending == "" {
+			pending = " none"
+		}
+		text += fmt.Sprintf("Signal: %s, Threshold: %f, TOverCount:[%s], Operational: %t, WorkRequested:[%s]\n",
+			signal.Name, signal.Threshold, counts, signal.Operational, pending)
 	}
 	w.Write([]byte(text))
 }
@@ -308,7 +317,12 @@ func (t *Traits) update(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	log.Printf("← monitor POST from %s\n%s\n", r.RemoteAddr, string(body))
+	var prettyBody bytes.Buffer
+	if err := json.Indent(&prettyBody, body, "", "  "); err == nil {
+		log.Printf("← monitor POST from %s\n%s\n", r.RemoteAddr, prettyBody.String())
+	} else {
+		log.Printf("← monitor POST from %s\n%s\n", r.RemoteAddr, string(body))
+	}
 
 	var event MaintenanceDoneEvent
 	if err := json.Unmarshal(body, &event); err != nil {
@@ -336,7 +350,7 @@ func (t *Traits) update(w http.ResponseWriter, r *http.Request) {
 	if signalName, ok := t.pendingOrders[event.OrderID]; ok {
 		if sig := t.findSignal(signalName); sig != nil {
 			sig.Operational = true
-			sig.WorkRequested = false
+			sig.WorkRequested = make(map[string]bool)
 			sig.TOverCount = make(map[string]int)
 			delete(t.pendingOrders, event.OrderID)
 			log.Printf("Signal %s restored to operational (order %s: %s)\n",
@@ -410,15 +424,29 @@ func CheckServerUp(rawURL string, timeout time.Duration) CheckResult {
 	return CheckResult{Up: true, StatusCode: resp.StatusCode, Duration: time.Since(start)}
 }
 
+// assetNameFromURL extracts the unit asset name from an Arrowhead service URL.
+// The path structure is /<system>/<asset>/<service>, so the asset is segment [2].
+func assetNameFromURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[1]
+}
+
 // requestMaintenanceOrder posts a maintenance order to the SAP system for the given signal
 // and returns the SAP order ID on success, or an empty string on failure.
-func (t *Traits) requestMaintenanceOrder(sig *SignalT) string {
+func (t *Traits) requestMaintenanceOrder(sig *SignalT, equipmentID string, location string) string {
 	start := time.Now().Add(24 * time.Hour)
 	end := start.Add(8 * time.Hour)
 
 	payload := MaintenanceOrderEvent{
-		EquipmentID:          sig.EquipmentID,
-		FunctionalLocation:   "FL100-200-300",
+		EquipmentID:          equipmentID,
+		FunctionalLocation:   location,
 		Plant:                "1000",
 		Description:          fmt.Sprintf("Signal %s exceeded threshold %.2f", sig.Name, sig.Threshold),
 		Priority:             "3",
@@ -427,6 +455,7 @@ func (t *Traits) requestMaintenanceOrder(sig *SignalT) string {
 		PlannedEndTime:       &end,
 		Operations: []MaintenanceOperation{
 			{
+				OperationID:  "0010",
 				Text:         fmt.Sprintf("Inspect and service equipment for signal %s", sig.Name),
 				WorkCenter:   "MAINT-WC01",
 				Duration:     4,
@@ -435,7 +464,7 @@ func (t *Traits) requestMaintenanceOrder(sig *SignalT) string {
 		},
 	}
 
-	bodyBytes, err := json.Marshal(payload)
+	bodyBytes, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		log.Printf("requestMaintenanceOrder: marshal payload: %v\n", err)
 		return ""
@@ -467,7 +496,12 @@ func (t *Traits) requestMaintenanceOrder(sig *SignalT) string {
 		return ""
 	}
 
-	log.Printf("← SAP %s\n%s\n", resp.Status, string(respBody))
+	var prettyResp bytes.Buffer
+	if err := json.Indent(&prettyResp, respBody, "", "  "); err == nil {
+		log.Printf("← SAP %s\n%s\n", resp.Status, prettyResp.String())
+	} else {
+		log.Printf("← SAP %s\n%s\n", resp.Status, string(respBody))
+	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return ""
@@ -479,7 +513,7 @@ func (t *Traits) requestMaintenanceOrder(sig *SignalT) string {
 		return ""
 	}
 
-	log.Printf("Maintenance order %s created for equipment %s\n", out.MaintenanceOrder, sig.EquipmentID)
+	log.Printf("Maintenance order %s created for equipment %s\n", out.MaintenanceOrder, equipmentID)
 	return out.MaintenanceOrder
 }
 

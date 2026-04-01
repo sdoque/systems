@@ -70,7 +70,7 @@ func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:    "signal",
 		Mission: "replay_signal",
-		Details: map[string][]string{"Unit": {"Celsius"}, "Location": {"Kitchen"}},
+		Details: map[string][]string{"Unit": {"Celsius"}, "FunctionalLocation": {"Kitchen"}},
 		ServicesMap: components.Services{
 			stream.SubPath: &stream,
 		},

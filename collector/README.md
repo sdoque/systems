@@ -1,81 +1,162 @@
 # mbaigo System: Collector
 
-The Collector is a system that as for asset the time series database [InfluxDB](https://en.wikipedia.org/wiki/InfluxDB).
+The Collector is an Arrowhead-compliant system whose asset is a time-series
+database ([InfluxDB](https://en.wikipedia.org/wiki/InfluxDB)). It periodically
+discovers every provider of each configured measurement type via the Arrowhead
+Service Registry, queries all of them individually, and writes each reading as
+a tagged data point into an InfluxDB bucket.
 
-It offers one services, *squery*. squery provides a list of signals present in its bucket’s measurements.
+## Services
 
-In the configuration file, the specifics to connect to the database have to be entered and which signals are to be recorded and at which sampling rate.
+| Sub-path | Method | Description |
+|----------|--------|-------------|
+| `mquery` | GET    | Returns the list of measurements currently present in the configured InfluxDB bucket. |
+
+## How it works
+
+Each measurement entry in the configuration file describes:
+- **serviceDefinition** — the Arrowhead service name to look up (e.g. `pressure`)
+- **mdetails** — optional filter details passed to the orchestrator
+- **samplingPeriod** — polling interval in seconds
+
+On every tick the Collector:
+1. Calls `Search4MultipleServices` to discover *all* registered providers of that measurement type.
+2. Iterates over every discovered node; for each one it performs an HTTP GET to retrieve a `SignalA_v1a` form.
+3. Writes one InfluxDB point per provider, tagged with the **source** node name and any metadata (e.g. `Unit`, `Location`) that the provider registered with the orchestrator.
+4. If a provider returns an error its node entry is cleared so re-discovery happens on the next tick.
+
+### Sequence diagram
+
+```mermaid
+sequenceDiagram
+    participant Collector
+    participant Orchestrator
+    participant Provider as Signal Provider(s)
+    participant InfluxDB
+
+    note over Collector: startup — newResource()
+
+    Collector->>Orchestrator: RegisterServices (mquery)
+    Orchestrator-->>Collector: 201 Created
+
+    loop every samplingPeriod
+        alt Nodes list is empty (first tick or after failure)
+            Collector->>Orchestrator: Search4MultipleServices(serviceDefinition)
+            Orchestrator-->>Collector: list of NodeInfo {URL, Details}
+        end
+
+        loop for each discovered node
+            Collector->>Provider: GET <node URL>
+            Provider-->>Collector: SignalA_v1a {value, unit, timestamp}
+
+            alt successful response
+                Collector->>InfluxDB: WritePoint(measurement, tags={source, Unit, …}, value)
+            else HTTP or JSON error
+                Collector->>Collector: clear Nodes → re-discover next tick
+            end
+        end
+    end
+
+    note over Collector: SIGINT received
+    Collector->>InfluxDB: Flush & Close client
+```
+
+### Configuration example (`systemconfig.json` traits section)
+
+```json
+{
+  "db_url": "http://localhost:8086",
+  "token": "<influxdb-token>",
+  "organization": "myorg",
+  "bucket": "demo",
+  "measurements": [
+    {
+      "serviceDefinition": "pressure",
+      "mdetails": {},
+      "samplingPeriod": 4
+    }
+  ]
+}
+```
 
 ## Status
-As with the other systems, this is a prototype that shows that the mbaigo library can be used with ease.
+
+Prototype demonstrating that the mbaigo library can simultaneously collect the
+same measurement type from multiple distributed providers and store them as
+distinguishable time series in a single InfluxDB bucket.
 
 ## Compiling
-To compile the code, one needs to get the AiGo module
-```go get github.com/vanDeventer/mbaigo```
-and initialize the *go.mod* file with ``` go mod init github.com/vanDeventer/arrowsys/collector``` before running *go mod tidy*.
 
-The reason the *go.mod* file is not included in the repository is that when developing the mbaigo module, a replace statement needs to be included to point to the development code.
+Fetch the mbaigo module and tidy dependencies:
 
-To run the code, one just needs to type in ```go run Collector.go thing.go``` within a terminal or at a command prompt.
+```bash
+go get github.com/sdoque/mbaigo
+go mod tidy
+```
 
-It is **important** to start the program from within its own directory (and each system should have their own directory) because it looks for its configuration file there. If it does not find it there, it will generate one and shutdown to allow the configuration file to be updated.
+Run directly:
 
-The configuration and operation of the system can be verified using the system's web server using a standard web browser, whose address is provided by the system at startup.
+```bash
+go run collector.go thing.go
+```
 
-To build the software for one's own machine,
-```go build -o Collector```.
+> It is **important** to start the program from within its own directory because
+> it looks for `systemconfig.json` there. If the file is missing it is generated
+> automatically and the program exits so the file can be edited before the next
+> start.
 
+Build for the local machine:
 
-## Cross compiling/building
-The following commands enable one to build for different platforms:
-- Intel Mac:  ```GOOS=darwin GOARCH=amd64 go build -o Collector_imac```
-- ARM Mac: ```GOOS=darwin GOARCH=arm64 go build -o Collector_amac ```
-- Windows 64: ```GOOS=windows GOARCH=amd64 go build -o Collector.exe```
-- Raspberry Pi 64: ```GOOS=linux GOARCH=arm64 go build -o Collector_rpi64```
-- Linux: ```GOOS=linux GOARCH=amd64 go build -o Collector_linux```
+```bash
+go build -o Collector
+```
 
-One can find a complete list of platform by typing *‌go tool dist list* at the command prompt
+## Cross-compiling
 
-If one wants to secure copy it to a Raspberry pi,
-`scp Collector_rpi64 jan@192.168.1.10:rpiExec/Collector/` where user is the *username* @ the *IP address* of the Raspberry Pi with a relative (to the user's home directory) target *rpiExec/Collector/* directory.Collector
+| Target | Command |
+|--------|---------|
+| Intel Mac | `GOOS=darwin GOARCH=amd64 go build -o Collector_imac` |
+| ARM Mac | `GOOS=darwin GOARCH=arm64 go build -o Collector_amac` |
+| Windows 64 | `GOOS=windows GOARCH=amd64 go build -o Collector.exe` |
+| Raspberry Pi 64 | `GOOS=linux GOARCH=arm64 go build -o Collector_rpi64` |
+| Linux x86-64 | `GOOS=linux GOARCH=amd64 go build -o Collector_linux` |
 
+Full platform list: `go tool dist list`
 
-## Deployment of the asset
-Following https://docs.influxdata.com/influxdb/v2/install/?t=Linux
+Copy to a Raspberry Pi:
 
-1. Open your terminal (you’re already using SSH, so you should be connected to your Raspberry Pi for remote installation).
+```bash
+scp Collector_rpi64 jan@192.168.1.10:rpiExec/Collector/
+```
 
-2. **First command** to download the key file:
-   ```bash
-   curl --silent --location -O https://repos.influxdata.com/influxdata-archive.key
-   ```
+## Deploying InfluxDB (Linux / Raspberry Pi)
 
-3. **Second command** to verify the key's checksum:
-   ```bash
-   echo "943666881a1b8d9b849b74caebf02d3465d6beb716510d86a39f6c8e8dac7515  influxdata-archive.key" | sha256sum --check -
-   ```
-   Check for a message that says something like "influxdata-archive.key: OK" to ensure the checksum is valid.
+Follow the [official instructions](https://docs.influxdata.com/influxdb/v2/install/?t=Linux):
 
-4. **Third command** to convert the key and place it in the correct location:
-   ```bash
-   cat influxdata-archive.key | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/influxdata-archive.gpg > /dev/null
-   ```
+```bash
+# 1. Download the signing key
+curl --silent --location -O https://repos.influxdata.com/influxdata-archive.key
 
-5. **Fourth command** to add the InfluxDB repository:
-   ```bash
-   echo 'deb [signed-by=/etc/apt/trusted.gpg.d/influxdata-archive.gpg] https://repos.influxdata.com/debian stable main' | sudo tee /etc/apt/sources.list.d/influxdata.list
-   ```
+# 2. Verify the checksum
+echo "943666881a1b8d9b849b74caebf02d3465d6beb716510d86a39f6c8e8dac7515  influxdata-archive.key" \
+  | sha256sum --check -
 
-6. **Final two commands** to update the package list and install InfluxDB:
-   ```bash
-   sudo apt-get update
-   sudo apt-get install influxdb2
-   ```
+# 3. Trust the key
+cat influxdata-archive.key | gpg --dearmor \
+  | sudo tee /etc/apt/trusted.gpg.d/influxdata-archive.gpg > /dev/null
 
-Make sure to run each command separately, one after the other. If any step gives you an error, stop and troubleshoot that specific issue before proceeding.
+# 4. Add the repository
+echo 'deb [signed-by=/etc/apt/trusted.gpg.d/influxdata-archive.gpg] https://repos.influxdata.com/debian stable main' \
+  | sudo tee /etc/apt/sources.list.d/influxdata.list
 
-Start the InfluxDB service
-```sudo service influxdb start```
+# 5. Install
+sudo apt-get update
+sudo apt-get install influxdb2
+```
 
-Check the status of the service ```sudo service influxdb status```
+Start and verify the service:
 
+```bash
+sudo service influxdb start
+sudo service influxdb status
+```

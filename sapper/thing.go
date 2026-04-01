@@ -17,11 +17,13 @@ package main
 
 import (
 	"bytes"
+	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,6 +37,7 @@ import (
 // Traits holds the configurable parameters for the sapper unit asset.
 type Traits struct {
 	CompletionDelay time.Duration `json:"completionDelay"` // stored as seconds; multiplied by time.Second at runtime
+	GraphDBURL      string        `json:"graphDbUrl"`       // SPARQL update endpoint; empty = disabled
 	orders          map[string]*Order
 	mu              sync.Mutex
 	seq             atomic.Int64 // monotonic counter for order IDs
@@ -88,7 +91,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	monitorCervice := &components.Cervice{
 		Definition: "SignalMonitoring",
 		Protos:     sProtocols,
-		Nodes:      make(map[string][]string),
+		Nodes:      make(map[string][]components.NodeInfo),
 	}
 	t.monitor = monitorCervice
 
@@ -171,7 +174,7 @@ func (t *Traits) runLifecycle(o *Order) {
 // discoverMonitor is a variable so tests can substitute a fake implementation
 // without needing a running Arrowhead orchestrator.
 var discoverMonitor = func(c *components.Cervice, sys *components.System) error {
-	c.Nodes = make(map[string][]string) // reset so each call triggers fresh discovery
+	c.Nodes = make(map[string][]components.NodeInfo) // reset so each call triggers fresh discovery
 	return usecases.Search4Services(c, sys)
 }
 
@@ -185,9 +188,9 @@ func (t *Traits) notifyConsumer(o *Order) {
 
 	// Pick the first discovered URL.
 	var callbackURL string
-	for _, urls := range t.monitor.Nodes {
-		if len(urls) > 0 {
-			callbackURL = urls[0]
+	for _, nodes := range t.monitor.Nodes {
+		if len(nodes) > 0 {
+			callbackURL = nodes[0].URL
 			break
 		}
 	}
@@ -221,6 +224,103 @@ func (t *Traits) notifyConsumer(o *Order) {
 	log.Printf("← monitor %s  body=%s\n", resp.Status, string(msg))
 }
 
+//-------------------------------------GraphDB SPARQL insert
+
+// buildSPARQL constructs the SPARQL UPDATE statement for a newly created order.
+func (t *Traits) buildSPARQL(o *Order) string {
+	orderURI := "https://sinetiq.se/sap/MaintenanceOrder/" + o.ID
+	notifURI := "https://sinetiq.se/sap/MaintenanceNotification/" + o.Notification
+	equipHash := fmt.Sprintf("%x", md5.Sum([]byte(o.Request.EquipmentID)))
+	createdAt := o.CreatedAt.UTC().Format(time.RFC3339Nano)
+	desc := strings.ReplaceAll(o.Request.Description, `"`, `\"`) // escape any quotes
+
+	return fmt.Sprintf(`PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX ex: <https://sinetiq.se/sap/>
+PREFIX schema: <http://schema.org/>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX step: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/>
+PREFIX workorder: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkOrder>
+PREFIX workrequest: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkRequest>
+PREFIX workrequestassignment: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkRequestAssignment>
+PREFIX identifier: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/Identifier>
+INSERT
+{
+    GRAPH<https://arrowheadweb.org/graph/sap/workorders>
+    {
+        # step:WorkOrder
+        <%s> a step:WorkOrder ;
+            workorder:Id <%s-id> ;
+            workorder:Description <%s-description> ;
+            ex:status "%s" ;
+            dcterms:created "%s"^^xsd:dateTime ;
+            workorder:InResponseTo <%s> .
+
+        <%s-id> a step:Identifier ;
+            identifier:Id "%s" .
+
+        <%s-description> a step:LocalizedString ;
+            rdfs:label "Maintenance order created successfully"@en .
+
+        # step:WorkRequest
+        <%s> a step:WorkRequest ;
+            workrequest:Id <%s-id> ;
+            workrequest:Description <%s-description> ;
+            dcterms:isPartOf <%s> .
+
+        <%s-id> a step:Identifier ;
+            identifier:Id "%s" .
+
+        <%s-description> a step:LocalizedString ;
+            rdfs:label "%s"@en .
+
+        # step:WorkRequestAssignment
+        <%s-WRA> a step:WorkRequestAssignment ;
+            workrequestassignment:AssignedTo <https://arrowheadweb.org/data/%s> ;
+            workrequestassignment:AssignedWorkRequest <%s> .
+    }
+}
+where
+{
+}`,
+		// WorkOrder
+		orderURI, orderURI, orderURI,
+		o.Status, createdAt, notifURI,
+		// WorkOrder-id
+		orderURI, o.ID,
+		// WorkOrder-description
+		orderURI,
+		// WorkRequest
+		notifURI, notifURI, notifURI, orderURI,
+		// WorkRequest-id
+		notifURI, o.Notification,
+		// WorkRequest-description
+		notifURI, desc,
+		// WorkRequestAssignment
+		notifURI, equipHash, notifURI,
+	)
+}
+
+// insertToGraphDB prints the SPARQL UPDATE to the terminal and, when GraphDBURL
+// is configured, POSTs it to GraphDB.
+func (t *Traits) insertToGraphDB(o *Order) {
+	sparql := t.buildSPARQL(o)
+	log.Printf("→ GraphDB INSERT order=%s\n%s\n", o.ID, sparql)
+
+	if t.GraphDBURL == "" {
+		return
+	}
+
+	resp, err := http.Post(t.GraphDBURL, "application/sparql-update", strings.NewReader(sparql))
+	if err != nil {
+		log.Printf("insertToGraphDB: POST failed: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+	msg, _ := io.ReadAll(resp.Body)
+	log.Printf("← GraphDB %s  body=%s\n", resp.Status, string(msg))
+}
+
 //-------------------------------------HTTP handlers
 
 // createOrderHandler handles POST /orders — creates a new maintenance order.
@@ -237,6 +337,7 @@ func (t *Traits) createOrderHandler(w http.ResponseWriter, r *http.Request) {
 
 	o := t.createOrder(req)
 	log.Printf("order created: id=%s equipment=%s\n", o.ID, req.EquipmentID)
+	go t.insertToGraphDB(o)
 
 	resp := OrderResponse{
 		MaintenanceOrder:        o.ID,

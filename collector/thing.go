@@ -85,7 +85,7 @@ func initTemplate() *components.UnitAsset {
 			Measurements: []MeasurementT{
 				{
 					Name:    "temperature",
-					Details: map[string][]string{"Location": {"Kitchen"}},
+					Details: map[string][]string{"FunctionalLocation": {"Kitchen"}},
 					Period:  3,
 				},
 			},
@@ -126,7 +126,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			Definition: measurement.Name,
 			Details:    measurement.Details,
 			Protos:     sProtocols,
-			Nodes:      make(map[string][]string),
+			Nodes:      make(map[string][]components.NodeInfo),
 		}
 		cervMap[cMeasurement.Definition] = cMeasurement
 	}
@@ -167,7 +167,9 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 
 //-------------------------------------Unit asset's functionalities
 
-// collectIngest collects measurements and ingests them into InfluxDB
+// collectIngest discovers all providers of a measurement type and ingests a reading
+// from each one into InfluxDB on every tick. Each point is tagged with the source
+// node name so readings from different assets remain distinguishable in the bucket.
 func (t *Traits) collectIngest(name string, period time.Duration, writeAPI api.WriteAPI) error {
 	ticker := time.NewTicker(period)
 	defer ticker.Stop()
@@ -179,34 +181,58 @@ func (t *Traits) collectIngest(name string, period time.Duration, writeAPI api.W
 			return t.owner.Ctx.Err()
 
 		case <-ticker.C:
-			tf, err := usecases.GetState(t.cervices[name], t.owner)
-			if err != nil {
-				log.Printf("\nUnable to obtain a %s reading with error %s\n", name, err)
-				continue
-			}
-			fmt.Printf("%+v\n", tf)
-			tup, ok := tf.(*forms.SignalA_v1a)
-			if !ok {
-				log.Println("Problem unpacking the signal form")
-				continue
-			}
+			cer := t.cervices[name]
 
-			metaD := t.cervices[name].Details
-
-			// Convert metaD (map[string][]string) into InfluxDB tags (map[string]string)
-			tags := make(map[string]string)
-			for key, values := range metaD {
-				tags[key] = strings.Join(values, ",")
+			// Discover all providers of this measurement type on the first tick
+			// or after a previous failure cleared the node list.
+			if len(cer.Nodes) == 0 {
+				if err := usecases.Search4MultipleServices(cer, t.owner); err != nil {
+					log.Printf("discovery failed for %s: %v\n", name, err)
+					continue
+				}
+				log.Printf("discovered %d node(s) for %s\n", len(cer.Nodes), name)
 			}
 
-			point := write.NewPoint(
-				name,
-				tags,
-				map[string]interface{}{"value": tup.Value},
-				time.Now(),
-			)
+			// Query each provider individually so we can tag the point with its node name
+			// and the provider's registered details (unit, location, etc.).
+			for node, nodeInfos := range cer.Nodes {
+				for _, ni := range nodeInfos {
+					// Build a temporary single-entry cervice; pre-populated Nodes skip re-discovery.
+					tmp := &components.Cervice{
+						Definition: cer.Definition,
+						Details:    ni.Details,
+						Protos:     cer.Protos,
+						Nodes:      map[string][]components.NodeInfo{node: {ni}},
+					}
+					tf, err := usecases.GetState(tmp, t.owner)
+					if err != nil {
+						log.Printf("unable to read %s from %s: %v — re-discovering next tick\n", name, node, err)
+						cer.Nodes = make(map[string][]components.NodeInfo) // reset so next tick re-discovers
+						break
+					}
+					tup, ok := tf.(*forms.SignalA_v1a)
+					if !ok {
+						log.Printf("unexpected form from %s for %s\n", node, name)
+						continue
+					}
 
-			writeAPI.WritePoint(point)
+					// Tag with the node name plus all details the provider registered
+					// (e.g. Unit, Location) so streams are distinguishable in InfluxDB.
+					tags := map[string]string{"source": node}
+					for key, values := range ni.Details {
+						tags[key] = strings.Join(values, ",")
+					}
+
+					point := write.NewPoint(
+						name,
+						tags,
+						map[string]interface{}{"value": tup.Value},
+						time.Now(),
+					)
+					writeAPI.WritePoint(point)
+					log.Printf("collected %s from %-20s  value=%.4f\n", name, node, tup.Value)
+				}
+			}
 		}
 	}
 }

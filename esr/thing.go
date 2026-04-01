@@ -54,6 +54,9 @@ type Traits struct {
 	leadingSince     time.Time
 	leadingRegistrar *components.CoreSystem
 	mu               sync.Mutex
+	subscribers      map[int]chan struct{} // SSE listeners, keyed by connection ID
+	subMu            sync.Mutex
+	subSeq           int
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -108,6 +111,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		recCount:        1, // 0 is used for non-registered services
 		sched:           cleaningScheduler,
 		requests:        make(chan ServiceRegistryRequest),
+		subscribers:     make(map[int]chan struct{}),
 	}
 
 	ua := &components.UnitAsset{
@@ -205,6 +209,7 @@ func (t *Traits) serviceRegistryHandler() {
 			t.serviceRegistry[rec.Id] = *rec
 			request.Record = rec
 			t.mu.Unlock()
+			t.notify()
 			request.Error <- nil
 
 		case "read":
@@ -234,6 +239,7 @@ func (t *Traits) serviceRegistryHandler() {
 				log.Printf("The service with ID %d has been deleted.", request.Id)
 			}
 			t.mu.Unlock()
+			t.notify()
 			request.Error <- nil
 		}
 	}
@@ -276,20 +282,37 @@ func (t *Traits) FilterByServiceDefinitionAndDetails(desiredDefinition string, r
 // checkExpiration deletes a service record if its validity has lapsed.
 func checkExpiration(t *Traits, servId int) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	dbRec := t.serviceRegistry[servId]
 	expiration, err := time.Parse(time.RFC3339, dbRec.EndOfValidity)
 	if err != nil {
+		t.mu.Unlock()
 		log.Printf("Time parsing problem when checking service expiration")
 		return
 	}
+	deleted := false
 	if time.Now().After(expiration) {
-		if _, exists := t.serviceRegistry[servId]; !exists {
-			return
+		if _, exists := t.serviceRegistry[servId]; exists {
+			delete(t.serviceRegistry, servId)
+			t.sched.RemoveTask(servId)
+			deleted = true
+			log.Printf("The service with ID %d has been deleted because it was not renewed.", servId)
 		}
-		delete(t.serviceRegistry, servId)
-		t.sched.RemoveTask(servId)
-		log.Printf("The service with ID %d has been deleted because it was not renewed.", servId)
+	}
+	t.mu.Unlock()
+	if deleted {
+		t.notify()
+	}
+}
+
+// notify wakes all active SSE subscribers with a non-blocking send.
+func (t *Traits) notify() {
+	t.subMu.Lock()
+	defer t.subMu.Unlock()
+	for _, ch := range t.subscribers {
+		select {
+		case ch <- struct{}{}:
+		default: // subscriber goroutine is busy; it will catch up on the next event
+		}
 	}
 }
 

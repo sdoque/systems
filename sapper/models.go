@@ -33,10 +33,22 @@ type OrderRequest struct {
 
 // OrderOperation is a single work step within an order.
 type OrderOperation struct {
-	Text         string  `json:"text"`
-	WorkCenter   string  `json:"workCenter,omitempty"`
-	Duration     float64 `json:"duration,omitempty"`
-	DurationUnit string  `json:"durationUnit,omitempty"`
+	OperationID  string           `json:"operationId,omitempty"`
+	Text         string           `json:"text"`
+	WorkCenter   string           `json:"workCenter,omitempty"`
+	Duration     float64          `json:"duration,omitempty"`
+	DurationUnit string           `json:"durationUnit,omitempty"`
+	Components   []OrderComponent `json:"components,omitempty"`
+}
+
+// OrderComponent is a material or part required for an operation.
+type OrderComponent struct {
+	Material        string  `json:"material"`
+	Description     string  `json:"description,omitempty"`
+	Quantity        float64 `json:"quantity"`
+	Unit            string  `json:"unit,omitempty"`
+	Plant           string  `json:"plant,omitempty"`
+	StorageLocation string  `json:"storageLocation,omitempty"`
 }
 
 // OrderResponse is returned after a successful POST to /orders.

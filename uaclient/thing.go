@@ -80,7 +80,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "PLC with OPC UA server",
-		Details: map[string][]string{"PLC": {"Prosys_Simulation_Server"}, "Location": {"Line_1"}, "KKS": {"YLLCP001"}},
+		Details: map[string][]string{"PLC": {"Prosys_Simulation_Server"}, "FunctionalLocation": {"Line_1"}, "KKS": {"YLLCP001"}},
 		ServicesMap: components.Services{
 			browse.SubPath: &browse,
 			access.SubPath: &access,

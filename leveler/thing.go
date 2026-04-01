@@ -76,7 +76,7 @@ func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:    "Leveler_1",
 		Mission: "control_level",
-		Details: map[string][]string{"Location": {"UpperTank"}},
+		Details: map[string][]string{"FunctionalLocation": {"UpperTank"}},
 		ServicesMap: components.Services{
 			setPointService.SubPath:   &setPointService,
 			levelErrorService.SubPath: &levelErrorService,
@@ -100,12 +100,12 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	levelCervice := &components.Cervice{
 		Definition: "level",
 		Protos:     sProtocols,
-		Nodes:      make(map[string][]string),
+		Nodes:      make(map[string][]components.NodeInfo),
 	}
 	pumpCervice := &components.Cervice{
 		Definition: "pumpSpeed",
 		Protos:     sProtocols,
-		Nodes:      make(map[string][]string),
+		Nodes:      make(map[string][]components.NodeInfo),
 	}
 	cervMap := components.Cervices{
 		levelCervice.Definition: levelCervice,
@@ -136,7 +136,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		serving(t, w, r, servicePath)
 	}
 
-	ua.CervicesMap["level"].Details = components.MergeDetails(ua.Details, map[string][]string{"Unit": {"Percent"}, "Forms": {"SignalA_v1a"}, "Location": {"UpperTank"}})
+	ua.CervicesMap["level"].Details = components.MergeDetails(ua.Details, map[string][]string{"Unit": {"Percent"}, "Forms": {"SignalA_v1a"}, "FunctionalLocation": {"UpperTank"}})
 	ua.CervicesMap["pumpSpeed"].Details = components.MergeDetails(ua.Details, map[string][]string{"Unit": {"Percent"}, "Forms": {"SignalA_v1a"}})
 
 	go t.feedbackLoop(sys.Ctx)

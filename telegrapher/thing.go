@@ -41,14 +41,14 @@ func init() {
 // -------------------------------------Define the unit asset
 // Traits are Asset-specific configurable parameters and variables
 type Traits struct {
-	Broker   string      `json:"broker"`
-	mClient  mqtt.Client `json:"-"`
-	Pattern  []string    `json:"pattern"`
-	Username string      `json:"username"`
-	Password string      `json:"password"`
-	Topic    string      `json:"-"`      // Topic is the MQTT topic to which the unit asset subscribes or publishes
-	Period   int         `json:"period"` // Period is the time interval for periodic service consumption, e.g., 30 seconds
-	Message  []byte      `json:"-"`
+	Broker   string              `json:"broker"`
+	mClient  mqtt.Client         `json:"-"`
+	Pattern  []string            `json:"pattern"`
+	Username string              `json:"username"`
+	Password string              `json:"password"`
+	Topic    string              `json:"-"`      // Topic is the MQTT topic to which the unit asset subscribes or publishes
+	Period   int                 `json:"period"` // Period is the time interval for periodic service consumption, e.g., 30 seconds
+	Message  []byte              `json:"-"`
 	owner    *components.System  `json:"-"`
 	cervices components.Cervices `json:"-"`
 }
@@ -148,12 +148,21 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		newCervice := &components.Cervice{
 			Definition: service,
 			Protos:     sProtocols,
-			Nodes:      make(map[string][]string),
+			Nodes:      make(map[string][]components.NodeInfo),
 		}
 		newCervice.Details = topicDetrails
 		cervMap := components.Cervices{newCervice.Definition: newCervice}
 		t.cervices = cervMap
 		ua.CervicesMap = cervMap
+
+		publish := components.Service{
+			Definition:  service,
+			SubPath:     "publish",
+			Details:     map[string][]string{"forms": {"text/plain"}},
+			RegPeriod:   30,
+			Description: "Describes the source service being published to MQTT (GET)",
+		}
+		ua.ServicesMap = components.Services{publish.SubPath: &publish}
 	}
 
 	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
@@ -241,6 +250,29 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 }
 
 //-------------------------------------Unit asset's resource functions
+
+// publishInfo writes a human-readable description of what is being published to MQTT.
+func (t *Traits) publishInfo(w http.ResponseWriter) {
+	cer := t.cervices[strings.Split(t.Topic, "/")[len(strings.Split(t.Topic, "/"))-1]]
+	sources := []string{}
+	if cer != nil {
+		for _, nodeInfos := range cer.Nodes {
+			for _, ni := range nodeInfos {
+				sources = append(sources, ni.URL)
+			}
+		}
+	}
+	w.Header().Set("Content-Type", "text/plain")
+	if len(sources) == 0 {
+		fmt.Fprintf(w, "Source: pending discovery\nMQTT topic: %s\nBroker: %s\nPeriod: %d s\n",
+			t.Topic, t.Broker, t.Period)
+	} else {
+		for _, src := range sources {
+			fmt.Fprintf(w, "Source: %s\nMQTT topic: %s\nBroker: %s\nPeriod: %d s\n",
+				src, t.Topic, t.Broker, t.Period)
+		}
+	}
+}
 
 // publishToTopic publishes a payload to the MQTT topic of the unit asset.
 func (t *Traits) publishToTopic(payload map[string]interface{}, contentType string) error {

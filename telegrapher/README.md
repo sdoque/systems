@@ -1,229 +1,153 @@
 # mbaigo System: Telegrapher
 
-The Telegrapher system is built around an MQTT broker.  
-It offers the broker’s topics as services, which can be published or subscribed to.  
-MQTT is a messaging protocol, not a service-oriented solution.  
-Telegrapher transforms MQTT topics into services by extracting path information and interpreting it as metadata describing the service.
+The word *telegrapher* was chosen because there is no direct equivalent for *telemetry* — the one-way, periodic transmission of measurements to a remote system. Just as a telegrapher relays messages between two worlds, this system bridges the Arrowhead local cloud and an MQTT broker.
+
+MQTT is a messaging protocol, not a service-oriented solution. The Telegrapher transforms MQTT topics into Arrowhead services by extracting path segments and interpreting them as service metadata. It works in two modes, selected by the sign of the `period` trait:
+
+- **period < 0 — subscriber mode**: the Telegrapher subscribes to an MQTT topic and exposes the latest message as an Arrowhead service (GET/PUT).
+- **period > 0 — publisher mode**: the Telegrapher periodically consumes an Arrowhead service and publishes the result to an MQTT topic. A read-only GET service describes what is being published, from where, and how often.
 
 ---
 
-## 💪 Compiling
+## Subscriber mode (period < 0)
 
-To compile this code, ensure you have Go installed and fetch the `mbaigo` module:
+The Telegrapher subscribes to the MQTT broker and caches the latest message. It registers the topic as an Arrowhead service so other systems in the local cloud can consume it via HTTP.
 
-```bash
-go get github.com/sdoque/mbaigo@latest
-```
+```mermaid
+sequenceDiagram
+    participant Broker as MQTT Broker
+    participant T as Telegrapher
+    participant R as Arrowhead Service Registrar
+    participant C as Arrowhead Consumer
 
-Then initialize your Go module:
+    T->>Broker: SUBSCRIBE Kitchen/temperature
+    Broker-->>T: (subscription confirmed)
+    T->>R: POST /registry (register temperature service)
 
-```bash
-go mod init github.com/sdoque/arrowsys/telegrapher
-go mod tidy
-```
+    loop on every MQTT message
+        Broker->>T: PUBLISH Kitchen/temperature payload
+        T->>T: cache latest message
+    end
 
-> **Note**: The `go.mod` file is not included in this repository. This allows you to use a local development version of the `mbaigo` module by adding a `replace` directive, e.g.:
->
-> ```go
-> replace github.com/sdoque/mbaigo => ../path/to/local/mbaigo
-> ```
-
-To run the code:
-
-```bash
-go run telegrapher.go thing.go
-```
-
-> **Important**: Run the program from its own directory. Each system should use a dedicated directory because the program reads/writes its configuration file locally.  
-If the file is missing, the program will generate a template and shut down, allowing you to edit it.
-
-The system includes a web server for configuration and status monitoring. The server address is printed at startup and can be accessed via a standard web browser.
-
-To build the executable for your current machine:
-
-```bash
-go build -o telegrapher_imac
-```
-
-(The suffix is optional and simply helps you identify the platform.)
-
----
-
-## 🚀 Cross-compiling
-
-To build for different platforms:
-
-### Raspberry Pi 64-bit:
-```bash
-GOOS=linux GOARCH=arm64 go build -o telegrapher_rpi64 telegrapher.go thing.go
-```
-
-You can see all available platform targets with:
-
-```bash
-go tool dist list
-```
-
-To copy the binary to a Raspberry Pi:
-
-```bash
-scp telegrapher_rpi64 jan@192.168.1.195:demo/telegrapher/
-```
-
-Where:
-- `jan` is your Pi's username
-- `192.168.1.195` is the Pi's IP address
-- `demo/telegrapher/` is the target directory (relative to the user's home directory)
-
----
-
-## 📦 Deploying the MQTT Broker (Asset)
-
-If you don't have an MQTT broker for testing, you can install the [Eclipse Mosquitto broker](https://mosquitto.org). On a Raspberry Pi or Debian-based system:
-
-```bash
-sudo apt update && sudo apt upgrade
-sudo apt install -y mosquitto mosquitto-clients
-mosquitto -v
-```
-
-### 🔁 Basic Publish/Subscribe Test
-
-**Publish**:
-
-```bash
-mosquitto_pub -h localhost -t /test/topic -m "Hello from localhost"
-```
-
-**Subscribe**:
-
-```bash
-mosquitto_sub -h localhost -t /test/topic
-```
-
-If you do not have a publisher available, a test publisher is provided in the `mqttGen/` subdirectory of the [source code repository](https://github.com/sdoque/systems/tree/main/telegrapher). It publishes temperature values in a sine wave pattern every second using MQTT.
-
-To run it:
-
-```bash
-cd mqttGen
-go run mqttGen.go
+    C->>T: GET /telegrapher/Kitchen_temperature/access
+    T-->>C: 200 OK (cached payload)
 ```
 
 ---
 
-## 🔐 Adding Some Security
+## Publisher mode (period > 0)
 
-Edit the Mosquitto configuration file:
+The Telegrapher discovers and periodically polls an Arrowhead service, then publishes the result to the MQTT broker. A companion GET service reports the source, topic, broker, and period.
 
-```bash
-sudo nano /etc/mosquitto/mosquitto.conf
+```mermaid
+sequenceDiagram
+    participant S as Arrowhead Service Provider
+    participant O as Arrowhead Orchestrator
+    participant T as Telegrapher
+    participant R as Arrowhead Service Registrar
+    participant Broker as MQTT Broker
+    participant B as Browser
+
+    T->>R: POST /registry (register publish info service)
+    T->>O: POST /orchestration (discover temperature provider)
+    O-->>T: provider URL
+
+    loop every period seconds
+        T->>S: GET provider URL
+        S-->>T: temperature value
+        T->>Broker: PUBLISH Kitchen/temperature payload
+    end
+
+    B->>T: GET /telegrapher/Kitchen_temperature/publish
+    T-->>B: Source: http://192.168.1.6:20150/ds18b20/28-00000f030344/temperature
+            MQTT topic: Kitchen/temperature
+            Broker: tcp://192.168.1.10:1883
+            Period: 2 s
 ```
 
-Add the following lines:
+---
+
+## Configuration
+
+The unit asset name is the MQTT topic (e.g. `Kitchen/temperature`). The `pattern` trait maps topic path segments to Arrowhead service metadata keys.
+
+Example `systemconfig.json` excerpt:
+
+```json
+{
+    "name": "Kitchen/temperature",
+    "traits": [{
+        "broker": "tcp://192.168.1.10:1883",
+        "pattern": ["FunctionalLocation"],
+        "username": "user",
+        "password": "password",
+        "period": 2
+    }]
+}
+```
+
+---
+
+## Compiling
+
+```bash
+go build -o telegrapher
+```
+
+Cross-compile for Raspberry Pi 4/5 (64-bit):
+
+```bash
+GOOS=linux GOARCH=arm64 go build -o telegrapher_rpi64
+```
+
+Run from its own directory — the system reads and writes `systemconfig.json` locally. If the file is missing, a template is generated and the program exits so you can edit it.
+
+---
+
+## Deploying the MQTT Broker
+
+If you need an MQTT broker for testing, install [Eclipse Mosquitto](https://mosquitto.org):
+
+```bash
+sudo apt update && sudo apt install -y mosquitto mosquitto-clients
+```
+
+### Basic publish/subscribe test
+
+```bash
+mosquitto_pub -h localhost -t Kitchen/temperature -m '{"value":21.5}'
+mosquitto_sub -h localhost -t Kitchen/temperature
+```
+
+A test publisher that generates a sine-wave temperature signal is provided in the `mqttGen/` subdirectory:
+
+```bash
+cd mqttGen && go run mqttGen.go
+```
+
+---
+
+## Adding authentication
+
+Edit `/etc/mosquitto/mosquitto.conf`:
 
 ```conf
-listener 1883
+listener 1883 0.0.0.0
 allow_anonymous false
 password_file /etc/mosquitto/pwdfile
 ```
 
-### Add Users
-
-Create a password file and prompt for password:
+Add users:
 
 ```bash
-sudo mosquitto_passwd -c /etc/mosquitto/pwdfile publisher_user
-```
-
-Add another user with password on the command line:
-
-```bash
-sudo mosquitto_passwd -b /etc/mosquitto/pwdfile subscriber_user subpwd
-```
-
-Restart Mosquitto to apply the changes:
-
-```bash
+sudo mosquitto_passwd -c /etc/mosquitto/pwdfile myuser
 sudo service mosquitto restart
 ```
 
-### Test Authenticated Subscription
+Test authenticated access from another host:
 
 ```bash
-mosquitto_sub -h localhost -t kitchen/temperature -u subscriber_user -P subpwd
+mosquitto_sub -h 192.168.1.10 -t Kitchen/temperature -u myuser -P mypassword
 ```
 
-
-Excellent question — and one that matters a lot for actual deployment!
-
----
-
-
-### 📡 To Allow Subscribers from Other Computers
-
-Here’s what needs to be true:
-
-#### ✅ 1. **Mosquitto must be listening on an external interface**
-
-Your current config might:
-
-```conf
-listener 1883
-```
-
-By default, this binds to **all interfaces**, including external ones (e.g., your Wi-Fi IP). So this part is good *unless* it was previously restricted with `bind_address`.
-
-To be sure it listens on all interfaces, don’t specify `bind_address`, or do this:
-
-```conf
-listener 1883 0.0.0.0
-```
-
----
-
-#### ✅ 2. **The device's firewall must allow port 1883**
-
-If you're running `ufw` (Uncomplicated Firewall) or `iptables`, make sure port 1883 is open:
-
-```bash
-sudo ufw allow 1883/tcp
-```
-
-You can check with:
-
-```bash
-sudo ufw status
-```
-
----
-
-#### ✅ 3. **Clients must connect using the broker's IP address**
-
-From another computer (on the same network), use:
-
-```bash
-mosquitto_sub -h <BROKER_IP_ADDRESS> -t kitchen/temperature -u subscriber_user -P subpwd
-```
-
-Replace `<BROKER_IP_ADDRESS>` with the IP of the Raspberry Pi or host running Mosquitto (e.g., `192.168.1.195`).
-
----
-
-### 🛡️ Bonus: Secure Remote Access
-
-If you're exposing the broker outside your local network (e.g. over the internet), you should:
-
-- Use **port 8883** (MQTT over TLS)
-- Set up a certificate with Let's Encrypt or OpenSSL
-- Consider firewalling by IP, or using a VPN
-
----
-
-### ✅ TL;DR
-
-Your current config **supports remote connections**, but only if:
-
-- Mosquitto is listening on `0.0.0.0`
-- Port 1883 is open on the host
-- Clients use the correct IP
+For external (internet-facing) deployments, use port 8883 with TLS.

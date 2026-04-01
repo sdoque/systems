@@ -524,14 +524,14 @@ func injectContainedIn(block, iri string) string {
 
 	if strings.HasSuffix(trim, ".") {
 		core := strings.TrimSuffix(trim, ".")
-		return core + " ;\n    afo:isContainedIn " + iri + " .\n"
+		return core + " ;\n    afo:isContainedIn " + iri + " ."
 	}
 
 	subj := extractSubject(block)
 	if subj == "" {
 		return block
 	}
-	return trim + "\n" + fmt.Sprintf("%s afo:isContainedIn %s .\n", subj, iri)
+	return trim + "\n" + fmt.Sprintf("%s afo:isContainedIn %s .", subj, iri)
 }
 
 // detectGlobalCloud validates there is at most one unique LocalCloud across all system blocks.

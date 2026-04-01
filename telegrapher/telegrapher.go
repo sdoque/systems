@@ -97,6 +97,13 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 	switch servicePath {
 	case "access":
 		t.access(w, r, servicePath)
+	case "publish":
+		switch r.Method {
+		case http.MethodGet:
+			t.publishInfo(w)
+		default:
+			http.Error(w, "Method is not supported.", http.StatusMethodNotAllowed)
+		}
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}

@@ -20,10 +20,22 @@ type MaintenanceOrderEvent struct {
 
 // MaintenanceOperation represents a single operation within a maintenance order
 type MaintenanceOperation struct {
-	Text         string  `json:"text" validate:"required"`
-	WorkCenter   string  `json:"workCenter,omitempty"`
-	Duration     float64 `json:"duration,omitempty"`
-	DurationUnit string  `json:"durationUnit,omitempty"`
+	OperationID  string                 `json:"operationId,omitempty"`
+	Text         string                 `json:"text" validate:"required"`
+	WorkCenter   string                 `json:"workCenter,omitempty"`
+	Duration     float64                `json:"duration,omitempty"`
+	DurationUnit string                 `json:"durationUnit,omitempty"`
+	Components   []MaintenanceComponent `json:"components,omitempty"`
+}
+
+// MaintenanceComponent represents a material or part required for an operation
+type MaintenanceComponent struct {
+	Material        string  `json:"material"`
+	Description     string  `json:"description,omitempty"`
+	Quantity        float64 `json:"quantity"`
+	Unit            string  `json:"unit,omitempty"`
+	Plant           string  `json:"plant,omitempty"`
+	StorageLocation string  `json:"storageLocation,omitempty"`
 }
 
 // MaintenanceOrderResponse represents the response after creating an order
@@ -121,14 +133,25 @@ type SAPOrderRequest struct {
 	ToMaintenanceOrderOperation []SAPOrderOperation `json:"to_MaintenanceOrderOperation,omitempty"`
 }
 
+// SAPOrderOperationComponent represents a material component in a SAP operation
+type SAPOrderOperationComponent struct {
+	Product                        string `json:"Product"`
+	MaintOrdOperationComponentText string `json:"MaintOrdOperationComponentText,omitempty"`
+	MaintOrdOpCompRequiredQuantity string `json:"MaintOrdOpCompRequiredQuantity,omitempty"`
+	BaseUnit                       string `json:"BaseUnit,omitempty"`
+	Plant                          string `json:"Plant,omitempty"`
+	StorageLocation                string `json:"StorageLocation,omitempty"`
+}
+
 // SAP Order Operation
 type SAPOrderOperation struct {
-	OperationText             string `json:"OperationText"`
-	WorkCenter                string `json:"WorkCenter,omitempty"`
-	Plant                     string `json:"Plant,omitempty"`
-	OperationControlKey       string `json:"OperationControlKey,omitempty"`
-	OperationStandardDuration string `json:"OperationStandardDuration,omitempty"`
-	OperationDurationUnit     string `json:"OperationDurationUnit,omitempty"`
+	OperationText             string                       `json:"OperationText"`
+	WorkCenter                string                       `json:"WorkCenter,omitempty"`
+	Plant                     string                       `json:"Plant,omitempty"`
+	OperationControlKey       string                       `json:"OperationControlKey,omitempty"`
+	OperationStandardDuration string                       `json:"OperationStandardDuration,omitempty"`
+	OperationDurationUnit     string                       `json:"OperationDurationUnit,omitempty"`
+	ToMaintOrderOpComponent   []SAPOrderOperationComponent `json:"to_MaintOrderOpComponent_2,omitempty"`
 }
 
 // SAP Order Response
@@ -275,6 +298,16 @@ func ConvertMaintenanceOrderEventToOrderRequest(event *MaintenanceOrderEvent, no
 			OperationControlKey:       event.MaintenanceOrderType,
 			OperationStandardDuration: strconv.FormatFloat(op.Duration, 'f', -1, 64),
 			OperationDurationUnit:     op.DurationUnit,
+		}
+		for _, c := range op.Components {
+			sapOp.ToMaintOrderOpComponent = append(sapOp.ToMaintOrderOpComponent, SAPOrderOperationComponent{
+				Product:                        c.Material,
+				MaintOrdOperationComponentText: c.Description,
+				MaintOrdOpCompRequiredQuantity: strconv.FormatFloat(c.Quantity, 'f', -1, 64),
+				BaseUnit:                       c.Unit,
+				Plant:                          c.Plant,
+				StorageLocation:                c.StorageLocation,
+			})
 		}
 		req.ToMaintenanceOrderOperation = append(req.ToMaintenanceOrderOperation, sapOp)
 	}

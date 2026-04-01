@@ -56,7 +56,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "Servo_1",
-		Details: map[string][]string{"Model": {"standard servo", "-90 to +90 degrees"}, "Location": {"Kitchen"}},
+		Details: map[string][]string{"Model": {"standard servo", "-90 to +90 degrees"}, "FunctionalLocation": {"Kitchen"}},
 		ServicesMap: components.Services{
 			rotation.SubPath: &rotation,
 		},

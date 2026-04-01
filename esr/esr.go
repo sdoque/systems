@@ -26,6 +26,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -183,47 +184,22 @@ func (t *Traits) updateDB(w http.ResponseWriter, r *http.Request) {
 func (t *Traits) queryDB(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		recordsRequest := ServiceRegistryRequest{
-			Action: "read",
-			Result: make(chan []forms.ServiceRecord_v1),
-			Error:  make(chan error),
+		if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+			t.sseHandler(w, r)
+			return
 		}
-		t.requests <- recordsRequest
-
-		select {
-		case err := <-recordsRequest.Error:
-			if err != nil {
-				log.Printf("Error retrieving service records: %v", err)
-				http.Error(w, "Error retrieving service records", http.StatusInternalServerError)
-			}
-		case servicesList := <-recordsRequest.Result:
-			text := "<!DOCTYPE html><html><body>"
-			if _, err := w.Write([]byte(text)); err != nil {
-				log.Printf("Error occurred while writing to responsewriter: %v", err)
-			}
-			text = "<p>The local cloud's currently available services are:</p><ul>"
-			if _, err := w.Write([]byte(text)); err != nil {
-				log.Printf("Error occurred while writing to responsewriter: %v", err)
-			}
-			for _, servRec := range servicesList {
-				metaservice := ""
-				for key, values := range servRec.Details {
-					metaservice += key + ": " + fmt.Sprintf("%v", values) + " "
-				}
-				hyperlink := "http://" + servRec.IPAddresses[0] + ":" + strconv.Itoa(int(servRec.ProtoPort["http"])) + "/" + servRec.SystemName + "/" + servRec.SubPath
-				parts := strings.Split(servRec.SubPath, "/")
-				uaName := parts[0]
-				sLine := "<p>Service ID: " + strconv.Itoa(int(servRec.Id)) + " with definition <b><a href=\"" + hyperlink + "\">" + servRec.ServiceDefinition + "</b></a> from the <b>" + servRec.SystemName + "/" + uaName + "</b> with details " + metaservice + " will expire at: " + servRec.EndOfValidity + "</p>"
-				if _, err := w.Write([]byte(fmt.Sprintf("<li>%s</li>", sLine))); err != nil {
-					log.Printf("Error occurred while writing to responsewriter: %v", err)
-				}
-			}
-			if _, err := w.Write([]byte("</ul></body></html>")); err != nil {
-				log.Printf("Error occurred while writing to responsewriter: %v", err)
-			}
-		case <-time.After(5 * time.Second):
-			http.Error(w, "Request timed out", http.StatusGatewayTimeout)
-			log.Println("Failure to process service listing request")
+		// Regular browser request: return a page that opens an EventSource connection.
+		page := `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Service Registry</title></head><body>` +
+			`<p>The local cloud's currently available services are:</p>` +
+			`<ul id="services"><li>Loading&#x2026;</li></ul>` +
+			`<script>` +
+			`var es=new EventSource(window.location.href);` +
+			`es.onmessage=function(e){document.getElementById('services').innerHTML=e.data;};` +
+			`es.onerror=function(){document.getElementById('services').innerHTML='<li>Connection lost \u2013 reconnecting\u2026</li>';};` +
+			`</script></body></html>`
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if _, err := w.Write([]byte(page)); err != nil {
+			log.Printf("Error writing query page: %v", err)
 		}
 
 	case "POST":
@@ -393,6 +369,85 @@ func (t *Traits) systemList(w http.ResponseWriter, r *http.Request) {
 		usecases.HTTPProcessGetRequest(w, r, systemsList)
 	default:
 		http.Error(w, "Unsupported HTTP request method", http.StatusMethodNotAllowed)
+	}
+}
+
+// renderListItems builds the sorted <li> HTML fragment sent to SSE subscribers.
+func renderListItems(servicesList []forms.ServiceRecord_v1) string {
+	sort.Slice(servicesList, func(i, j int) bool {
+		return servicesList[i].Id < servicesList[j].Id
+	})
+	var sb strings.Builder
+	for _, servRec := range servicesList {
+		metaservice := ""
+		for key, values := range servRec.Details {
+			metaservice += key + ": " + fmt.Sprintf("%v", values) + " "
+		}
+		hyperlink := "http://" + servRec.IPAddresses[0] + ":" + strconv.Itoa(int(servRec.ProtoPort["http"])) + "/" + servRec.SystemName + "/" + servRec.SubPath
+		parts := strings.Split(servRec.SubPath, "/")
+		uaName := parts[0]
+		sb.WriteString("<li><p>Service ID: " + strconv.Itoa(int(servRec.Id)) +
+			" with definition <b><a href=\"" + hyperlink + "\">" + servRec.ServiceDefinition + "</b></a>" +
+			" from the <b>" + servRec.SystemName + "/" + uaName + "</b>" +
+			" with details " + metaservice +
+			" will expire at: " + servRec.EndOfValidity + "</p></li>")
+	}
+	return sb.String()
+}
+
+// sseHandler keeps the connection open and pushes a fresh list whenever the registry changes.
+func (t *Traits) sseHandler(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	// Register this subscriber.
+	ch := make(chan struct{}, 1)
+	t.subMu.Lock()
+	t.subSeq++
+	id := t.subSeq
+	t.subscribers[id] = ch
+	t.subMu.Unlock()
+	defer func() {
+		t.subMu.Lock()
+		delete(t.subscribers, id)
+		t.subMu.Unlock()
+	}()
+
+	// sendSnapshot fetches the current registry and pushes one SSE event.
+	sendSnapshot := func() {
+		req := ServiceRegistryRequest{
+			Action: "read",
+			Result: make(chan []forms.ServiceRecord_v1),
+			Error:  make(chan error),
+		}
+		t.requests <- req
+		select {
+		case list := <-req.Result:
+			fmt.Fprintf(w, "data: %s\n\n", renderListItems(list))
+			flusher.Flush()
+		case err := <-req.Error:
+			log.Printf("SSE: error reading registry: %v", err)
+		case <-time.After(5 * time.Second):
+			log.Println("SSE: timeout reading registry")
+		}
+	}
+
+	sendSnapshot() // send current state immediately on connect
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ch:
+			sendSnapshot()
+		}
 	}
 }
 

@@ -51,7 +51,7 @@ func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:    "PiCam",
 		Mission: "capture_photographe",
-		Details: map[string][]string{"Model": {"PiCam v2"}, "Location": {"Entrance"}},
+		Details: map[string][]string{"Model": {"PiCam v2"}, "FunctionalLocation": {"Entrance"}},
 		ServicesMap: components.Services{
 			photograph.SubPath: &photograph,
 		},

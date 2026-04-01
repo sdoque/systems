@@ -43,14 +43,14 @@ type ServiceTray struct {
 
 // Traits are Asset-specific configurable parameters
 type Traits struct {
-	Address        string          `json:"address"`  // Address of the IO
-	Value          float64         `json:"value"`    // Start up value of the IO
-	MinValue       float64         `json:"minValue"` // Minimum value of the IO
-	MaxValue       float64         `json:"maxValue"` // Maximum value of the IO
-	tStamp         time.Time       `json:"-"`
+	Address        string           `json:"address"`  // Address of the IO
+	Value          float64          `json:"value"`    // Start up value of the IO
+	MinValue       float64          `json:"minValue"` // Minimum value of the IO
+	MaxValue       float64          `json:"maxValue"` // Maximum value of the IO
+	tStamp         time.Time        `json:"-"`
 	serviceChannel chan ServiceTray `json:"-"`
 	outputChannel  chan float64     `json:"-"`
-	name           string          `json:"-"`
+	name           string           `json:"-"`
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -69,7 +69,7 @@ func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:    "LevelSensor_1",
 		Mission: "measure_level",
-		Details: map[string][]string{"Unit": {"Percent"}, "Location": {"UpperTank"}, "Description": {"level"}},
+		Details: map[string][]string{"Unit": {"Percent"}, "FunctionalLocation": {"UpperTank"}, "Description": {"level"}},
 		ServicesMap: components.Services{
 			access.SubPath: &access,
 		},

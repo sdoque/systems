@@ -116,9 +116,9 @@ func TestExtractPortDefName(t *testing.T) {
 
 func TestExtractPackageContent(t *testing.T) {
 	tests := []struct {
-		name       string
-		input      string
-		wantEmpty  bool
+		name         string
+		input        string
+		wantEmpty    bool
 		wantContains string
 	}{
 		{

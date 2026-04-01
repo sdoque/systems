@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -467,6 +468,113 @@ func TestQueryDB(t *testing.T) {
 		}
 
 		shutdown()
+	}
+}
+
+// ----------------------------------------------- //
+// Tests for renderListItems()
+// ----------------------------------------------- //
+
+func TestRenderListItems(t *testing.T) {
+	services := []forms.ServiceRecord_v1{
+		{Id: 3, SystemName: "sysC", SubPath: "svcC/pathC", IPAddresses: []string{"10.0.0.3"}, ProtoPort: map[string]int{"http": 8083}},
+		{Id: 1, SystemName: "sysA", SubPath: "svcA/pathA", IPAddresses: []string{"10.0.0.1"}, ProtoPort: map[string]int{"http": 8081}},
+		{Id: 2, SystemName: "sysB", SubPath: "svcB/pathB", IPAddresses: []string{"10.0.0.2"}, ProtoPort: map[string]int{"http": 8082}},
+	}
+
+	result := renderListItems(services)
+
+	if !strings.Contains(result, "Service ID: 1") || !strings.Contains(result, "Service ID: 2") || !strings.Contains(result, "Service ID: 3") {
+		t.Error("Expected all three Service IDs in result")
+	}
+
+	pos1 := strings.Index(result, "Service ID: 1")
+	pos2 := strings.Index(result, "Service ID: 2")
+	pos3 := strings.Index(result, "Service ID: 3")
+	if !(pos1 < pos2 && pos2 < pos3) {
+		t.Errorf("Expected services sorted by ID (1 < 2 < 3), got positions: %d, %d, %d", pos1, pos2, pos3)
+	}
+
+	if !strings.HasPrefix(result, "<li>") {
+		t.Error("Expected result to start with <li>")
+	}
+}
+
+// ----------------------------------------------- //
+// Tests for notify()
+// ----------------------------------------------- //
+
+func TestNotify(t *testing.T) {
+	t.Run("wakes subscriber", func(t *testing.T) {
+		tr := &Traits{subscribers: make(map[int]chan struct{})}
+		ch := make(chan struct{}, 1)
+		tr.subscribers[1] = ch
+		tr.notify()
+		select {
+		case <-ch:
+		default:
+			t.Error("Expected subscriber channel to be notified")
+		}
+	})
+
+	t.Run("no subscribers is a no-op", func(t *testing.T) {
+		tr := &Traits{subscribers: make(map[int]chan struct{})}
+		tr.notify() // must not panic
+	})
+
+	t.Run("non-blocking when channel is full", func(t *testing.T) {
+		tr := &Traits{subscribers: make(map[int]chan struct{})}
+		ch := make(chan struct{}, 1)
+		ch <- struct{}{} // pre-fill
+		tr.subscribers[1] = ch
+		done := make(chan struct{})
+		go func() { tr.notify(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Error("notify() blocked on a full channel")
+		}
+	})
+}
+
+// ----------------------------------------------- //
+// Tests for SSE path in queryDB()
+// ----------------------------------------------- //
+
+func TestQueryDBGetSSE(t *testing.T) {
+	sys := createTestSystem()
+	confAsset := createConfAssetMultipleTraits()
+	temp, shutdown := newResource(confAsset, &sys)
+	defer shutdown()
+	ua := temp.Traits.(*Traits)
+	ua.leading = true
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "http://localhost/query", nil).WithContext(ctx)
+	r.Header = map[string][]string{"Accept": {"text/event-stream"}}
+
+	done := make(chan struct{})
+	go func() {
+		ua.queryDB(w, r)
+		close(done)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SSE handler did not exit after context cancellation")
+	}
+
+	if ct := w.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("Expected Content-Type text/event-stream, got: %s", ct)
+	}
+	if !strings.Contains(w.Body.String(), "data:") {
+		t.Errorf("Expected 'data:' in SSE response body, got: %s", w.Body.String())
 	}
 }
 

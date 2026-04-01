@@ -119,6 +119,8 @@ func (t *Traits) setpt(w http.ResponseWriter, r *http.Request) {
 			log.Println("Error with the setting request of the position ", err)
 		}
 		t.setSetPoint(sig)
+		confirmed := t.getSetPoint()
+		usecases.HTTPProcessGetRequest(w, r, &confirmed)
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}

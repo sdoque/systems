@@ -32,14 +32,14 @@ import (
 
 // Traits are Asset-specific configurable parameters
 type Traits struct {
-	SetPt     float64       `json:"setPoint"`
-	Period    time.Duration `json:"samplingPeriod"`
-	Kp        float64       `json:"kp"`
-	Lambda    float64       `json:"lambda"`
-	Ki        float64       `json:"ki"`
-	jitter    time.Duration `json:"-"`
-	deviation float64       `json:"-"`
-	previousT float64       `json:"-"`
+	SetPt     float64             `json:"setPoint"`
+	Period    time.Duration       `json:"samplingPeriod"`
+	Kp        float64             `json:"kp"`
+	Lambda    float64             `json:"lambda"`
+	Ki        float64             `json:"ki"`
+	jitter    time.Duration       `json:"-"`
+	deviation float64             `json:"-"`
+	previousT float64             `json:"-"`
 	owner     *components.System  `json:"-"`
 	cervices  components.Cervices `json:"-"`
 }
@@ -74,7 +74,7 @@ func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:    "controller_1",
 		Mission: "control_heater",
-		Details: map[string][]string{"Location": {"Kitchen"}},
+		Details: map[string][]string{"FunctionalLocation": {"Kitchen"}},
 		ServicesMap: components.Services{
 			setPointService.SubPath:     &setPointService,
 			thermalErrorService.SubPath: &thermalErrorService,
@@ -98,12 +98,12 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	tempCervice := &components.Cervice{
 		Definition: "temperature",
 		Protos:     sProtocols,
-		Nodes:      make(map[string][]string),
+		Nodes:      make(map[string][]components.NodeInfo),
 	}
 	rotCervice := &components.Cervice{
 		Definition: "rotation",
 		Protos:     sProtocols,
-		Nodes:      make(map[string][]string),
+		Nodes:      make(map[string][]components.NodeInfo),
 	}
 	cervMap := components.Cervices{
 		tempCervice.Definition: tempCervice,

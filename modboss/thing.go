@@ -61,7 +61,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "PLC with Modbus slave",
-		Details: map[string][]string{"PLC": {"Wago"}, "Location": {"A2307"}},
+		Details: map[string][]string{"PLC": {"Wago"}, "FunctionalLocation": {"A2307"}},
 		ServicesMap: components.Services{
 			access.SubPath: &access,
 		},

@@ -41,10 +41,10 @@ type STray struct {
 
 // Traits are Asset-specific configurable parameters
 type Traits struct {
-	temperature float64   `json:"-"`
-	tStamp      time.Time `json:"-"`
+	temperature float64    `json:"-"`
+	tStamp      time.Time  `json:"-"`
 	trayChan    chan STray `json:"-"`
-	name        string    `json:"-"`
+	name        string     `json:"-"`
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -63,7 +63,7 @@ func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:    "sensor_Id",
 		Mission: "measure_temperature",
-		Details: map[string][]string{"Unit": {"Celsius"}, "Location": {"Kitchen"}},
+		Details: map[string][]string{"Unit": {"Celsius"}, "FunctionalLocation": {"Kitchen"}},
 		ServicesMap: components.Services{
 			temperature.SubPath: &temperature,
 		},

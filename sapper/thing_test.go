@@ -38,7 +38,7 @@ func newTestTraits() *Traits {
 		orders:          make(map[string]*Order),
 		monitor: &components.Cervice{
 			Definition: "SignalMonitoring",
-			Nodes:      make(map[string][]string),
+			Nodes:      make(map[string][]components.NodeInfo),
 		},
 	}
 }
@@ -219,7 +219,7 @@ func TestRunLifecycle(t *testing.T) {
 
 	// Swap discovery so it returns the fake monitor URL instead of contacting Arrowhead.
 	withDiscoverMonitor(t, func(c *components.Cervice, _ *components.System) error {
-		c.Nodes = map[string][]string{"testNode": {monitor.URL}}
+		c.Nodes = map[string][]components.NodeInfo{"testNode": {{URL: monitor.URL}}}
 		return nil
 	})
 
@@ -276,7 +276,7 @@ func TestNotifyConsumer(t *testing.T) {
 		defer srv.Close()
 
 		withDiscoverMonitor(t, func(c *components.Cervice, _ *components.System) error {
-			c.Nodes = map[string][]string{"n": {srv.URL}}
+			c.Nodes = map[string][]components.NodeInfo{"n": {{URL: srv.URL}}}
 			return nil
 		})
 
@@ -298,7 +298,7 @@ func TestNotifyConsumer(t *testing.T) {
 
 	t.Run("no-op when discovery returns no nodes", func(t *testing.T) {
 		withDiscoverMonitor(t, func(c *components.Cervice, _ *components.System) error {
-			c.Nodes = make(map[string][]string) // empty — no provider found
+			c.Nodes = make(map[string][]components.NodeInfo) // empty — no provider found
 			return nil
 		})
 

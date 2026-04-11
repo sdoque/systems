@@ -82,6 +82,7 @@ func saveTokenFile(t savedTokens) error {
 // TokenManager handles Netatmo OAuth2 authentication.
 type TokenManager struct {
 	Credentials
+	ctx          context.Context
 	accessToken  string
 	refreshToken string
 	mu           sync.Mutex
@@ -90,7 +91,7 @@ type TokenManager struct {
 // newTokenManager parses credentials from config and ensures a valid token is available.
 // It loads tokens.json if it exists and tries to refresh; otherwise it starts the
 // one-time browser authorization flow.
-func newTokenManager(uac usecases.ConfigurableAsset) (*TokenManager, error) {
+func newTokenManager(ctx context.Context, uac usecases.ConfigurableAsset) (*TokenManager, error) {
 	if len(uac.Traits) == 0 {
 		return nil, fmt.Errorf("no credentials found in configuration")
 	}
@@ -101,7 +102,7 @@ func newTokenManager(uac usecases.ConfigurableAsset) (*TokenManager, error) {
 	if creds.Period == 0 {
 		creds.Period = 300
 	}
-	tm := &TokenManager{Credentials: creds}
+	tm := &TokenManager{Credentials: creds, ctx: ctx}
 
 	// Try to reuse a saved refresh token first.
 	if saved, err := loadTokenFile(); err == nil && saved.RefreshToken != "" {
@@ -125,6 +126,7 @@ func newTokenManager(uac usecases.ConfigurableAsset) (*TokenManager, error) {
 // URL for the user to open in a browser, waits for the redirect, exchanges the code for
 // tokens, and saves them to tokens.json.
 func (tm *TokenManager) authorizeWithBrowser() error {
+	ctx := tm.ctx
 	authURL := "https://api.netatmo.com/oauth2/authorize?" + url.Values{
 		"client_id":     {tm.ClientID},
 		"redirect_uri":  {oauthRedirectURI},
@@ -169,6 +171,9 @@ func (tm *TokenManager) authorizeWithBrowser() error {
 	case <-time.After(5 * time.Minute):
 		srv.Close()
 		return fmt.Errorf("timed out waiting for browser authorization (5 min)")
+	case <-ctx.Done():
+		srv.Close()
+		return fmt.Errorf("authorization cancelled")
 	}
 	srv.Close()
 
@@ -372,7 +377,7 @@ func initTemplate() *components.UnitAsset {
 // It authenticates with the Netatmo API, discovers all modules on the configured station,
 // builds one UnitAsset per module, starts the background poller, and returns the assets.
 func newResources(uac usecases.ConfigurableAsset, sys *components.System) ([]*components.UnitAsset, func()) {
-	tm, err := newTokenManager(uac)
+	tm, err := newTokenManager(sys.Ctx, uac)
 	if err != nil {
 		log.Fatalf("Netatmo authentication failed: %v\n", err)
 	}

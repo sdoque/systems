@@ -189,14 +189,23 @@ func TestToggleHandler_MethodNotAllowed(t *testing.T) {
 }
 
 // TestToggleHandler_ProxiesToUpstream verifies that the toggle handler sends a PUT to the
-// upstream beekeeper URL and updates the local switch state.
+// upstream beekeeper URL and then confirms the new state with a GET.
 func TestToggleHandler_ProxiesToUpstream(t *testing.T) {
-	// Stand up a fake beekeeper that accepts PUT.
+	// Stand up a fake beekeeper that accepts PUT and returns the new state on GET.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			t.Errorf("upstream expected PUT, got %s", r.Method)
+		switch r.Method {
+		case http.MethodPut:
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"version":   "SignalB_v1.0",
+				"value":     true,
+				"timestamp": time.Now(),
+			})
+		default:
+			t.Errorf("upstream: unexpected method %s", r.Method)
 		}
-		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer upstream.Close()
 
@@ -214,14 +223,13 @@ func TestToggleHandler_ProxiesToUpstream(t *testing.T) {
 		t.Errorf("expected 204, got %d", w.Code)
 	}
 
-	// Local state should be updated optimistically.
+	// Local state should reflect what beekeeper confirmed via the GET.
 	tr.mu.RLock()
 	state := tr.switches[0].State
 	tr.mu.RUnlock()
 	if !state {
-		t.Error("local switch state should be true after toggle")
+		t.Error("local switch state should be true after toggle confirmed by upstream GET")
 	}
-
 }
 
 // TestSwitchSortOrder verifies that stateHandler preserves the stored order (sorting is done at

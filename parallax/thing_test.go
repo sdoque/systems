@@ -22,6 +22,16 @@ import (
 	"github.com/sdoque/mbaigo/forms"
 )
 
+// TestDetectPlatform verifies that detectPlatform returns a known string and does not panic.
+// On a development machine /proc/device-tree/model is absent, so the result is "pi4".
+func TestDetectPlatform(t *testing.T) {
+	p := detectPlatform()
+	if p != "pi4" && p != "pi5" {
+		t.Errorf("detectPlatform() = %q, want \"pi4\" or \"pi5\"", p)
+	}
+}
+
+// TestGpioToRP1PWMChan verifies the Pi 5 RP1 GPIO-to-channel mapping.
 func TestGpioToRP1PWMChan(t *testing.T) {
 	tests := []struct {
 		gpio    int
@@ -52,6 +62,7 @@ func TestGpioToRP1PWMChan(t *testing.T) {
 	}
 }
 
+// TestGetPosition verifies that getPosition returns the current position and correct unit.
 func TestGetPosition(t *testing.T) {
 	tr := &Traits{position: 75}
 	f := tr.getPosition()
@@ -64,10 +75,11 @@ func TestGetPosition(t *testing.T) {
 	}
 }
 
+// TestSetPosition verifies clamping, pulse-width calculation, and debouncing.
 func TestSetPosition(t *testing.T) {
 	tr := &Traits{dutyChan: make(chan int, 1)}
 
-	// pos=50 → Value==50, widthUS in dutyChan == 1520 (center)
+	// pos=50 → widthUS == 1520 (center)
 	var f forms.SignalA_v1a
 	f.Value = 50
 	result, err := tr.setPosition(f)
@@ -86,27 +98,21 @@ func TestSetPosition(t *testing.T) {
 		t.Error("dutyChan empty after setPosition(50), expected centerPulseWidth")
 	}
 
-	// pos=-10 → clamped to 0, Value==0
+	// pos=-10 → clamped to 0
 	f.Value = -10
-	result, err = tr.setPosition(f)
+	_, err = tr.setPosition(f)
 	if err != nil {
 		t.Fatalf("setPosition(-10): unexpected error: %v", err)
-	}
-	if result.Value != -10 {
-		// The returned form value reflects what was passed in, not the clamped value;
-		// but the internal position should be 0.
-		// The spec says Value==0; let's check tr.position instead.
 	}
 	if tr.position != 0 {
 		t.Errorf("position after setPosition(-10) = %d, want 0", tr.position)
 	}
-	// Drain dutyChan for next sub-test
 	select {
 	case <-tr.dutyChan:
 	default:
 	}
 
-	// pos=200 → clamped to 100, Value==100
+	// pos=200 → clamped to 100
 	f.Value = 200
 	_, err = tr.setPosition(f)
 	if err != nil {
@@ -115,13 +121,12 @@ func TestSetPosition(t *testing.T) {
 	if tr.position != 100 {
 		t.Errorf("position after setPosition(200) = %d, want 100", tr.position)
 	}
-	// Drain the channel
 	select {
 	case <-tr.dutyChan:
 	default:
 	}
 
-	// Identical pos again → dutyChan should remain empty (debounce)
+	// Identical value again → debounce: dutyChan should remain empty
 	f.Value = 200
 	_, err = tr.setPosition(f)
 	if err != nil {
@@ -131,6 +136,6 @@ func TestSetPosition(t *testing.T) {
 	case w := <-tr.dutyChan:
 		t.Errorf("dutyChan should be empty after duplicate setPosition(200), got %d", w)
 	default:
-		// expected: channel is empty
+		// expected
 	}
 }

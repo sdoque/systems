@@ -102,3 +102,33 @@ func TestAccess_Default(t *testing.T) {
 		t.Errorf("access DELETE status = %d, want %d", rr.Code, http.StatusMethodNotAllowed)
 	}
 }
+
+// TestInitTemplate verifies the template name, service map, and default trait values.
+func TestInitTemplate(t *testing.T) {
+	ua := initTemplate()
+
+	if ua.GetName() != "LevelSensor_1" {
+		t.Errorf("name = %q, want LevelSensor_1", ua.GetName())
+	}
+	if _, ok := ua.GetServices()["access"]; !ok {
+		t.Error("ServicesMap should contain an 'access' service")
+	}
+	tr, ok := ua.GetTraits().(*Traits)
+	if !ok {
+		t.Fatal("Traits should be *Traits")
+	}
+	if tr.Address == "" {
+		t.Error("Address default should not be empty")
+	}
+}
+
+// TestServing_InvalidPath verifies that an unknown service path returns 400.
+func TestServing_InvalidPath(t *testing.T) {
+	tr := &Traits{}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/revolutionary/LevelSensor_1/unknown", nil)
+	serving(tr, w, r, "unknown")
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+}

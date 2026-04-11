@@ -4,5 +4,5 @@ go 1.25.8
 
 require (
 	github.com/sdoque/mbaigo v0.1.0-alpha.3
-	periph.io/x/conn/v3 v3.7.2
+	github.com/stianeikeland/go-rpio/v4 v4.6.0
 )

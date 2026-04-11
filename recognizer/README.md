@@ -1,20 +1,49 @@
 # mbaigo System: Recognizer
 
-The Recognizer system performs object detection on images captured by a Raspberry Pi camera. It consumes the `photograph` service from the Arrowhead local cloud, downloads the JPEG, passes it to **YOLOv8** via a Python helper script, and returns the URL of the annotated image (with bounding boxes drawn around every detected object). Detected object names are printed to the terminal log.
+The Recognizer system performs object detection on images captured by a Raspberry Pi camera. It consumes the `photograph` service from the Arrowhead local cloud, sends the JPEG to a local **YOLO microservice** for inference, and returns the URL of the annotated image (with bounding boxes drawn around every detected object). Detected object names are printed to the terminal log.
 
-The system requires no direct knowledge of the camera hardware — it locates a photographer via the Orchestrator. If more than one camera is registered (e.g. entrance and parking lot), the `functionalLocation` trait filters the search to a specific one.
+The system requires no direct knowledge of the camera hardware — it locates a photographer via the Orchestrator. If more than one camera is registered (e.g., entrance and parking lot), the `functionalLocation` trait filters the search to a specific one.
 
 ---
 
-## How it works
+## Architecture
+
+The recognizer runs as **two independent processes**:
+
+| Process | Language | Responsibility |
+|---|---|---|
+| `recognizer` | Go | Arrowhead service registration, orchestration, HTTP API |
+| `yolo_service.py` | Python | YOLOv8 inference via Ultralytics, image annotation |
+
+The Go binary calls the Python service over `localhost` using a plain HTTP POST. The two processes start, stop, and restart independently — if the Python service crashes or needs reloading with a different model, the Go binary keeps running and will resume as soon as the service comes back.
+
+```
+Consumer → GET /recognizer/YOLOv8/recognize
+              ↓
+         Go binary
+              ↓ GET /photographer/.../photograph (via Orchestrator)
+         Photographer → FileForm_v1 { file_url }
+              ↓ GET file_url
+         JPEG bytes
+              ↓ POST localhost:5000/detect  (multipart, field 'image')
+         yolo_service.py → {"labels": [...], "annotated": "<base64 JPEG>"}
+              ↓ save to files/annotated_<timestamp>.jpg
+         FileForm_v1 { file_url: http://.../recognizer/YOLOv8/files/annotated_... }
+              ↓
+Consumer → GET .../files/annotated_...jpg → annotated JPEG
+```
+
+---
+
+## Sequence diagram
 
 ```mermaid
 sequenceDiagram
     participant C  as Consumer
-    participant R  as Recognizer
+    participant R  as Recognizer (Go)
     participant O  as Orchestrator
     participant P  as Photographer
-    participant PY as detect.py (YOLOv8)
+    participant Y  as yolo_service.py
     participant FS as Local filesystem
 
     C->>R: GET /recognizer/YOLOv8/recognize
@@ -23,16 +52,16 @@ sequenceDiagram
     O-->>R: ServicePoint_v1 {url: http://…/photographer/PiCam/photograph}
 
     R->>P: GET /photographer/PiCam/photograph
-    P-->>R: FileForm_v1 {file_url: "http://…/files/image_20260409-094545.jpg"}
+    P-->>R: FileForm_v1 {file_url: "http://…/files/image_…jpg"}
 
-    R->>P: GET /photographer/PiCam/files/image_20260409-094545.jpg
+    R->>P: GET /photographer/PiCam/files/image_….jpg
     P-->>R: JPEG bytes
 
-    R->>PY: detect.py <src.jpg> <files/annotated_…jpg> yolov8n.pt
-    PY->>FS: write annotated JPEG with bounding boxes
-    PY-->>R: stdout: "person\nchair\nlaptop"
+    R->>Y: POST localhost:5000/detect (multipart image)
+    Y->>FS: write annotated JPEG with bounding boxes
+    Y-->>R: {"labels": ["person","chair"], "annotated": "<base64>"}
 
-    R->>R: log "detected objects: person, chair, laptop"
+    R->>FS: save files/annotated_….jpg
     R-->>C: FileForm_v1 {file_url: "http://…/recognizer/YOLOv8/files/annotated_….jpg"}
 
     C->>R: GET /recognizer/YOLOv8/files/annotated_….jpg
@@ -48,37 +77,16 @@ sequenceDiagram
 | `recognize` | `/recognizer/<asset>/recognize` | GET | `FileForm_v1` | Triggers capture + detection; returns URL of annotated image |
 | *(files)* | `/recognizer/<asset>/files/<filename>` | GET | JPEG | Serves a previously annotated image file |
 
----
+The YOLO microservice also exposes:
 
-## Configuration
-
-Edit `systemconfig.json` to match your setup:
-
-| Field | Description |
-|---|---|
-| `ipAddresses` | IP addresses of the machine running the Recognizer |
-| `protocolsNports` → `http` | Port the system listens on (default: 20164) |
-| `unit_assets[0].traits[0].functionalLocation` | Filter the photograph service by location (e.g. `"Entrance"`). Leave empty to use the first available camera. |
-| `unit_assets[0].traits[0].yoloModel` | YOLO model to use (default: `yolov8n.pt`). Downloaded automatically by Ultralytics on first run. |
-| `unit_assets[0].traits[0].pythonCmd` | Python interpreter (default: `python3`). Change to an absolute path or virtual-environment path if needed. |
-| `unit_assets[0].traits[0].detectScript` | Path to the detection script (default: `detect.py`). Useful when the binary and script are in different directories. |
-| `coreSystems` | URLs of the Service Registrar, Orchestrator, CA, and maitreD |
-
-### Available YOLO models
-
-| Model | Size | Speed | Accuracy | Good for |
-|---|---|---|---|---|
-| `yolov8n.pt` | 6 MB | fastest | lowest | Raspberry Pi, real-time |
-| `yolov8s.pt` | 22 MB | fast | medium | Pi 4/5 with acceptable latency |
-| `yolov8m.pt` | 50 MB | moderate | good | desktop / Pi 5 |
-| `yolov8l.pt` | 83 MB | slow | better | GPU-equipped machine |
-| `yolov8x.pt` | 131 MB | slowest | best | GPU-equipped machine |
-
-On a Raspberry Pi 4 or 5, `yolov8n.pt` is the practical choice.
+| Endpoint | Method | Description |
+|---|---|---|
+| `/detect` | POST | Accepts multipart image, returns JSON with labels and base64 annotated JPEG |
+| `/health` | GET | Returns `{"status": "ok", "model": "<name>"}` |
 
 ---
 
-## Installing YOLOv8 on Raspberry Pi
+## Installing the YOLO microservice
 
 ### Requirements
 
@@ -91,56 +99,121 @@ On a Raspberry Pi 4 or 5, `yolov8n.pt` is the practical choice.
 
 ```bash
 sudo apt update && sudo apt upgrade -y
-```
-
-### Step 2 — Install system dependencies
-
-```bash
 sudo apt install -y python3-pip python3-venv libopenblas-dev libatlas-base-dev
 ```
 
-### Step 3 — Create a virtual environment
+### Step 2 — Create a virtual environment
 
-Running Ultralytics inside a virtual environment avoids conflicts with system Python packages (required on Bookworm, which enforces PEP 668):
+Bookworm enforces PEP 668, so a virtual environment is required:
 
 ```bash
 python3 -m venv ~/yolo-env
 source ~/yolo-env/bin/activate
 ```
 
-To activate the environment automatically whenever you work with the recognizer, add the `source` line to your shell profile, or set `pythonCmd` in `systemconfig.json` to the full path:
-
-```json
-"pythonCmd": "/home/jan/yolo-env/bin/python3"
-```
-
-### Step 4 — Install Ultralytics
+### Step 3 — Install dependencies
 
 ```bash
-pip install ultralytics
+pip install flask ultralytics opencv-python-headless
 ```
 
-This installs PyTorch, OpenCV, and all other required libraries. On a Raspberry Pi the download may take several minutes.
+`opencv-python-headless` omits the GUI libraries, which are not needed on a headless Pi and are significantly smaller.
 
-### Step 5 — Verify the installation
+### Step 4 — Verify the installation
 
 ```bash
-python3 -c "from ultralytics import YOLO; m = YOLO('yolov8n.pt'); print('OK')"
+python3 -c "from ultralytics import YOLO; YOLO('yolov8n.pt'); print('OK')"
 ```
 
 The first run downloads `yolov8n.pt` (~6 MB) from the Ultralytics CDN. Subsequent runs use the cached file from `~/.config/Ultralytics/`.
 
-### Step 6 — Test detection manually
+### Step 5 — Start the microservice
 
 ```bash
-python3 detect.py test_input.jpg test_output.jpg yolov8n.pt
+source ~/yolo-env/bin/activate
+python3 yolo_service.py --model yolov8n.pt --port 5000
 ```
 
-The script prints detected class names to stdout and writes the annotated image to `test_output.jpg`.
+Leave this running in one terminal (or set it up as a systemd service — see below). Then start the Go binary in another terminal:
+
+```bash
+./recognizer_rpi64
+```
+
+### Step 6 — Test the microservice directly
+
+```bash
+curl -s http://localhost:5000/health
+# {"model": "yolov8n.pt", "status": "ok"}
+
+curl -X POST http://localhost:5000/detect \
+     -F "image=@test_input.jpg" | python3 -m json.tool
+# {"labels": ["person", "chair"], "annotated": "<base64>"}
+```
 
 ---
 
-## Compiling
+## Running as a systemd service
+
+Create `/etc/systemd/system/yolo.service`:
+
+```ini
+[Unit]
+Description=YOLO detection microservice
+After=network.target
+
+[Service]
+Type=simple
+User=jan
+WorkingDirectory=/home/jan/rpiExec/recognizer
+ExecStart=/home/jan/yolo-env/bin/python3 yolo_service.py --model yolov8n.pt --port 5000
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable yolo
+sudo systemctl start yolo
+sudo systemctl status yolo
+```
+
+---
+
+## Available YOLO models
+
+| Model | Size | Speed | Accuracy | Good for |
+|---|---|---|---|---|
+| `yolov8n.pt` | 6 MB | fastest | lowest | Raspberry Pi, real-time |
+| `yolov8s.pt` | 22 MB | fast | medium | Pi 4/5 with acceptable latency |
+| `yolov8m.pt` | 50 MB | moderate | good | desktop / Pi 5 |
+| `yolov8l.pt` | 83 MB | slow | better | GPU-equipped machine |
+| `yolov8x.pt` | 131 MB | slowest | best | GPU-equipped machine |
+
+On a Raspberry Pi 4 or 5, `yolov8n.pt` is the practical choice. To switch models, restart `yolo_service.py` with `--model yolov8s.pt` — the Go binary does not need to be restarted.
+
+---
+
+## Configuration
+
+Edit `systemconfig.json` to match your setup:
+
+| Field | Description |
+|---|---|
+| `ipAddresses` | IP addresses of the machine running the Recognizer |
+| `protocolsNports` → `http` | Port the system listens on (default: 20164) |
+| `unit_assets[0].traits[0].functionalLocation` | Filter the photograph service by location (e.g. `"Entrance"`). Leave empty to use the first available camera. |
+| `unit_assets[0].traits[0].yoloServiceURL` | URL of the YOLO microservice (default: `http://localhost:5000`) |
+| `unit_assets[0].traits[0].yoloModel` | Model name forwarded to the microservice (default: `yolov8n.pt`) |
+| `coreSystems` | URLs of the Service Registrar, Orchestrator, CA, and maitreD |
+
+---
+
+## Compiling the Go binary
 
 Build for the current machine:
 
@@ -154,42 +227,43 @@ Cross-compile for Raspberry Pi 4/5 (64-bit):
 GOOS=linux GOARCH=arm64 go build -o recognizer_rpi64
 ```
 
-Copy binary and Python script to the Raspberry Pi:
+Copy binary and Python service to the Raspberry Pi:
 
 ```bash
-scp recognizer_rpi64 detect.py jan@192.168.1.x:rpiExec/recognizer/
+scp recognizer_rpi64 yolo_service.py jan@192.168.1.x:rpiExec/recognizer/
 ```
 
 Run from the system's own directory:
 
 ```bash
 cd ~/rpiExec/recognizer
+
+# Terminal 1 — start the YOLO microservice
+source ~/yolo-env/bin/activate
+python3 yolo_service.py
+
+# Terminal 2 — start the Go binary
 ./recognizer_rpi64
 ```
 
-On first run without a `systemconfig.json`, the system generates one and exits so you can fill in the correct values.
+On first run without a `systemconfig.json`, the Go binary generates one and exits so you can fill in the correct values.
 
 ---
 
 ## Troubleshooting
 
-### `ultralytics not installed`
+### `YOLO service unreachable at http://localhost:5000`
 
-The Python virtual environment is not active, or `pythonCmd` points to the wrong interpreter. Set `pythonCmd` in `systemconfig.json` to the full path of the virtual environment's Python:
-
-```bash
-which python3   # inside the activated venv
-# e.g. /home/jan/yolo-env/bin/python3
-```
+`yolo_service.py` is not running, or it is bound to a different port. Start it first, or check `systemctl status yolo`.
 
 ### `getting photograph: service discovery failed`
 
-The Orchestrator cannot find a registered `photograph` service. Check that the Photographer system is running and that its services are registered. If `functionalLocation` is set, verify it matches exactly what the Photographer has in its asset `details`.
+The Orchestrator cannot find a registered `photograph` service. Check that the Photographer system is running and that its services are registered. If `functionalLocation` is set, verify it matches exactly what the Photographer has in its asset details.
 
 ### Detection is very slow
 
-On a Raspberry Pi 4, a single inference with `yolov8n.pt` takes roughly 1–3 seconds. Larger models (`yolov8s`, `yolov8m`) will be proportionally slower. The Pi 5 is roughly twice as fast as the Pi 4 for CPU inference. For real-time use, consider running the Recognizer on a more capable machine in the same local cloud.
+On a Raspberry Pi 4, a single inference with `yolov8n.pt` takes roughly 1–3 seconds. Larger models will be proportionally slower. The Pi 5 is roughly twice as fast as the Pi 4 for CPU inference.
 
-### Annotated image is blank or not saved
+### Annotated image is blank
 
-Check that the `files/` directory is writable and that `detect.py` is present in the working directory alongside the binary.
+Check that `yolo_service.py` has write access to its working directory and that the `files/` subdirectory is writable by the Go binary.

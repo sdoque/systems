@@ -18,6 +18,8 @@ package main
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/sdoque/mbaigo/components"
@@ -52,5 +54,39 @@ func TestStartStreamURL(t *testing.T) {
 	want := "http://192.168.1.10:20162/filmer/cam1/stream"
 	if got != want {
 		t.Errorf("expected %q, got %q", want, got)
+	}
+}
+
+// TestServing_Start verifies that the "start" path returns the stream URL.
+func TestServing_Start(t *testing.T) {
+	ctx := context.Background()
+	sys := components.NewSystem("filmer", ctx)
+	sys.Husk = &components.Husk{
+		Host:      &components.HostingDevice{IPAddresses: []string{"192.168.1.10"}},
+		ProtoPort: map[string]int{"http": 20162},
+	}
+	tr := &Traits{owner: &sys, name: "cam1"}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/filmer/cam1/start", nil)
+	serving(tr, w, r, "start")
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	if body == "" {
+		t.Error("expected non-empty body containing stream URL")
+	}
+}
+
+// TestServing_InvalidPath verifies that an unknown service path returns 400.
+func TestServing_InvalidPath(t *testing.T) {
+	tr := &Traits{}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/filmer/cam1/unknown", nil)
+	serving(tr, w, r, "unknown")
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
 	}
 }

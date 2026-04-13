@@ -82,12 +82,20 @@ sequenceDiagram
 | System | Description |
 |---|---|
 | `thermostat` | PID controller that consumes a temperature service and drives a servo motor to a target setpoint |
+| `ethermostat` | P-controller that discovers electrical heating plugs (via beekeeper) and matching temperature services (via meteorologue) by functional location, and switches each plug on or off to maintain a per-heater setpoint |
 | `leveler` | Consumes a temperature and a servo position service to maintain a setpoint via feedback control |
 | `flatner` | Adjusts a thermostat setpoint inversely to the electricity spot price to flatten peak energy demand |
 | `collector` | Ingests time-series signals from other services into an InfluxDB database |
 | `emulator` | Replays historical signals stored in JSON, XML, or CSV files as live Arrowhead services |
 | `nurse` | Monitors asset measurements and reports anomalies to a SAP system as maintenance notifications |
 | `sapper` | Simulates a SAP PM/MM system — receives maintenance notifications and exposes order creation and status as services |
+
+### Order management
+
+| System | Description |
+|---|---|
+| `clerk` | Browser-based order entry front-end for pen holder orders; validates inputs, forwards orders to Tracker, and proxies lookups back to the browser |
+| `tracker` | Persists pen holder orders in a SQLite database; exposes a REST service for creating, updating, and retrieving orders; order lookup requires both order number and email address |
 
 ### Dashboard
 
@@ -101,6 +109,7 @@ sequenceDiagram
 |---|---|
 | `cloudmodel` | Assembles SysML v2 BDD/IBD models of all systems currently registered in the local cloud |
 | `kgrapher` | Assembles OWL/RDF knowledge graph ontologies of all systems in the local cloud |
+| `democrat` | Bridges the Arrowhead local cloud knowledge graph to FA³ST Asset Administration Shells (AAS) |
 | `messenger` | Centralized logging system that receives and stores log messages from other systems |
 
 ### Learning

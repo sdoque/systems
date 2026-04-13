@@ -153,7 +153,7 @@ func (t *Traits) run() {
 }
 
 // updateSetPoint fetches the current price, calculates the optimal setpoint,
-// and sends it to the thermostat via the Arrowhead orchestrator.
+// and pushes it to all discovered thermostat setpoint services.
 func (t *Traits) updateSetPoint() {
 	price, err := fetchCurrentPrice(t.Region)
 	if err != nil {
@@ -166,10 +166,10 @@ func (t *Traits) updateSetPoint() {
 
 	cer := t.ua.CervicesMap["setpoint"]
 
-	// Discover the thermostat's setpoint service if not yet known.
+	// Discover all setpoint services (thermostat, ethermostat heaters, ...) if not yet known.
 	if len(cer.Nodes) == 0 {
-		if err := usecases.Search4Services(cer, t.owner); err != nil {
-			log.Printf("Flatner: could not discover setPoint service: %v\n", err)
+		if err := usecases.Search4MultipleServices(cer, t.owner); err != nil {
+			log.Printf("Flatner: could not discover setpoint services: %v\n", err)
 			return
 		}
 	}
@@ -189,10 +189,22 @@ func (t *Traits) updateSetPoint() {
 		return
 	}
 
-	if _, err := usecases.SetState(cer, t.owner, body); err != nil {
-		log.Printf("Flatner: could not push setpoint to thermostat: %v\n", err)
-		// Reset nodes so the next tick re-discovers.
-		cer.Nodes = make(map[string][]components.NodeInfo)
+	// Push to every discovered setpoint service.
+	for sysNode, nodes := range cer.Nodes {
+		for _, ni := range nodes {
+			singleCer := &components.Cervice{
+				Definition: cer.Definition,
+				Protos:     cer.Protos,
+				Nodes:      map[string][]components.NodeInfo{sysNode: {ni}},
+			}
+			if _, err := usecases.SetState(singleCer, t.owner, body); err != nil {
+				log.Printf("Flatner: could not push setpoint to %s (%s): %v\n", sysNode, ni.URL, err)
+				// Reset to re-discover on the next tick.
+				cer.Nodes = make(map[string][]components.NodeInfo)
+				return
+			}
+			log.Printf("Flatner: pushed %.1f °C to %s\n", t.currentSetPoint, ni.URL)
+		}
 	}
 }
 

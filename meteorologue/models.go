@@ -54,9 +54,9 @@ type serviceSpec struct {
 // is published as FunctionalLocation instead of the station name, allowing consumers
 // to discover it by room rather than by weather station.
 type moduleInfo struct {
-	assetName            string
+	assetName              string
 	locationFromModuleName bool
-	services             []serviceSpec
+	services               []serviceSpec
 }
 
 // moduleTypeMap translates the Netatmo type field to mbaigo asset name and service list.
@@ -95,7 +95,7 @@ var moduleTypeMap = map[string]moduleInfo{
 		},
 	},
 	"NAModule4": {
-		assetName:            "IndoorModule2",
+		assetName:              "IndoorModule2",
 		locationFromModuleName: true, // publish ModuleName (e.g. "Bathroom") as FunctionalLocation
 		services: []serviceSpec{
 			{"temperature", "temperature", "Celsius", "indoor temperature, secondary module (GET)"},

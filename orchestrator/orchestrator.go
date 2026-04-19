@@ -99,4 +99,3 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}
 }
-

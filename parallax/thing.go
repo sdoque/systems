@@ -41,7 +41,7 @@ import (
 type Traits struct {
 	GpioPin     int        `json:"gpioPin"` // BCM GPIO pin number (default: 18)
 	position    int        `json:"-"`
-	dutyChan    chan int    `json:"-"`
+	dutyChan    chan int   `json:"-"`
 	lastWidthUS int        `json:"-"`
 	backend     pwmBackend `json:"-"`
 }

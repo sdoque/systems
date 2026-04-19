@@ -102,4 +102,3 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 		http.Error(w, "Invalid service path", http.StatusBadRequest)
 	}
 }
-

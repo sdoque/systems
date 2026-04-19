@@ -105,9 +105,9 @@ func buildOBDRequest(pid uint8) canFrame {
 		ID:  obdRequestID,
 		DLC: 8,
 		Data: [8]byte{
-			0x02,        // payload length: 2 bytes follow
-			0x01,        // Mode 01 — show live data
-			pid,         // the requested PID
+			0x02,                         // payload length: 2 bytes follow
+			0x01,                         // Mode 01 — show live data
+			pid,                          // the requested PID
 			0x00, 0x00, 0x00, 0x00, 0x00, // padding
 		},
 	}

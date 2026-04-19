@@ -231,8 +231,8 @@ func (t *Traits) priceToSetPoint(price float64) float64 {
 
 // hourlyPrice is one entry from the elprisetjustnu.se API response.
 type hourlyPrice struct {
-	SEKPerKWh  float64 `json:"SEK_per_kWh"`
-	TimeStart  string  `json:"time_start"`
+	SEKPerKWh float64 `json:"SEK_per_kWh"`
+	TimeStart string  `json:"time_start"`
 }
 
 // fetchCurrentPrice retrieves the spot price for the current hour from elprisetjustnu.se.

@@ -42,11 +42,11 @@ type Credentials struct {
 	ClientID     string `json:"clientID"`
 	ClientSecret string `json:"clientSecret"`
 	StationName  string `json:"stationName"` // leave empty to use the first station found
-	Period       int    `json:"period"`       // polling interval in seconds; default 300
+	Period       int    `json:"period"`      // polling interval in seconds; default 300
 }
 
 const (
-	tokenFile        = "tokens.json"
+	tokenFile         = "tokens.json"
 	oauthCallbackPort = "9999"
 	oauthRedirectURI  = "http://localhost:9999/callback"
 )

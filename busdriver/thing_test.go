@@ -62,8 +62,8 @@ func TestParsePID(t *testing.T) {
 	}{
 		{"0x0C", 0x0C, false},
 		{"0x05", 0x05, false},
-		{"0X0D", 0x0D, false},   // uppercase 0X
-		{"12", 12, false},        // decimal
+		{"0X0D", 0x0D, false},     // uppercase 0X
+		{"12", 12, false},         // decimal
 		{"  0x0C  ", 0x0C, false}, // surrounding spaces
 		{"0x", 0, true},           // missing digits after prefix
 		{"gg", 0, true},           // not valid hex or decimal

@@ -43,9 +43,9 @@ type SignalT struct {
 	Details       map[string][]string `json:"details"`
 	Period        time.Duration       `json:"samplingPeriod"`
 	Threshold     float64             `json:"threshold"`
-	TOverCount    map[string]int  `json:"-"` // consecutive over-threshold count per source node
-	WorkRequested map[string]bool `json:"-"` // pending maintenance order per source node
-	Operational   bool            `json:"-"` // false when any node has a pending order
+	TOverCount    map[string]int      `json:"-"` // consecutive over-threshold count per source node
+	WorkRequested map[string]bool     `json:"-"` // pending maintenance order per source node
+	Operational   bool                `json:"-"` // false when any node has a pending order
 }
 
 //-------------------------------------Define the unit asset
@@ -81,10 +81,10 @@ func initTemplate() *components.UnitAsset {
 			SAP_URL: "http://192.168.1.108:20191/sapper/SAPSimulator/orders",
 			Signals: []SignalT{
 				{
-					Name:          "temperature",
-					Details:       map[string][]string{"Unit": {"Celsius"}},
-					Period:        4,
-					Threshold:     75.0,
+					Name:        "temperature",
+					Details:     map[string][]string{"Unit": {"Celsius"}},
+					Period:      4,
+					Threshold:   75.0,
 					Operational: true,
 				},
 			},

@@ -86,7 +86,7 @@ type Traits struct {
 	// ── runtime state (not serialised) ───────────────────────────────────────
 	value    float64    `json:"-"` // most-recently sampled value
 	tStamp   time.Time  `json:"-"` // timestamp of that sample
-	trayChan chan STray  `json:"-"` // channel connecting handlers ↔ sampleLoop
+	trayChan chan STray `json:"-"` // channel connecting handlers ↔ sampleLoop
 }
 
 // ── initTemplate: default unit asset ─────────────────────────────────────────

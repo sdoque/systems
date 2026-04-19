@@ -1,3 +1,5 @@
+//go:build linux
+
 /*******************************************************************************
  * Copyright (c) 2025 Synecdoque
  *
@@ -13,8 +15,6 @@
  * Contributors:
  *   Jan A. van Deventer, Luleå - initial implementation
  ***************************************************************************SDG*/
-
-//go:build linux
 
 // can_linux.go contains the SocketCAN implementation for Linux.
 // It opens a raw CAN socket, binds it to a named interface (e.g. "can0"),

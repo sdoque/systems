@@ -1,3 +1,5 @@
+//go:build !linux
+
 /*******************************************************************************
  * Copyright (c) 2025 Synecdoque
  *
@@ -13,8 +15,6 @@
  * Contributors:
  *   Jan A. van Deventer, Luleå - initial implementation
  ***************************************************************************SDG*/
-
-//go:build !linux
 
 // can_other.go provides stub implementations of the SocketCAN functions for
 // non-Linux platforms (macOS, Windows).  This allows the package to compile

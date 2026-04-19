@@ -54,11 +54,11 @@ type DeconzSensor struct {
 // deCONZ only populates the ones relevant to each sensor type; the same struct is
 // reused for partial WebSocket updates.
 type SensorState struct {
-	Temperature *int     `json:"temperature"`  // °C × 100
-	Humidity    *int     `json:"humidity"`     // % × 100
-	Pressure    *int     `json:"pressure"`     // hPa
-	Power       *int     `json:"power"`        // deciwatts (÷10 → W)
-	Consumption *float64 `json:"consumption"`  // Wh
+	Temperature *int     `json:"temperature"` // °C × 100
+	Humidity    *int     `json:"humidity"`    // % × 100
+	Pressure    *int     `json:"pressure"`    // hPa
+	Power       *int     `json:"power"`       // deciwatts (÷10 → W)
+	Consumption *float64 `json:"consumption"` // Wh
 	On          *bool    `json:"on"`
 	Open        *bool    `json:"open"`
 	Presence    *bool    `json:"presence"`
@@ -69,9 +69,9 @@ type SensorState struct {
 
 // WSEvent is a deCONZ WebSocket push notification.
 type WSEvent struct {
-	Event    string          `json:"e"`       // "changed", "added", "deleted"
-	Resource string          `json:"r"`       // "lights" or "sensors"
-	ID       string          `json:"id"`      // deCONZ numeric string ID
+	Event    string          `json:"e"`  // "changed", "added", "deleted"
+	Resource string          `json:"r"`  // "lights" or "sensors"
+	ID       string          `json:"id"` // deCONZ numeric string ID
 	UniqueID string          `json:"uniqueid"`
 	State    json.RawMessage `json:"state"`
 }

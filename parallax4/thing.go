@@ -31,7 +31,7 @@ type Traits struct {
 	GpioPin  int      `json:"gpiopin"`
 	rPi_Pin  rpio.Pin `json:"-"`
 	position int      `json:"-"`
-	dutyChan chan int  `json:"-"`
+	dutyChan chan int `json:"-"`
 }
 
 // assetConfig holds the JSON-configurable fields read from systemconfig.json

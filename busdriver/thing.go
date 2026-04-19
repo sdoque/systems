@@ -87,13 +87,13 @@ type pidSubscription struct {
 // Traits holds the runtime state for one signal (one unit asset instance).
 // Fields are intentionally unexported — all access goes through channels.
 type Traits struct {
-	pid        uint8          // OBD-II PID
-	unit       string         // unit string for SignalA_v1a responses
-	value      float64        // most recently decoded value
-	tStamp     time.Time      // timestamp of that value
-	trayChan   chan STray      // HTTP handlers send requests here
-	updateChan chan float64    // canPoller delivers new values here
-	name       string         // asset name for log messages
+	pid        uint8        // OBD-II PID
+	unit       string       // unit string for SignalA_v1a responses
+	value      float64      // most recently decoded value
+	tStamp     time.Time    // timestamp of that value
+	trayChan   chan STray   // HTTP handlers send requests here
+	updateChan chan float64 // canPoller delivers new values here
+	name       string       // asset name for log messages
 }
 
 // ── initTemplate ──────────────────────────────────────────────────────────────

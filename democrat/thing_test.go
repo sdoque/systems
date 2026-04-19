@@ -34,11 +34,11 @@ func TestSanitizeIDShort(t *testing.T) {
 	}{
 		{"thermostat", "thermostat"},
 		{"Nurse System", "Nurse_System"},
-		{"123sensor", "S_123sensor"},  // must start with letter
-		{"  ", "S_unnamed"},           // blank after trim
-		{"a--b__c", "a_b_c"},          // consecutive specials collapsed
-		{"_leading", "leading"},        // leading underscore stripped
-		{"trailing_", "trailing"},      // trailing underscore stripped
+		{"123sensor", "S_123sensor"}, // must start with letter
+		{"  ", "S_unnamed"},          // blank after trim
+		{"a--b__c", "a_b_c"},         // consecutive specials collapsed
+		{"_leading", "leading"},      // leading underscore stripped
+		{"trailing_", "trailing"},    // trailing underscore stripped
 		{"CO2 Sensor #1", "CO2_Sensor_1"},
 	}
 	for _, tc := range tests {

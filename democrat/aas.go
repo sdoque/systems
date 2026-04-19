@@ -137,7 +137,7 @@ func sanitizeIDShort(s string) string {
 	if s == "" {
 		return "S_unnamed"
 	}
-	s = reBad.ReplaceAllString(s, "_")     // replace non-alnum runs with _
+	s = reBad.ReplaceAllString(s, "_")        // replace non-alnum runs with _
 	s = reMultiUnder.ReplaceAllString(s, "_") // collapse consecutive underscores
 	s = strings.Trim(s, "_")
 	if s == "" {

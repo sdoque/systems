@@ -60,7 +60,7 @@ func TestParsePGN(t *testing.T) {
 	}{
 		{"130306", 130306, false},
 		{"128259", 128259, false},
-		{"0x1FD02", 0x1FD02, false}, // hex notation
+		{"0x1FD02", 0x1FD02, false},   // hex notation
 		{"  130306  ", 130306, false}, // surrounding spaces
 		{"0x", 0, true},               // missing digits
 		{"abc", 0, true},              // invalid decimal

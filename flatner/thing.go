@@ -166,13 +166,22 @@ func (t *Traits) updateSetPoint() {
 
 	cer := t.ua.CervicesMap["setpoint"]
 
-	// Discover all setpoint services (thermostat, ethermostat heaters, ...) if not yet known.
-	if len(cer.Nodes) == 0 {
-		if err := usecases.Search4MultipleServices(cer, t.owner); err != nil {
-			log.Printf("Flatner: could not discover setpoint services: %v\n", err)
-			return
-		}
+	// Rediscover setpoint services on every run so that heaters which come online
+	// after Flatner starts (or are added later) are picked up automatically.
+	cer.Nodes = make(map[string][]components.NodeInfo)
+	if err := usecases.Search4MultipleServices(cer, t.owner); err != nil {
+		log.Printf("Flatner: could not discover setpoint services: %v\n", err)
+		return
 	}
+	if len(cer.Nodes) == 0 {
+		log.Println("Flatner: no setpoint services found — nothing to push")
+		return
+	}
+	total := 0
+	for _, nodes := range cer.Nodes {
+		total += len(nodes)
+	}
+	log.Printf("Flatner: discovered %d setpoint service(s)\n", total)
 
 	// Build the setpoint form.
 	now := time.Now()
@@ -199,9 +208,6 @@ func (t *Traits) updateSetPoint() {
 			}
 			if _, err := usecases.SetState(singleCer, t.owner, body); err != nil {
 				log.Printf("Flatner: could not push setpoint to %s (%s): %v\n", sysNode, ni.URL, err)
-				// Reset to re-discover on the next tick.
-				cer.Nodes = make(map[string][]components.NodeInfo)
-				return
 			}
 			log.Printf("Flatner: pushed %.1f °C to %s\n", t.currentSetPoint, ni.URL)
 		}

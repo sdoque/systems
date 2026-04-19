@@ -92,27 +92,52 @@ func initTemplate() *components.UnitAsset {
 // newResources discovers all ZigBee heater plugs from beekeeper via the Orchestrator,
 // matches each one to a temperature service from meteorologue, and returns one
 // UnitAsset per heater with its own feedback control loop.
+// If the dependent services are not yet available it retries every 15 s until they
+// are found or the system context is cancelled.
 func newResources(uac usecases.ConfigurableAsset, sys *components.System) ([]*components.UnitAsset, func()) {
-	// Read default parameters from the single config entry.
-	var defaults Traits
-	defaults.SetPt = 20
-	defaults.Period = 10
-	defaults.Kp = 5
+	defaults := parseTraitDefaults(uac)
+	sProtocols := components.SProtocols(sys.Husk.ProtoPort)
+
+	var assets []*components.UnitAsset
+	for {
+		assets = discoverHeaters(sys, sProtocols, defaults, uac)
+		if len(assets) > 0 {
+			break
+		}
+		log.Println("ethermostat: no heater plugs found — retrying in 15 s (waiting for beekeeper and meteorologue)")
+		select {
+		case <-time.After(15 * time.Second):
+		case <-sys.Ctx.Done():
+			return nil, func() {}
+		}
+	}
+
+	return assets, func() {
+		log.Println("ethermostat: shutting down")
+	}
+}
+
+// parseTraitDefaults extracts and validates the Traits defaults from the configurable asset.
+func parseTraitDefaults(uac usecases.ConfigurableAsset) Traits {
+	d := Traits{SetPt: 20, Period: 10, Kp: 5}
 	if len(uac.Traits) > 0 {
-		if err := json.Unmarshal(uac.Traits[0], &defaults); err != nil {
+		if err := json.Unmarshal(uac.Traits[0], &d); err != nil {
 			log.Println("ethermostat: warning — could not unmarshal traits:", err)
 		}
 	}
-	if defaults.Period == 0 {
-		defaults.Period = 10
+	if d.Period == 0 {
+		d.Period = 10
 	}
-	if defaults.Kp == 0 {
-		defaults.Kp = 5
+	if d.Kp == 0 {
+		d.Kp = 5
 	}
+	return d
+}
 
-	sProtocols := components.SProtocols(sys.Husk.ProtoPort)
-
-	// Discover all OnOff services (beekeeper smart plugs).
+// discoverHeaters performs one round of service discovery and returns a UnitAsset
+// for every beekeeper OnOff plug whose DisplayName ends in "Heater" and for which
+// a matching meteorologue Temperature service can be found.
+func discoverHeaters(sys *components.System, sProtocols []string, defaults Traits, uac usecases.ConfigurableAsset) []*components.UnitAsset {
 	onOffCer := &components.Cervice{
 		Definition: "OnOff",
 		Protos:     sProtocols,
@@ -120,16 +145,17 @@ func newResources(uac usecases.ConfigurableAsset, sys *components.System) ([]*co
 	}
 	if err := usecases.Search4MultipleServices(onOffCer, sys); err != nil {
 		log.Printf("ethermostat: could not discover OnOff services: %v\n", err)
+		return nil
 	}
 
-	// Discover all Temperature services (meteorologue modules).
 	tempCer := &components.Cervice{
-		Definition: "Temperature",
+		Definition: "temperature",
 		Protos:     sProtocols,
 		Nodes:      make(map[string][]components.NodeInfo),
 	}
 	if err := usecases.Search4MultipleServices(tempCer, sys); err != nil {
-		log.Printf("ethermostat: could not discover Temperature services: %v\n", err)
+		log.Printf("ethermostat: could not discover temperature services: %v\n", err)
+		return nil
 	}
 
 	var assets []*components.UnitAsset
@@ -147,7 +173,6 @@ func newResources(uac usecases.ConfigurableAsset, sys *components.System) ([]*co
 
 			location := extractLocation(displayName)
 
-			// Dedicated on_off cervice pointing only at this plug's URL.
 			heaterOnOff := &components.Cervice{
 				Definition: "OnOff",
 				Protos:     sProtocols,
@@ -156,14 +181,13 @@ func newResources(uac usecases.ConfigurableAsset, sys *components.System) ([]*co
 				},
 			}
 
-			// Find the best-matching temperature cervice for this location.
 			tempSysNode, tempNI, ok := selectTempNode(tempCer.Nodes, location)
 			if !ok {
 				log.Printf("ethermostat: no temperature service found for %s — skipping\n", displayName)
 				continue
 			}
 			heaterTemp := &components.Cervice{
-				Definition: "Temperature",
+				Definition: "temperature",
 				Protos:     sProtocols,
 				Nodes: map[string][]components.NodeInfo{
 					tempSysNode: {tempNI},
@@ -190,13 +214,7 @@ func newResources(uac usecases.ConfigurableAsset, sys *components.System) ([]*co
 		}
 	}
 
-	if len(assets) == 0 {
-		log.Println("ethermostat: no heater plugs found — check beekeeper and Orchestrator configuration")
-	}
-
-	return assets, func() {
-		log.Println("ethermostat: shutting down")
-	}
+	return assets
 }
 
 // buildHeaterAsset creates a UnitAsset for one heater thermostat.
@@ -224,26 +242,81 @@ func extractLocation(heaterName string) string {
 	return strings.TrimSuffix(heaterName, "Heater")
 }
 
-// selectTempNode finds the best temperature NodeInfo for the given location.
-// It prefers a node whose FunctionalLocation detail contains the location string.
-// If none matches it falls back to the first available temperature node.
+// selectTempNode finds the best temperature NodeInfo for the given location using
+// a three-tier priority:
+//  1. A node whose FunctionalLocation detail contains the location string.
+//  2. A node whose ModuleName detail contains the location string.
+//  3. Fallback: any node that is not an outdoor module (avoids using outdoor
+//     temperature for indoor heating control); last resort is any node at all.
 func selectTempNode(nodes map[string][]components.NodeInfo, location string) (string, components.NodeInfo, bool) {
+	// Tier 1: FunctionalLocation match.
 	for sysNode, nodeList := range nodes {
 		for _, ni := range nodeList {
 			for _, fl := range ni.Details["FunctionalLocation"] {
-				if strings.Contains(fl, location) {
+				if strings.Contains(strings.ToLower(fl), strings.ToLower(location)) {
 					return sysNode, ni, true
 				}
 			}
 		}
 	}
-	// Fallback: first available temperature node.
+
+	// Tier 2: ModuleName match (e.g. "Bathroom" heater → ModuleName "Bathroom").
+	for sysNode, nodeList := range nodes {
+		for _, ni := range nodeList {
+			for _, mn := range ni.Details["ModuleName"] {
+				if strings.Contains(strings.ToLower(mn), strings.ToLower(location)) {
+					return sysNode, ni, true
+				}
+			}
+		}
+	}
+
+	// Tier 3a: Prefer the main indoor module — the one whose ModuleName contains
+	// "indoor" (case-insensitive).  This picks the primary base-station sensor
+	// over a room-specific secondary module (e.g. "Bathroom") when no exact
+	// location match exists.
+	for sysNode, nodeList := range nodes {
+		for _, ni := range nodeList {
+			for _, mn := range ni.Details["ModuleName"] {
+				if strings.Contains(strings.ToLower(mn), "indoor") {
+					return sysNode, ni, true
+				}
+			}
+		}
+	}
+
+	// Tier 3b: Any indoor module (not outdoor).
+	for sysNode, nodeList := range nodes {
+		for _, ni := range nodeList {
+			if isIndoorNode(ni) {
+				return sysNode, ni, true
+			}
+		}
+	}
+
+	// Tier 3c: Last resort — any node available.
 	for sysNode, nodeList := range nodes {
 		if len(nodeList) > 0 {
 			return sysNode, nodeList[0], true
 		}
 	}
 	return "", components.NodeInfo{}, false
+}
+
+// isIndoorNode returns true when no ModuleName or FunctionalLocation detail
+// contains the word "outdoor" (case-insensitive).
+func isIndoorNode(ni components.NodeInfo) bool {
+	for _, mn := range ni.Details["ModuleName"] {
+		if strings.Contains(strings.ToLower(mn), "outdoor") {
+			return false
+		}
+	}
+	for _, fl := range ni.Details["FunctionalLocation"] {
+		if strings.Contains(strings.ToLower(fl), "outdoor") {
+			return false
+		}
+	}
+	return true
 }
 
 //-------------------------------------Thing's resource methods

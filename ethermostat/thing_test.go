@@ -18,6 +18,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -152,6 +153,54 @@ func TestSelectTempNode_ExactMatch(t *testing.T) {
 	}
 	if ni.URL != "http://host/meteorologue/KitchenModule/temperature" {
 		t.Errorf("unexpected URL: %s", ni.URL)
+	}
+}
+
+// TestSelectTempNode_ModuleNameMatch verifies that ModuleName is used when FunctionalLocation has no match.
+func TestSelectTempNode_ModuleNameMatch(t *testing.T) {
+	nodes := map[string][]components.NodeInfo{
+		"meteorologue": {
+			{URL: "http://host/meteorologue/IndoorModule/temperature", Details: map[string][]string{
+				"FunctionalLocation": {"Kälkholmen (Indoor)"},
+				"ModuleName":         {"Indoor"},
+			}},
+			{URL: "http://host/meteorologue/IndoorModule2/temperature", Details: map[string][]string{
+				"FunctionalLocation": {"Kälkholmen (Indoor)"},
+				"ModuleName":         {"Bathroom"},
+			}},
+			{URL: "http://host/meteorologue/OutdoorModule/temperature", Details: map[string][]string{
+				"FunctionalLocation": {"Kälkholmen (Indoor)"},
+				"ModuleName":         {"Outdoor"},
+			}},
+		},
+	}
+	_, ni, ok := selectTempNode(nodes, "Bathroom")
+	if !ok {
+		t.Fatal("expected ModuleName match, got none")
+	}
+	if ni.URL != "http://host/meteorologue/IndoorModule2/temperature" {
+		t.Errorf("expected Bathroom module URL, got %s", ni.URL)
+	}
+}
+
+// TestSelectTempNode_IndoorPreferredOverOutdoor verifies that the fallback prefers indoor nodes.
+func TestSelectTempNode_IndoorPreferredOverOutdoor(t *testing.T) {
+	nodes := map[string][]components.NodeInfo{
+		"meteorologue": {
+			{URL: "http://host/meteorologue/OutdoorModule/temperature", Details: map[string][]string{
+				"ModuleName": {"Outdoor"},
+			}},
+			{URL: "http://host/meteorologue/IndoorModule/temperature", Details: map[string][]string{
+				"ModuleName": {"Indoor"},
+			}},
+		},
+	}
+	_, ni, ok := selectTempNode(nodes, "Kitchen")
+	if !ok {
+		t.Fatal("expected fallback match, got none")
+	}
+	if strings.Contains(ni.URL, "Outdoor") {
+		t.Errorf("expected indoor fallback, got outdoor URL: %s", ni.URL)
 	}
 }
 

@@ -457,12 +457,19 @@ func newModuleAsset(info moduleInfo, moduleName, stationName string, sys *compon
 		services[spec.subPath] = s
 	}
 
+	// Secondary indoor modules (e.g. a room sensor named "Bathroom") publish their
+	// ModuleName as FunctionalLocation so consumers can discover them by room name.
+	functionalLocation := stationName
+	if info.locationFromModuleName {
+		functionalLocation = moduleName
+	}
+
 	ua := &components.UnitAsset{
 		Name:    info.assetName,
 		Mission: "provide_weather_data",
 		Owner:   sys,
 		Details: map[string][]string{
-			"FunctionalLocation": {stationName},
+			"FunctionalLocation": {functionalLocation},
 			"ModuleName":         {moduleName},
 		},
 		ServicesMap: services,

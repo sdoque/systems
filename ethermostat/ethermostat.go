@@ -69,6 +69,13 @@ func main() {
 	if err := json.Unmarshal(rawResources[0], &uac); err != nil {
 		log.Fatalf("resource configuration error: %v\n", err)
 	}
+	// Forward shutdown signals to the context immediately so that Ctrl+C
+	// unblocks the discovery retry loop inside newResources.
+	go func() {
+		<-sys.Sigs
+		cancel()
+	}()
+
 	assets, cleanup := newResources(uac, &sys)
 	defer cleanup()
 	for _, ua := range assets {
@@ -79,9 +86,8 @@ func main() {
 	usecases.RegisterServices(&sys)
 	go usecases.SetoutServers(&sys)
 
-	<-sys.Sigs
+	<-sys.Ctx.Done()
 	fmt.Println("\nshutting down system", sys.Name)
-	cancel()
 	time.Sleep(2 * time.Second)
 }
 

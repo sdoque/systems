@@ -179,6 +179,7 @@ func discoverHeaters(sys *components.System, sProtocols []string, defaults Trait
 				Nodes: map[string][]components.NodeInfo{
 					sysNode: {ni},
 				},
+				Mode: "set",
 			}
 
 			tempSysNode, tempNI, ok := selectTempNode(tempCer.Nodes, location)
@@ -192,6 +193,7 @@ func discoverHeaters(sys *components.System, sProtocols []string, defaults Trait
 				Nodes: map[string][]components.NodeInfo{
 					tempSysNode: {tempNI},
 				},
+				Mode: "get",
 			}
 
 			t := &Traits{

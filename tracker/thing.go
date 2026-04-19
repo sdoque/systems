@@ -82,6 +82,7 @@ func newResource(uac usecases.ConfigurableAsset, sys *components.System) (*compo
 		Definition: "addorder",
 		Protos:     sProtocols,
 		Nodes:      make(map[string][]components.NodeInfo),
+		Mode:       "set",
 	}
 
 	t := &Traits{

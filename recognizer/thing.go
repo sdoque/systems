@@ -104,6 +104,7 @@ func newResource(uac usecases.ConfigurableAsset, sys *components.System) (*compo
 		Protos:     components.SProtocols(sys.Husk.ProtoPort),
 		Details:    photographDetails,
 		Nodes:      make(map[string][]components.NodeInfo),
+		Mode:       "get",
 	}
 
 	ua := &components.UnitAsset{

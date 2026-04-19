@@ -105,6 +105,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		Definition: "setpoint",
 		Protos:     sProtocols,
 		Nodes:      make(map[string][]components.NodeInfo),
+		Mode:       "set",
 	}
 
 	ua := &components.UnitAsset{

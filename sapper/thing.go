@@ -92,6 +92,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		Definition: "SignalMonitoring",
 		Protos:     sProtocols,
 		Nodes:      make(map[string][]components.NodeInfo),
+		Mode:       "get",
 	}
 	t.monitor = monitorCervice
 

@@ -149,6 +149,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			Definition: service,
 			Protos:     sProtocols,
 			Nodes:      make(map[string][]components.NodeInfo),
+			Mode:       "get",
 		}
 		newCervice.Details = topicDetrails
 		cervMap := components.Cervices{newCervice.Definition: newCervice}

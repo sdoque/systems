@@ -127,6 +127,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			Details:    measurement.Details,
 			Protos:     sProtocols,
 			Nodes:      make(map[string][]components.NodeInfo),
+			Mode:       "get",
 		}
 		cervMap[cMeasurement.Definition] = cMeasurement
 	}

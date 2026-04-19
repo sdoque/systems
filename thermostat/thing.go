@@ -99,11 +99,13 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		Definition: "temperature",
 		Protos:     sProtocols,
 		Nodes:      make(map[string][]components.NodeInfo),
+		Mode:       "get",
 	}
 	rotCervice := &components.Cervice{
 		Definition: "rotation",
 		Protos:     sProtocols,
 		Nodes:      make(map[string][]components.NodeInfo),
+		Mode:       "set",
 	}
 	cervMap := components.Cervices{
 		tempCervice.Definition: tempCervice,

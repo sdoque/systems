@@ -135,6 +135,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			Details:    signal.Details,
 			Protos:     sProtocols,
 			Nodes:      make(map[string][]components.NodeInfo),
+			Mode:       "get",
 		}
 		cervices[cSignal.Definition] = &cSignal
 	}

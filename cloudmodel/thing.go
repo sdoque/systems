@@ -94,6 +94,18 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 }
 
+//-------------------------------------Service handlers
+
+// aggregate handles GET requests to generate the merged cloud SysML v2 model.
+func (t *Traits) aggregate(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		t.assembleModel(w)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+	}
+}
+
 //-------------------------------------Unit asset's function methods
 
 // assembleModel fetches /smodel from each registered system, merges the per-system

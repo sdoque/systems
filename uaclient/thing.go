@@ -184,6 +184,27 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 }
 
+// -------------------------------------Service handlers
+
+func (t *Traits) browseHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		t.browseNode(w)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+	}
+}
+
+func (t *Traits) access(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		vauleForm := t.read()
+		usecases.HTTPProcessGetRequest(w, r, &vauleForm)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+	}
+}
+
 // -------------------------------------Unit asset's function methods
 
 // browseNode list the node(s)

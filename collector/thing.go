@@ -165,6 +165,18 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 }
 
+//-------------------------------------Service handlers
+
+// measQuery handles GET requests for the list of measurements in the bucket.
+func (t *Traits) measQuery(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		t.q4measurements(w)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+	}
+}
+
 //-------------------------------------Unit asset's functionalities
 
 // collectIngest discovers all providers of a measurement type and ingests a reading

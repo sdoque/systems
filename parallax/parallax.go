@@ -103,33 +103,3 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 	}
 }
 
-func (t *Traits) rotation(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case "GET":
-		positionForm := t.getPosition()
-		usecases.HTTPProcessGetRequest(w, r, &positionForm)
-	case "PUT":
-		sig, err := usecases.HTTPProcessSetRequest(w, r)
-		if err != nil {
-			log.Println("Error with the setting request of the position ", err)
-		}
-		confirmation, err := t.setPosition(sig)
-		if err != nil {
-			log.Println("Error setting the position ", err)
-		}
-		// return the confirmation of the set operation
-		bestContentType := "application/json" // we know what we sent, so we can respond in the same format
-		responseData, err := usecases.Pack(&confirmation, bestContentType)
-		if err != nil {
-			log.Printf("Error packing response: %v", err)
-		}
-		w.Header().Set("Content-Type", bestContentType)
-		w.WriteHeader(http.StatusOK)
-		_, err = w.Write(responseData)
-		if err != nil {
-			log.Printf("Error while writing response: %v", err)
-		}
-	default:
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
-	}
-}

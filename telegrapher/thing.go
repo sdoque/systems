@@ -249,6 +249,35 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 }
 
+//-------------------------------------Service handlers
+
+func (t *Traits) access(w http.ResponseWriter, r *http.Request, servicePath string) {
+	switch r.Method {
+	case "GET":
+		msg := t.Message
+		if len(msg) > 0 {
+			w.WriteHeader(http.StatusOK)
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(msg)
+		} else {
+			http.Error(w, "The subscribed topic is not being published", http.StatusBadRequest)
+		}
+	case "PUT":
+		log.Printf("MQTT client is connected: %v", t.mClient.IsConnected())
+
+		if err := t.publishRaw([]byte(`{"test":123}`)); err != nil {
+			log.Printf("Failed to publish: %v", err)
+			http.Error(w, "MQTT publish failed", http.StatusInternalServerError)
+			return
+		}
+		log.Printf("MQTT client is connected: %v", t.mClient.IsConnected())
+
+		w.WriteHeader(http.StatusAccepted)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+	}
+}
+
 //-------------------------------------Unit asset's resource functions
 
 // publishInfo writes a human-readable description of what is being published to MQTT.

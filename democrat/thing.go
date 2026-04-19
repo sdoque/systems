@@ -176,6 +176,48 @@ func newResource(uac usecases.ConfigurableAsset, sys *components.System) (*compo
 	}
 }
 
+//-------------------------------------Service handlers
+
+// syncHandler handles GET /democrat/assembler/sync.
+// It sends a SyncRequest to syncLoop and blocks until the result is ready,
+// then returns the SyncResult as JSON.  Times out after 60 seconds.
+func (t *Traits) syncHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not supported", http.StatusMethodNotAllowed)
+		return
+	}
+
+	resultChan := make(chan SyncResult, 1)
+	req := SyncRequest{ResultChan: resultChan}
+
+	select {
+	case t.triggerChan <- req:
+	case <-time.After(5 * time.Second):
+		http.Error(w, "sync loop busy", http.StatusServiceUnavailable)
+		return
+	}
+
+	select {
+	case result := <-resultChan:
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+	case <-time.After(60 * time.Second):
+		http.Error(w, "sync timed out", http.StatusGatewayTimeout)
+		log.Printf("democrat: sync handler timed out waiting for syncLoop")
+	}
+}
+
+// statusHandler handles GET /democrat/assembler/status.
+// It returns the last SyncResult without triggering a new sync.
+func (t *Traits) statusHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not supported", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(t.lastResult)
+}
+
 // ── syncLoop ──────────────────────────────────────────────────────────────────
 
 // syncLoop is the background goroutine that owns lastResult.

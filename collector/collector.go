@@ -101,12 +101,3 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}
 }
-
-func (t *Traits) measQuery(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case "GET":
-		t.q4measurements(w)
-	default:
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
-	}
-}

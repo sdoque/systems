@@ -17,7 +17,12 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
 	"net/http"
+	"net/url"
 	"reflect"
 	"time"
 
@@ -121,6 +126,126 @@ func newResource(uac usecases.ConfigurableAsset, sys *components.System) (*compo
 	}
 
 	return ua, func() {}
+}
+
+//-------------------------------------Service handlers
+
+// ordersHandler routes GET (page or lookup) and POST (new order).
+func (t *Traits) ordersHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		id := r.URL.Query().Get("id")
+		email := r.URL.Query().Get("email")
+		if id != "" && email != "" {
+			t.lookupFromTracker(w, id, email)
+		} else if id != "" || email != "" {
+			http.Error(w, "both id and email are required for order lookup", http.StatusBadRequest)
+		} else {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			fmt.Fprint(w, orderPage)
+		}
+	case http.MethodPost:
+		t.submitOrder(w, r)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusMethodNotAllowed)
+	}
+}
+
+// submitOrder unpacks the incoming JSON order, forwards it to the tracker, and
+// returns the confirmed record (including the assigned order number) as JSON.
+func (t *Traits) submitOrder(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "reading request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	unpacked, err := usecases.Unpack(body, "application/json")
+	if err != nil {
+		http.Error(w, "unpacking order: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	order, ok := unpacked.(*PenHolderOrder_v1)
+	if !ok {
+		http.Error(w, "expected PenHolderOrder_v1 body", http.StatusBadRequest)
+		return
+	}
+
+	if order.Height <= 0 || order.Height > 21 {
+		http.Error(w, "height must be between 0 and 21 mm", http.StatusBadRequest)
+		return
+	}
+	if order.Depth < 0 || order.Depth > order.Height {
+		http.Error(w, "depth must be ≥ 0 and not exceed height", http.StatusBadRequest)
+		return
+	}
+
+	packed, err := usecases.Pack(order, "application/json")
+	if err != nil {
+		http.Error(w, "packing order: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	f, err := usecases.SetState(t.cervices["order"], t.owner, packed)
+	if err != nil {
+		log.Printf("clerk: could not reach tracker: %v\n", err)
+		http.Error(w, "tracker unavailable: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	confirmed, ok := f.(*PenHolderOrder_v1)
+	if !ok {
+		http.Error(w, "unexpected response from tracker", http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(confirmed) //nolint:errcheck
+}
+
+// lookupFromTracker discovers the tracker's order service URL, appends ?id=N&email=E,
+// and proxies the response back to the browser.
+func (t *Traits) lookupFromTracker(w http.ResponseWriter, id, email string) {
+	cer := t.cervices["order"]
+
+	if len(cer.Nodes) == 0 {
+		if err := usecases.Search4Services(cer, t.owner); err != nil {
+			http.Error(w, "could not discover order service: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+	}
+
+	var baseURL string
+	for _, nodes := range cer.Nodes {
+		if len(nodes) > 0 {
+			baseURL = nodes[0].URL
+			break
+		}
+	}
+	if baseURL == "" {
+		http.Error(w, "order service not found", http.StatusBadGateway)
+		return
+	}
+
+	targetURL := baseURL + "?id=" + url.QueryEscape(id) + "&email=" + url.QueryEscape(email)
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Get(targetURL)
+	if err != nil {
+		cer.Nodes = make(map[string][]components.NodeInfo)
+		http.Error(w, "tracker error: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, "reading tracker response: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.WriteHeader(resp.StatusCode)
+	w.Write(body) //nolint:errcheck
 }
 
 //-------------------------------------Embedded page

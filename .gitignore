@@ -29,4 +29,5 @@ go.work
 serviceRegistry.db
 *.pem
 **/files/
+*.pdf
 

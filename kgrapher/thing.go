@@ -136,6 +136,31 @@ func resolveLocalOntologies(localOntologies map[string]string, dir string, baseU
 	}
 }
 
+//-------------------------------------Service handlers
+
+// aggregate writes out the knowledge graph of the local cloud and pushes it to GraphDB
+func (t *Traits) aggregate(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		t.assembleOntologies(w)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+	}
+}
+
+// listOntologies writes out the HTML produced by localOntologies()
+func (t *Traits) listOntologies(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		p := r.Pattern
+		html := t.localOntologies(p)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, html)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+	}
+}
+
 // -------------------------------------Unit asset's function methods
 
 // assembleOntologies gets the list of systems from the lead registrar and then the ontology of each system

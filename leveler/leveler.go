@@ -106,38 +106,3 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 	}
 }
 
-func (t *Traits) setpt(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case "GET":
-		setPointForm := t.getSetPoint()
-		usecases.HTTPProcessGetRequest(w, r, &setPointForm)
-	case "PUT":
-		sig, err := usecases.HTTPProcessSetRequest(w, r)
-		if err != nil {
-			log.Println("Error with the setting request of the position ", err)
-		}
-		t.setSetPoint(sig)
-	default:
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
-	}
-}
-
-func (t *Traits) diff(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case "GET":
-		signalErr := t.getError()
-		usecases.HTTPProcessGetRequest(w, r, &signalErr)
-	default:
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
-	}
-}
-
-func (t *Traits) variations(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case "GET":
-		signalErr := t.getJitter()
-		usecases.HTTPProcessGetRequest(w, r, &signalErr)
-	default:
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
-	}
-}

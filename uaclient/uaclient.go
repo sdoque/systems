@@ -105,21 +105,3 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 	}
 }
 
-func (t *Traits) browseHandler(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case "GET":
-		t.browseNode(w)
-	default:
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
-	}
-}
-
-func (t *Traits) access(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case "GET":
-		vauleForm := t.read()
-		usecases.HTTPProcessGetRequest(w, r, &vauleForm)
-	default:
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
-	}
-}

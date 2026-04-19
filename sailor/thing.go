@@ -219,6 +219,33 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 }
 
+// ── Service handlers ──────────────────────────────────────────────────────────
+
+// access handles GET requests for the signal's current value.
+// It sends an STray to the signal's assetLoop and blocks until a reply arrives.
+func (t *Traits) access(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		order := STray{
+			ValueP: make(chan forms.SignalA_v1a),
+			Error:  make(chan error),
+		}
+		t.trayChan <- order
+		select {
+		case err := <-order.Error:
+			log.Printf("access %s: error: %v", t.name, err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		case f := <-order.ValueP:
+			usecases.HTTPProcessGetRequest(w, r, &f)
+		case <-time.After(5 * time.Second):
+			http.Error(w, "request timed out", http.StatusGatewayTimeout)
+			log.Printf("access %s: timeout", t.name)
+		}
+	default:
+		http.Error(w, "method not supported", http.StatusMethodNotAllowed)
+	}
+}
+
 // ── assetLoop ─────────────────────────────────────────────────────────────────
 
 // assetLoop is the per-signal goroutine.  It is the sole owner of (value,

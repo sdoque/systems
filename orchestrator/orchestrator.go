@@ -17,14 +17,11 @@ import (
 	"context"
 	"crypto/x509/pkix"
 	"encoding/json"
-	"io"
 	"log"
-	"mime"
 	"net/http"
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
-	"github.com/sdoque/mbaigo/forms"
 	"github.com/sdoque/mbaigo/usecases"
 )
 
@@ -103,95 +100,3 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 	}
 }
 
-// orchestrate receives a service discovery request and responds with the selected service location if found
-func (t *Traits) orchestrate(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case "POST":
-		contentType := r.Header.Get("Content-Type")
-		mediaType, _, err := mime.ParseMediaType(contentType)
-		if err != nil {
-			log.Println("Error parsing media type:", err)
-			return
-		}
-
-		defer r.Body.Close()
-		bodyBytes, err := io.ReadAll(r.Body)
-		if err != nil {
-			log.Printf("error reading discovery request body: %v\n", err)
-			return
-		}
-
-		questForm, err := usecases.Unpack(bodyBytes, mediaType)
-		if err != nil {
-			log.Printf("error extracting the discovery request %v\n", err)
-		}
-		qf, ok := questForm.(*forms.ServiceQuest_v1)
-		if !ok {
-			log.Println("Problem unpacking the service discovery request form")
-			return
-		}
-
-		servLocation, err := t.getServiceURL(*qf)
-		if err != nil {
-			log.Println(err)
-			http.Error(w, err.Error(), http.StatusServiceUnavailable)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, err = w.Write(servLocation)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	default:
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
-	}
-}
-
-func (t *Traits) orchestrateMultiple(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case "POST":
-		contentType := r.Header.Get("Content-Type")
-		mediaType, _, err := mime.ParseMediaType(contentType)
-		if err != nil {
-			log.Println("Error parsing media type:", err)
-			return
-		}
-
-		defer r.Body.Close()
-		bodyBytes, err := io.ReadAll(r.Body)
-		if err != nil {
-			log.Printf("error reading discovery request body: %v\n", err)
-			return
-		}
-
-		questForm, err := usecases.Unpack(bodyBytes, mediaType)
-		if err != nil {
-			log.Printf("error extracting the discovery request %v\n", err)
-		}
-		qf, ok := questForm.(*forms.ServiceQuest_v1)
-		if !ok {
-			log.Println("Problem unpacking the service discovery request form")
-			return
-		}
-
-		servLocation, err := t.getServicesURL(*qf)
-		if err != nil {
-			log.Println(err)
-			http.Error(w, err.Error(), http.StatusServiceUnavailable)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, err = w.Write(servLocation)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	default:
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
-	}
-}

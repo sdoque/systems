@@ -85,6 +85,23 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 }
 
+//-------------------------------------Service handlers
+
+func (t *Traits) photograph(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		fileForm, err := t.takePicture()
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Failed to take a picture, check if PiCam is connected", http.StatusNotFound)
+			return
+		}
+		usecases.HTTPProcessGetRequest(w, r, &fileForm)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+	}
+}
+
 //-------------------------------------Unit asset's resource functions
 
 func (t *Traits) takePicture() (f forms.FileForm_v1, err error) {

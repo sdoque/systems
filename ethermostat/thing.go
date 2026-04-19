@@ -319,6 +319,50 @@ func isIndoorNode(ni components.NodeInfo) bool {
 	return true
 }
 
+//-------------------------------------Service handlers
+
+// setpt handles GET (read setpoint) and PUT (update setpoint) requests.
+func (t *Traits) setpt(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		f := t.getSetPoint()
+		usecases.HTTPProcessGetRequest(w, r, &f)
+	case http.MethodPut:
+		sig, err := usecases.HTTPProcessSetRequest(w, r)
+		if err != nil {
+			log.Printf("ethermostat %s: setpoint PUT error: %v\n", t.name, err)
+			return
+		}
+		t.setSetPoint(sig)
+		confirmed := t.getSetPoint()
+		usecases.HTTPProcessGetRequest(w, r, &confirmed)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusMethodNotAllowed)
+	}
+}
+
+// diff handles GET requests for the current thermal error.
+func (t *Traits) diff(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		f := t.getError()
+		usecases.HTTPProcessGetRequest(w, r, &f)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusMethodNotAllowed)
+	}
+}
+
+// variations handles GET requests for the control loop jitter.
+func (t *Traits) variations(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		f := t.getJitter()
+		usecases.HTTPProcessGetRequest(w, r, &f)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusMethodNotAllowed)
+	}
+}
+
 //-------------------------------------Thing's resource methods
 
 // getSetPoint fills out a signal form with the current thermal setpoint.

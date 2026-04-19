@@ -21,14 +21,11 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"mime"
 	"net/http"
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
-	"github.com/sdoque/mbaigo/forms"
 	"github.com/sdoque/mbaigo/usecases"
 )
 
@@ -108,45 +105,3 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 	}
 }
 
-func (t *Traits) access(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case "GET":
-		valueForm := t.read()
-		usecases.HTTPProcessGetRequest(w, r, valueForm)
-	case "PUT":
-		contentType := r.Header.Get("Content-Type")
-		mediaType, _, err := mime.ParseMediaType(contentType)
-		if err != nil {
-			fmt.Println("Error parsing media type:", err)
-			return
-		}
-
-		defer r.Body.Close()
-		bodyBytes, err := io.ReadAll(r.Body)
-		if err != nil {
-			log.Printf("error reading service discovery request body: %v", err)
-			return
-		}
-		newState, err := usecases.Unpack(bodyBytes, mediaType)
-		if err != nil {
-			log.Printf("error extracting the service discovery request %v\n", err)
-			return
-		}
-		// Perform a type assertion to convert the received form to the expected type
-		switch ns := newState.(type) {
-		case *forms.SignalA_v1a:
-			fmt.Printf("Received analog signal: %.2f %s\n", ns.Value, ns.Unit)
-			t.write(ns.Value)
-		case *forms.SignalB_v1a:
-			fmt.Printf("Received digital signal: %v\n", ns.Value)
-			t.write(ns.Value)
-		default:
-			log.Printf("Problem unpacking the new value for %s: unsupported form type %T", t.name, ns)
-			http.Error(w, "Unsupported form type", http.StatusBadRequest)
-			return
-		}
-
-	default:
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
-	}
-}

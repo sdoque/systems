@@ -36,17 +36,17 @@ sequenceDiagram
 
 Each system's `/smodel` endpoint (provided by the `mbaigo` framework) generates a self-contained SysML v2 `package` with:
 - **port defs** — one per unique service definition (provided or consumed)
-- **part defs** — one for the system block and one per unit asset block, carrying `in`/`out` ports and the unit asset's `mission` attribute
+- **part defs** — one for the system (named `<system>System`) and one per unit asset (named `<system>_<asset>UnitAsset`), carrying `in`/`out` ports and the unit asset's `mission` attribute. Asset type names are qualified by the system to prevent collisions when two systems happen to use the same asset name.
 - **IBD part** — the instantiated system with its host metadata, provided service URLs as comments, and `@connect` annotations for any already-resolved service providers
 - **abstract action defs** — `GetState`, `SetState`, `Compute` (only those actually used)
 - **behaviour defs** — one `action def` per unit asset whose cervices carry a `Mode`, with a linear `first X then Y;` sequence
 
-The Modeler deduplicates `port def` and `abstract action def` declarations (the same definition can appear in many systems) and concatenates the rest into a single top-level `package`.
+The Modeler deduplicates `port def` and `abstract action def` declarations, emits a `Host` type and a `LocalCloud` type whose body lists every host and every system as a part usage, and wraps everything in a single `LocalCloud` IBD instance that holds the actual host/system attribute values plus **formal `connect` statements** resolved from each consumer's `@connect` URL against the providers seen in the same assembly pass.
 
 ## Output example
 
 ```sysml
-package 'localCloud' {
+package 'AlphaCloud' {
 
     // ── Port Definitions ─────────────────────────────────────────────────────
     port def 'temperature';
@@ -54,39 +54,43 @@ package 'localCloud' {
     port def 'setpoint';
     ...
 
-    // ── Block Definitions (BDD) ──────────────────────────────────────────────
-    part def 'thermostatSystem' {
-        attribute name : String = "thermostat";
-        part 'controller_1' : 'controller_1Block';
-    }
-
-    part def 'controller_1Block' {
-        attribute mission : String = "control_heater";
-        out port 'setpoint'        : ~'setpoint';         // provided
-        out port 'thermalerror'    : ~'thermalerror';     // provided
-        in port  'temperature'     : 'temperature';       // consumed
-        in port  'rotation'        : 'rotation';          // consumed
-    }
-    ...
-
-    // ── Internal Block Diagram (IBD) ─────────────────────────────────────────
-    part 'thermostat' : 'thermostatSystem' {
-        attribute host      : String  = "myhost";
-        attribute ipAddress : String  = "192.168.1.10";
-        attribute httpPort  : Integer = 20001;
-        // provides: http://192.168.1.10:20001/thermostat/controller_1/setpoint
-        // @connect controller_1.temperature → http://192.168.1.5:20110/ds18b20/sensor_1/temperature
-        // @connect controller_1.rotation    → http://192.168.1.7:20200/parallax/servo_1/rotation
-    }
-    ...
-
     // ── Abstract Action Definitions ──────────────────────────────────────────
     abstract action def GetState;
     abstract action def SetState;
     abstract action def Compute;
 
+    // ── Host Definition ──────────────────────────────────────────────────────
+    part def 'Host' {
+        attribute name : String;
+        attribute ipAddress : String[*];
+    }
+
+    // ── Block Definitions (BDD) ──────────────────────────────────────────────
+    part def 'thermostatSystem' {
+        attribute name : String = "thermostat";
+        part 'controller_1' : 'thermostat_controller_1UnitAsset';
+    }
+
+    part def 'thermostat_controller_1UnitAsset' {
+        attribute mission : String = "control_heater";
+        out port 'setpoint'     : ~'setpoint';      // provided
+        out port 'thermalerror' : ~'thermalerror';  // provided
+        in port  'temperature'  : 'temperature';    // consumed
+        in port  'rotation'     : 'rotation';       // consumed
+        perform 'thermostat_controller_1Behavior';
+    }
+    ...
+
+    part def 'LocalCloud' {
+        attribute name : String;
+        part canbus : 'Host';
+        part thermostat : 'thermostatSystem';
+        part ds18b20    : 'ds18b20System';
+        ...
+    }
+
     // ── Behaviour Definitions ────────────────────────────────────────────────
-    action def 'controller_1Behavior' {
+    action def 'thermostat_controller_1Behavior' {
         action 'get_temperature' : GetState;
         action compute           : Compute;
         action 'set_rotation'    : SetState;
@@ -95,6 +99,26 @@ package 'localCloud' {
         first compute then 'set_rotation';
     }
     ...
+
+    // ── Internal Block Diagram (IBD) ─────────────────────────────────────────
+    part 'AlphaCloud' : 'LocalCloud' {
+        attribute name : String = "AlphaCloud";
+
+        part canbus : 'Host' {
+            attribute name : String = "canbus";
+            attribute ipAddress : String = "192.168.1.10";
+        }
+
+        part thermostat : 'thermostatSystem' {
+            attribute host : String = "canbus";
+            attribute httpPort : Integer = 20152;
+            // provides: http://192.168.1.10:20152/thermostat/controller_1/setpoint
+        }
+        ...
+
+        // ── Connections ──────────────────────────────────────────────────────
+        connect thermostat.controller_1.temperature to ds18b20.'28-00000f030344'.temperature;
+    }
 }
 ```
 

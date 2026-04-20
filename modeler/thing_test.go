@@ -31,7 +31,10 @@ import (
 
 // samplePackage returns the SysML v2 text that SModeling would produce for a
 // minimal single-asset system with one provided and one consumed service.
+// For test simplicity the system name equals the asset name.
 func samplePackage(pkgName, assetName, provided, consumed string) string {
+	sysName := assetName
+	typeName := sysName + "_" + assetName + "UnitAsset"
 	return fmt.Sprintf(`package '%s' {
 
     // ── Port Definitions ─────────────────────────────────────────────────────
@@ -41,10 +44,10 @@ func samplePackage(pkgName, assetName, provided, consumed string) string {
     // ── Block Definitions (BDD) ──────────────────────────────────────────────
     part def '%sSystem' {
         attribute name : String = "%s";
-        part '%s' : '%sBlock';
+        part '%s' : '%s';
     }
 
-    part def '%sBlock' {
+    part def '%s' {
         attribute mission : String = "test_mission";
         out port '%s' : ~'%s';  // provided service
         in port '%s' : '%s';  // consumed service
@@ -55,17 +58,19 @@ func samplePackage(pkgName, assetName, provided, consumed string) string {
         attribute host : String = "testhost";
         attribute ipAddress : String = "127.0.0.1";
         attribute httpPort : Integer = 9000;
-        // provides: http://127.0.0.1:9000/%s/%s/%s
+        // provides %s.%s at http://127.0.0.1:9000/%s/%s/%s
     }
 
 }
 `,
 		pkgName,
 		provided, consumed,
-		assetName, assetName, assetName, assetName,
-		assetName, provided, provided, consumed, consumed,
-		assetName, assetName,
-		assetName, assetName, provided,
+		sysName, sysName, assetName, typeName,
+		typeName,
+		provided, provided, consumed, consumed,
+		sysName, sysName,
+		assetName, provided,
+		sysName, assetName, provided,
 	)
 }
 
@@ -420,8 +425,8 @@ func TestAssembleModel_SingleSystem(t *testing.T) {
 	if !strings.Contains(body, "port def 'setpoint'") {
 		t.Error("merged output missing port def 'setpoint'")
 	}
-	if !strings.Contains(body, "part def 'controllerBlock'") {
-		t.Error("merged output missing block def for controller")
+	if !strings.Contains(body, "part def 'controller_controllerUnitAsset'") {
+		t.Error("merged output missing UnitAsset def for controller")
 	}
 	if !strings.Contains(body, "part 'controller'") {
 		t.Error("merged output missing IBD part")
@@ -464,11 +469,11 @@ func TestAssembleModel_DeduplicatesPortDefs(t *testing.T) {
 		t.Error("missing port def 'pressure'")
 	}
 	// Both system block defs should appear.
-	if !strings.Contains(body, "part def 'asset1Block'") {
-		t.Error("missing block def for asset1")
+	if !strings.Contains(body, "part def 'asset1_asset1UnitAsset'") {
+		t.Error("missing UnitAsset def for asset1")
 	}
-	if !strings.Contains(body, "part def 'asset2Block'") {
-		t.Error("missing block def for asset2")
+	if !strings.Contains(body, "part def 'asset2_asset2UnitAsset'") {
+		t.Error("missing UnitAsset def for asset2")
 	}
 }
 
@@ -545,6 +550,84 @@ func TestAssembleModel_RegistrarUnreachable(t *testing.T) {
 	}
 }
 
+func TestAssembleModel_ResolvesConnect(t *testing.T) {
+	// Producer exposes "temperature" at a known URL; consumer has an @connect
+	// pointing to that same URL. The modeler should materialise a formal
+	// "connect <consumer>.<asset>.<cervice> to <producer>.<asset>.<definition>"
+	// statement in the LocalCloud IBD.
+	providerURL := "http://127.0.0.1:9001/sensor/probe_1/temperature"
+
+	producerPkg := `package 'host_sensor' {
+    port def 'temperature';
+
+    part def 'sensorSystem' {
+        attribute name : String = "sensor";
+        part 'probe_1' : 'sensor_probe_1UnitAsset';
+    }
+
+    part def 'sensor_probe_1UnitAsset' {
+        out port 'temperature' : ~'temperature';  // provided service
+    }
+
+    part 'sensor' : 'sensorSystem' {
+        attribute host : String = "h1";
+        attribute ipAddress : String = "127.0.0.1";
+        attribute httpPort : Integer = 9001;
+        // provides probe_1.temperature at http://127.0.0.1:9001/sensor/probe_1/temperature
+    }
+}
+`
+
+	consumerPkg := `package 'host_controller' {
+    port def 'temperature';
+
+    part def 'controllerSystem' {
+        attribute name : String = "controller";
+        part 'ctrl_1' : 'controller_ctrl_1UnitAsset';
+    }
+
+    part def 'controller_ctrl_1UnitAsset' {
+        in port 'temperature' : 'temperature';  // consumed service
+    }
+
+    part 'controller' : 'controllerSystem' {
+        attribute host : String = "h1";
+        attribute ipAddress : String = "127.0.0.1";
+        attribute httpPort : Integer = 9002;
+        // @connect ctrl_1.temperature → ` + providerURL + `
+    }
+}
+`
+
+	srvProd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, producerPkg)
+	}))
+	defer srvProd.Close()
+	srvCons := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, consumerPkg)
+	}))
+	defer srvCons.Close()
+
+	reg := newMockRegistrar(systemRecordListJSON([]string{srvProd.URL, srvCons.URL}))
+	defer reg.Close()
+
+	tr := newTestTraits(reg.URL, "theCloud")
+	w := httptest.NewRecorder()
+	tr.assembleModel(w)
+
+	body := w.Body.String()
+	want := "connect controller.ctrl_1.temperature to sensor.probe_1.temperature;"
+	if !strings.Contains(body, want) {
+		t.Errorf("expected connect statement %q in output, got:\n%s", want, body)
+	}
+	if !strings.Contains(body, "part 'theCloud' : 'LocalCloud'") {
+		t.Error("expected LocalCloud IBD instance named after the cloud")
+	}
+	if !strings.Contains(body, "part def 'Host'") {
+		t.Error("expected Host part def")
+	}
+}
+
 func TestAssembleModel_EmptySystemList(t *testing.T) {
 	registrarSrv := newMockRegistrar(systemRecordListJSON([]string{}))
 	defer registrarSrv.Close()
@@ -558,11 +641,25 @@ func TestAssembleModel_EmptySystemList(t *testing.T) {
 	}
 	body := w.Body.String()
 	if !strings.HasPrefix(body, "package 'emptyCloud'") {
-		t.Errorf("expected empty package, got: %q", body)
+		t.Errorf("expected package header, got: %q", body)
 	}
-	// No port defs, block defs, or IBD parts — just the package shell.
-	if strings.Contains(body, "port def") || strings.Contains(body, "part def") || strings.Contains(body, "part '") {
-		t.Error("empty system list should produce an empty package body")
+	// Scaffolding (Host type, LocalCloud type, LocalCloud instance) is always
+	// emitted — but with no registered systems there should be no system-level
+	// defs and no connect statements.
+	if !strings.Contains(body, "part def 'Host'") {
+		t.Error("empty cloud should still declare the Host part def")
+	}
+	if !strings.Contains(body, "part def 'LocalCloud'") {
+		t.Error("empty cloud should still declare the LocalCloud part def")
+	}
+	if !strings.Contains(body, "part 'emptyCloud' : 'LocalCloud'") {
+		t.Error("empty cloud should still emit the LocalCloud IBD instance")
+	}
+	if strings.Contains(body, "connect ") {
+		t.Error("no systems means no connect statements")
+	}
+	if strings.Contains(body, "System' {") {
+		t.Error("no systems means no <name>System defs")
 	}
 }
 

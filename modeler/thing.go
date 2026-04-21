@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,6 +35,14 @@ import (
 	"github.com/sdoque/mbaigo/forms"
 	"github.com/sdoque/mbaigo/usecases"
 )
+
+// mAFLibrary is the SysML v2 vocabulary for Arrowhead concepts (hosts,
+// systems, unit assets, local cloud, action types). It is embedded at
+// compile time from mAF.sysml and emitted inline at the top of every
+// assembled cloud package so the output is self-contained.
+//
+//go:embed mAF.sysml
+var mAFLibrary string
 
 //-------------------------------------Define the unit asset
 
@@ -480,8 +489,22 @@ func (t *Traits) emitCloudPackage(portDefs, abstractActions, blockDefs, behavior
 	copy(fragSorted, fragments)
 	sort.Slice(fragSorted, func(i, j int) bool { return fragSorted[i].partName < fragSorted[j].partName })
 
+	// Name of the concrete cloud specialisation — the generated type that
+	// extends mAF::LocalCloud and lists the actual hosts and systems.
+	cloudDefName := sysmlIdent(t.CloudName) + "Def"
+
 	var sb strings.Builder
+
+	// mAF library: emitted as its own package at the top so downstream
+	// tools see the full vocabulary before the concrete cloud package
+	// that imports it.
+	sb.WriteString(mAFLibrary)
+	if !strings.HasSuffix(mAFLibrary, "\n\n") {
+		sb.WriteString("\n")
+	}
+
 	fmt.Fprintf(&sb, "package '%s' {\n\n", t.CloudName)
+	sb.WriteString("    import mAF::*;\n\n")
 
 	if len(portDefs) > 0 {
 		sb.WriteString("    // ── Port Definitions ─────────────────────────────────────────────────────\n")
@@ -491,20 +514,6 @@ func (t *Traits) emitCloudPackage(portDefs, abstractActions, blockDefs, behavior
 		sb.WriteString("\n")
 	}
 
-	if len(abstractActions) > 0 {
-		sb.WriteString("    // ── Abstract Action Definitions ──────────────────────────────────────────\n")
-		for _, line := range abstractActions {
-			sb.WriteString(line + "\n")
-		}
-		sb.WriteString("\n")
-	}
-
-	sb.WriteString("    // ── Host Definition ──────────────────────────────────────────────────────\n")
-	sb.WriteString("    part def 'Host' {\n")
-	sb.WriteString("        attribute name : String;\n")
-	sb.WriteString("        attribute ipAddress : String[*];\n")
-	sb.WriteString("    }\n\n")
-
 	if len(blockDefs) > 0 {
 		sb.WriteString("    // ── Block Definitions (BDD) ──────────────────────────────────────────────\n")
 		for _, block := range blockDefs {
@@ -512,11 +521,12 @@ func (t *Traits) emitCloudPackage(portDefs, abstractActions, blockDefs, behavior
 		}
 	}
 
-	// LocalCloud type: lists every host and every system as a part usage.
-	sb.WriteString("    part def 'LocalCloud' {\n")
-	sb.WriteString("        attribute name : String;\n")
+	// Concrete cloud type: specialises mAF::LocalCloud with this cloud's
+	// hosts and systems as part usages. The IBD instance below then
+	// redefines each of them to supply deployment-specific values.
+	fmt.Fprintf(&sb, "    part def '%s' :> LocalCloud {\n", cloudDefName)
 	for _, h := range hostNames {
-		fmt.Fprintf(&sb, "        part %s : 'Host';\n", quotedIfNeeded(h))
+		fmt.Fprintf(&sb, "        part %s : Host;\n", quotedIfNeeded(h))
 	}
 	for _, f := range fragSorted {
 		fmt.Fprintf(&sb, "        part %s : '%s';\n", quotedIfNeeded(f.partName), f.typeName)
@@ -532,12 +542,15 @@ func (t *Traits) emitCloudPackage(portDefs, abstractActions, blockDefs, behavior
 
 	// LocalCloud instance (IBD): hosts, systems with attribute values, and connects.
 	sb.WriteString("    // ── Internal Block Diagram (IBD) ─────────────────────────────────────────\n")
-	fmt.Fprintf(&sb, "    part '%s' : 'LocalCloud' {\n", t.CloudName)
+	fmt.Fprintf(&sb, "    part '%s' : '%s' {\n", t.CloudName, cloudDefName)
 	fmt.Fprintf(&sb, "        attribute name : String = \"%s\";\n\n", t.CloudName)
 
+	// 'redefines' is the conformant way to attach instance values to part
+	// usages already declared in the LocalCloud part def, without retyping
+	// them (which some strict SysML v2 tools flag as a redefinition conflict).
 	for _, h := range hostNames {
 		info := hosts[h]
-		fmt.Fprintf(&sb, "        part %s : 'Host' {\n", quotedIfNeeded(h))
+		fmt.Fprintf(&sb, "        part redefines %s {\n", quotedIfNeeded(h))
 		fmt.Fprintf(&sb, "            attribute name : String = \"%s\";\n", h)
 		for _, ip := range info.ips {
 			fmt.Fprintf(&sb, "            attribute ipAddress : String = \"%s\";\n", ip)
@@ -546,7 +559,7 @@ func (t *Traits) emitCloudPackage(portDefs, abstractActions, blockDefs, behavior
 	}
 
 	for _, f := range fragSorted {
-		fmt.Fprintf(&sb, "        part %s : '%s' {\n", quotedIfNeeded(f.partName), f.typeName)
+		fmt.Fprintf(&sb, "        part redefines %s {\n", quotedIfNeeded(f.partName))
 		if f.host != "" {
 			fmt.Fprintf(&sb, "            attribute host : String = \"%s\";\n", f.host)
 		}
@@ -640,4 +653,11 @@ func containsString(s []string, v string) bool {
 		}
 	}
 	return false
+}
+
+// sysmlIdent normalises a name to a SysML-compatible identifier. Mirrors
+// the helper used in mbaigo's smodeling.go so generated type names align.
+func sysmlIdent(name string) string {
+	r := strings.NewReplacer("-", "_", " ", "_", ".", "_")
+	return r.Replace(name)
 }

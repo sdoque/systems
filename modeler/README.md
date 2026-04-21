@@ -5,12 +5,28 @@
 The Modeler system assembles a complete **SysML v2** structural and behavioural model of a local cloud — a distributed system of systems — by collecting the individual model fragment of each registered system and merging them into a single, coherent package.
 
 The output covers:
-- **Block Definition Diagram (BDD)** — the types of all systems and their unit assets, with the services they provide and consume
+- **mAF library** — a SysML v2 package that defines the Arrowhead vocabulary (`ArrowheadSystem`, `ServiceRegistrar`, `Orchestrator`, `CertificateAuthority`, `UnitAsset`, `Host`, `LocalCloud`, plus the abstract actions `GetState`/`SetState`/`Compute`). Emitted inline at the top of every assembled cloud package so the output is self-contained. The library source lives in [`mAF.sysml`](mAF.sysml) and is embedded at compile time via `go:embed`.
+- **Block Definition Diagram (BDD)** — concrete part defs for each system and unit asset, all specialised from mAF abstractions (`:> ArrowheadSystem`, `:> UnitAsset`, etc.) plus a `<cloudName>Def` specialisation of `LocalCloud` that lists the hosts and systems in the deployment
 - **Internal Block Diagram (IBD)** — the instantiated parts with their host metadata and live service connections at the time of the request
 - **Behaviour Definitions** — per-asset action sequences derived from each unit asset's consumed services, when those cervices carry a `Mode` ("get" or "set")
 
 The model is generated on demand by issuing an HTTP GET to the `cloudmodel` service.
 It is expressed in [SysML v2 textual notation](https://www.omg.org/spec/SysML/2.0) and returned as plain text.
+
+## Relationship to AFO
+
+The [AFO OWL ontology](https://github.com/sdoque/kgrapher) and the mAF SysML library describe the same domain — an Arrowhead local cloud — from two complementary angles:
+
+| Concern                         | AFO (OWL)       | mAF (SysML v2)                   |
+|---------------------------------|-----------------|----------------------------------|
+| Class reasoning                 | Yes             | Limited (specialisation only)    |
+| Property chains, inverses       | Yes             | No                               |
+| Structural composition          | Weak            | First-class (`part def`, `part`) |
+| Ports, items, data flows        | No              | First-class                      |
+| Behaviour (action sequences)    | No              | First-class (`action def`)       |
+| Connections between parts       | Derivable       | First-class (`connect`)          |
+
+The kgrapher emits AFO instances; the modeler emits mAF-specialised SysML v2. The two outputs are views of the same runtime topology, each suited to different tooling.
 
 ## How it works
 
@@ -34,19 +50,49 @@ sequenceDiagram
     Modeler-->>User: SysML v2 package 'localCloud' { … }
 ```
 
-Each system's `/smodel` endpoint (provided by the `mbaigo` framework) generates a self-contained SysML v2 `package` with:
+Each system's `/smodel` endpoint (provided by the `mbaigo` framework) generates a SysML v2 fragment with:
 - **port defs** — one per unique service definition (provided or consumed)
-- **part defs** — one for the system (named `<system>System`) and one per unit asset (named `<system>_<asset>UnitAsset`), carrying `in`/`out` ports and the unit asset's `mission` attribute. Asset type names are qualified by the system to prevent collisions when two systems happen to use the same asset name.
+- **part defs** — one for the system (named `<system>System`, specialised from an mAF type — `ServiceRegistrar`/`Orchestrator`/`CertificateAuthority` for core systems, `ArrowheadSystem` for domain systems) and one per unit asset (named `<system>_<asset>UnitAsset`, specialised from `UnitAsset`). Asset type names are qualified by the system to prevent collisions when two systems happen to use the same asset name.
 - **IBD part** — the instantiated system with its host metadata, provided service URLs as comments, and `@connect` annotations for any already-resolved service providers
-- **abstract action defs** — `GetState`, `SetState`, `Compute` (only those actually used)
-- **behaviour defs** — one `action def` per unit asset whose cervices carry a `Mode`, with a linear `first X then Y;` sequence
+- **behaviour defs** — one `action def` per unit asset whose cervices carry a `Mode`, with a linear `first X then Y;` sequence referencing mAF's abstract `GetState`/`SetState`/`Compute` action defs
 
-The Modeler deduplicates `port def` and `abstract action def` declarations, emits a `Host` type and a `LocalCloud` type whose body lists every host and every system as a part usage, and wraps everything in a single `LocalCloud` IBD instance that holds the actual host/system attribute values plus **formal `connect` statements** resolved from each consumer's `@connect` URL against the providers seen in the same assembly pass.
+The Modeler deduplicates `port def` declarations, emits the mAF library inline at the top of the output, wraps the per-system defs in a `package '<cloudName>' { import mAF::*; ... }`, emits a concrete `<cloudName>Def :> LocalCloud` type listing the hosts and systems, and produces a `LocalCloud` IBD instance that holds the actual host/system attribute values (via `redefines`) plus **formal `connect` statements** resolved from each consumer's `@connect` URL against the providers seen in the same assembly pass.
 
 ## Output example
 
 ```sysml
+// mAF — the mbaigo Arrowhead Framework library (emitted inline at the top)
+package mAF {
+    abstract action def GetState;
+    abstract action def SetState;
+    abstract action def Compute;
+
+    part def Host {
+        attribute name : String;
+        attribute ipAddress : String[*];
+    }
+
+    abstract part def UnitAsset {
+        attribute mission : String;
+    }
+
+    abstract part def ArrowheadSystem {
+        attribute name : String;
+        attribute host : String;
+    }
+    abstract part def CoreSystem             :> ArrowheadSystem;
+    abstract part def ServiceRegistrar       :> CoreSystem;
+    abstract part def Orchestrator           :> CoreSystem;
+    abstract part def CertificateAuthority   :> CoreSystem;
+
+    abstract part def LocalCloud {
+        attribute name : String;
+    }
+}
+
 package 'AlphaCloud' {
+
+    import mAF::*;
 
     // ── Port Definitions ─────────────────────────────────────────────────────
     port def 'temperature';
@@ -54,36 +100,29 @@ package 'AlphaCloud' {
     port def 'setpoint';
     ...
 
-    // ── Abstract Action Definitions ──────────────────────────────────────────
-    abstract action def GetState;
-    abstract action def SetState;
-    abstract action def Compute;
-
-    // ── Host Definition ──────────────────────────────────────────────────────
-    part def 'Host' {
-        attribute name : String;
-        attribute ipAddress : String[*];
-    }
-
     // ── Block Definitions (BDD) ──────────────────────────────────────────────
-    part def 'thermostatSystem' {
+    part def 'thermostatSystem' :> ArrowheadSystem {
         attribute name : String = "thermostat";
+        attribute host : String;
+        attribute httpPort : Integer;
         part 'controller_1' : 'thermostat_controller_1UnitAsset';
     }
 
-    part def 'thermostat_controller_1UnitAsset' {
+    part def 'thermostat_controller_1UnitAsset' :> UnitAsset {
         attribute mission : String = "control_heater";
-        out port 'setpoint'     : ~'setpoint';      // provided
-        out port 'thermalerror' : ~'thermalerror';  // provided
-        in port  'temperature'  : 'temperature';    // consumed
-        in port  'rotation'     : 'rotation';       // consumed
-        perform 'thermostat_controller_1Behavior';
+        out port 'setpoint'     : 'setpoint';      // provided
+        out port 'thermalerror' : 'thermalerror';  // provided
+        in port  'temperature'  : 'temperature';   // consumed
+        in port  'rotation'     : 'rotation';      // consumed
+        perform action behave : 'thermostat_controller_1Behavior';
     }
+
+    part def 'serviceregistrarSystem' :> ServiceRegistrar { ... }
+    part def 'orchestratorSystem'     :> Orchestrator     { ... }
     ...
 
-    part def 'LocalCloud' {
-        attribute name : String;
-        part canbus : 'Host';
+    part def 'AlphaCloudDef' :> LocalCloud {
+        part canbus : Host;
         part thermostat : 'thermostatSystem';
         part ds18b20    : 'ds18b20System';
         ...
@@ -101,15 +140,15 @@ package 'AlphaCloud' {
     ...
 
     // ── Internal Block Diagram (IBD) ─────────────────────────────────────────
-    part 'AlphaCloud' : 'LocalCloud' {
+    part 'AlphaCloud' : 'AlphaCloudDef' {
         attribute name : String = "AlphaCloud";
 
-        part canbus : 'Host' {
+        part redefines canbus {
             attribute name : String = "canbus";
             attribute ipAddress : String = "192.168.1.10";
         }
 
-        part thermostat : 'thermostatSystem' {
+        part redefines thermostat {
             attribute host : String = "canbus";
             attribute httpPort : Integer = 20152;
             // provides: http://192.168.1.10:20152/thermostat/controller_1/setpoint
@@ -131,6 +170,15 @@ A behaviour block is emitted for a unit asset when at least one of its consumed 
 3. all `"set"` cervices (sorted alphabetically) — each becomes a `SetState` action
 
 Consecutive steps are linked with `first X then Y;` pairs.
+
+## Extending the mAF library
+
+The [`mAF.sysml`](mAF.sysml) file is the source of truth for the Arrowhead vocabulary in SysML v2 terms. If you add a new core system category, a new kind of action, or want to tighten cardinality constraints on `LocalCloud`, edit that file directly — the change takes effect on the next `go build` because the library is embedded at compile time. No Go code needs to be touched unless you also change how concrete systems specialise from it (that logic lives in `mbaigo/usecases/smodeling.go`).
+
+Guidelines:
+- Keep mAF **abstract**. Concrete part defs belong in the generated output, not in the library.
+- Keep mAF **aligned with AFO**. If you add a class to AFO, add the equivalent abstract part def to mAF (or explain why it doesn't map).
+- mAF expresses what SysML v2 can natively express. Reasoning that belongs in OWL (property chains, class intersections) stays in AFO.
 
 ## Configuration
 

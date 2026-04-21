@@ -44,12 +44,14 @@ func samplePackage(pkgName, assetName, provided, consumed string) string {
     // ── Block Definitions (BDD) ──────────────────────────────────────────────
     part def '%sSystem' {
         attribute name : String = "%s";
+        attribute host : String;
+        attribute httpPort : Integer;
         part '%s' : '%s';
     }
 
-    part def '%s' {
+    part def '%s' :> UnitAsset {
         attribute mission : String = "test_mission";
-        out port '%s' : ~'%s';  // provided service
+        out port '%s' : '%s';  // provided service
         in port '%s' : '%s';  // consumed service
     }
 
@@ -419,14 +421,17 @@ func TestAssembleModel_SingleSystem(t *testing.T) {
 		t.Errorf("status = %d, want 200", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.HasPrefix(body, "package 'testCloud'") {
-		t.Errorf("output should start with package declaration, got: %q", body[:min(80, len(body))])
+	if !strings.Contains(body, "package mAF") {
+		t.Error("output missing mAF library package")
+	}
+	if !strings.Contains(body, "package 'testCloud'") {
+		t.Error("output missing cloud package declaration")
 	}
 	if !strings.Contains(body, "port def 'setpoint'") {
 		t.Error("merged output missing port def 'setpoint'")
 	}
-	if !strings.Contains(body, "part def 'controller_controllerUnitAsset'") {
-		t.Error("merged output missing UnitAsset def for controller")
+	if !strings.Contains(body, "part def 'controller_controllerUnitAsset' :> UnitAsset") {
+		t.Error("merged output missing UnitAsset def for controller (with mAF specialisation)")
 	}
 	if !strings.Contains(body, "part 'controller'") {
 		t.Error("merged output missing IBD part")
@@ -562,11 +567,13 @@ func TestAssembleModel_ResolvesConnect(t *testing.T) {
 
     part def 'sensorSystem' {
         attribute name : String = "sensor";
+        attribute host : String;
+        attribute httpPort : Integer;
         part 'probe_1' : 'sensor_probe_1UnitAsset';
     }
 
     part def 'sensor_probe_1UnitAsset' {
-        out port 'temperature' : ~'temperature';  // provided service
+        out port 'temperature' : 'temperature';  // provided service
     }
 
     part 'sensor' : 'sensorSystem' {
@@ -583,6 +590,8 @@ func TestAssembleModel_ResolvesConnect(t *testing.T) {
 
     part def 'controllerSystem' {
         attribute name : String = "controller";
+        attribute host : String;
+        attribute httpPort : Integer;
         part 'ctrl_1' : 'controller_ctrl_1UnitAsset';
     }
 
@@ -620,11 +629,14 @@ func TestAssembleModel_ResolvesConnect(t *testing.T) {
 	if !strings.Contains(body, want) {
 		t.Errorf("expected connect statement %q in output, got:\n%s", want, body)
 	}
-	if !strings.Contains(body, "part 'theCloud' : 'LocalCloud'") {
-		t.Error("expected LocalCloud IBD instance named after the cloud")
+	if !strings.Contains(body, "part 'theCloud' : 'theCloudDef'") {
+		t.Error("expected LocalCloud IBD instance specialised from <cloudName>Def")
 	}
-	if !strings.Contains(body, "part def 'Host'") {
-		t.Error("expected Host part def")
+	if !strings.Contains(body, "part def Host") {
+		t.Error("expected mAF Host part def")
+	}
+	if !strings.Contains(body, "part def 'theCloudDef' :> LocalCloud") {
+		t.Error("expected concrete cloud def specialising mAF::LocalCloud")
 	}
 }
 
@@ -640,20 +652,26 @@ func TestAssembleModel_EmptySystemList(t *testing.T) {
 		t.Errorf("status = %d, want 200", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.HasPrefix(body, "package 'emptyCloud'") {
-		t.Errorf("expected package header, got: %q", body)
+	if !strings.Contains(body, "package mAF") {
+		t.Error("empty cloud should still include the mAF library")
 	}
-	// Scaffolding (Host type, LocalCloud type, LocalCloud instance) is always
-	// emitted — but with no registered systems there should be no system-level
-	// defs and no connect statements.
-	if !strings.Contains(body, "part def 'Host'") {
-		t.Error("empty cloud should still declare the Host part def")
+	if !strings.Contains(body, "package 'emptyCloud'") {
+		t.Error("empty cloud should still declare the cloud package")
 	}
-	if !strings.Contains(body, "part def 'LocalCloud'") {
-		t.Error("empty cloud should still declare the LocalCloud part def")
+	// Scaffolding (Host type, LocalCloud type, concrete cloud def, IBD
+	// instance) is always emitted — with no registered systems there should
+	// be no per-system defs and no connect statements.
+	if !strings.Contains(body, "part def Host") {
+		t.Error("empty cloud should still declare the Host part def (from mAF)")
 	}
-	if !strings.Contains(body, "part 'emptyCloud' : 'LocalCloud'") {
-		t.Error("empty cloud should still emit the LocalCloud IBD instance")
+	if !strings.Contains(body, "abstract part def LocalCloud") {
+		t.Error("empty cloud should still declare the LocalCloud abstract part def (from mAF)")
+	}
+	if !strings.Contains(body, "part def 'emptyCloudDef' :> LocalCloud") {
+		t.Error("empty cloud should still emit a concrete cloud def")
+	}
+	if !strings.Contains(body, "part 'emptyCloud' : 'emptyCloudDef'") {
+		t.Error("empty cloud should still emit the cloud IBD instance")
 	}
 	if strings.Contains(body, "connect ") {
 		t.Error("no systems means no connect statements")
@@ -671,8 +689,9 @@ func TestAssembleModel_CustomCloudName(t *testing.T) {
 	w := httptest.NewRecorder()
 	tr.assembleModel(w)
 
-	if !strings.HasPrefix(w.Body.String(), "package 'myFactory_2026'") {
-		t.Errorf("package name not honoured, got: %q", w.Body.String()[:min(60, w.Body.Len())])
+	body := w.Body.String()
+	if !strings.Contains(body, "package 'myFactory_2026'") {
+		t.Errorf("package name not honoured; output did not contain cloud package declaration")
 	}
 }
 

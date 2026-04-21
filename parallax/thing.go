@@ -292,6 +292,27 @@ func exportPWM(chipPath string, ch int) (string, error) {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
+
+	// After the kernel creates pwm<ch>/, udev asynchronously chgrp's the
+	// files inside to the 'gpio' group. Until that rule fires the files are
+	// root:root 644, and a write to 'enable' returns EACCES. This is
+	// invisible when parallax is started manually (the user types slower
+	// than udev) but reliably trips when launched back-to-back by a tmux
+	// script. Poll 'enable' for write access for up to 1 s so udev has time
+	// to catch up.
+	enablePath := filepath.Join(pwmPath, "enable")
+	for i := 0; i < 100; i++ {
+		f, err := os.OpenFile(enablePath, os.O_WRONLY, 0)
+		if err == nil {
+			_ = f.Close()
+			break
+		}
+		if !os.IsPermission(err) {
+			break // some other error — let the caller's write surface it
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
 	return pwmPath, nil
 }
 

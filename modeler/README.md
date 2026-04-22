@@ -63,6 +63,9 @@ The Modeler deduplicates `port def` declarations, emits the mAF library inline a
 ```sysml
 // mAF — the mbaigo Arrowhead Framework library (emitted inline at the top)
 package mAF {
+    private import ScalarValues::String;
+    private import ScalarValues::Integer;
+
     abstract action def GetState;
     abstract action def SetState;
     abstract action def Compute;
@@ -92,28 +95,33 @@ package mAF {
 
 package 'AlphaCloud' {
 
-    import mAF::*;
+    private import ScalarValues::String;
+    private import ScalarValues::Integer;
+    private import mAF::*;
 
     // ── Port Definitions ─────────────────────────────────────────────────────
-    port def 'temperature';
-    port def 'rotation';
-    port def 'setpoint';
+    // Port def names are capitalised so they differ from the port usage
+    // names below. (SysML v2 requires def and usage to use different
+    // identifiers.)
+    port def 'Temperature';
+    port def 'Rotation';
+    port def 'Setpoint';
     ...
 
     // ── Block Definitions (BDD) ──────────────────────────────────────────────
     part def 'thermostatSystem' :> ArrowheadSystem {
-        attribute name : String = "thermostat";
-        attribute host : String;
+        attribute redefines name : String = "thermostat";
+        attribute redefines host : String;
         attribute httpPort : Integer;
         part 'controller_1' : 'thermostat_controller_1UnitAsset';
     }
 
     part def 'thermostat_controller_1UnitAsset' :> UnitAsset {
-        attribute mission : String = "control_heater";
-        out port 'setpoint'     : 'setpoint';      // provided
-        out port 'thermalerror' : 'thermalerror';  // provided
-        in port  'temperature'  : 'temperature';   // consumed
-        in port  'rotation'     : 'rotation';      // consumed
+        attribute redefines mission : String = "control_heater";
+        out port 'setpoint'     : 'Setpoint';      // provided
+        out port 'thermalerror' : 'Thermalerror';  // provided
+        in port  'temperature'  : 'Temperature';   // consumed
+        in port  'rotation'     : 'Rotation';      // consumed
         perform action behave : 'thermostat_controller_1Behavior';
     }
 
@@ -141,16 +149,16 @@ package 'AlphaCloud' {
 
     // ── Internal Block Diagram (IBD) ─────────────────────────────────────────
     part 'AlphaCloud' : 'AlphaCloudDef' {
-        attribute name : String = "AlphaCloud";
+        attribute redefines name : String = "AlphaCloud";
 
         part redefines canbus {
-            attribute name : String = "canbus";
-            attribute ipAddress : String = "192.168.1.10";
+            attribute redefines name : String = "canbus";
+            attribute redefines ipAddress : String = "192.168.1.10";
         }
 
         part redefines thermostat {
-            attribute host : String = "canbus";
-            attribute httpPort : Integer = 20152;
+            attribute redefines host : String = "canbus";
+            attribute redefines httpPort : Integer = 20152;
             // provides: http://192.168.1.10:20152/thermostat/controller_1/setpoint
         }
         ...

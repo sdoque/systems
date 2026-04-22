@@ -35,6 +35,11 @@ import (
 func samplePackage(pkgName, assetName, provided, consumed string) string {
 	sysName := assetName
 	typeName := sysName + "_" + assetName + "UnitAsset"
+	// Port def names are the capitalised form of the service name so they
+	// are distinct from the port usage names. Mirrors portDefName in
+	// mbaigo/usecases/smodeling.go.
+	providedDef := capitalise(provided)
+	consumedDef := capitalise(consumed)
 	return fmt.Sprintf(`package '%s' {
 
     // ── Port Definitions ─────────────────────────────────────────────────────
@@ -42,15 +47,15 @@ func samplePackage(pkgName, assetName, provided, consumed string) string {
     port def '%s';
 
     // ── Block Definitions (BDD) ──────────────────────────────────────────────
-    part def '%sSystem' {
-        attribute name : String = "%s";
-        attribute host : String;
+    part def '%sSystem' :> ArrowheadSystem {
+        attribute redefines name : String = "%s";
+        attribute redefines host : String;
         attribute httpPort : Integer;
         part '%s' : '%s';
     }
 
     part def '%s' :> UnitAsset {
-        attribute mission : String = "test_mission";
+        attribute redefines mission : String = "test_mission";
         out port '%s' : '%s';  // provided service
         in port '%s' : '%s';  // consumed service
     }
@@ -66,14 +71,23 @@ func samplePackage(pkgName, assetName, provided, consumed string) string {
 }
 `,
 		pkgName,
-		provided, consumed,
+		providedDef, consumedDef,
 		sysName, sysName, assetName, typeName,
 		typeName,
-		provided, provided, consumed, consumed,
+		provided, providedDef, consumed, consumedDef,
 		sysName, sysName,
 		assetName, provided,
 		sysName, assetName, provided,
 	)
+}
+
+// capitalise returns s with the first character uppercased — used to build
+// port def names that are distinct from port usage names in test fixtures.
+func capitalise(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 // systemRecordListJSON serialises a SystemRecordList_v1 whose List contains the
@@ -257,13 +271,15 @@ func TestParsePackage(t *testing.T) {
 			t.Errorf("ibdParts count = %d, want 1", len(ibdParts))
 		}
 
-		// port defs contain the right names
+		// Port def names are capitalised so they are distinct from port
+		// usage names (SysML v2 requires def and usage to use different
+		// identifiers).
 		combined := strings.Join(portDefs, "\n")
-		if !strings.Contains(combined, "'setpoint'") {
-			t.Error("portDefs missing 'setpoint'")
+		if !strings.Contains(combined, "'Setpoint'") {
+			t.Error("portDefs missing 'Setpoint'")
 		}
-		if !strings.Contains(combined, "'temperature'") {
-			t.Error("portDefs missing 'temperature'")
+		if !strings.Contains(combined, "'Temperature'") {
+			t.Error("portDefs missing 'Temperature'")
 		}
 
 		// block defs contain provided/consumed ports
@@ -321,19 +337,20 @@ func TestParsePackage(t *testing.T) {
 
 	t.Run("two systems share a port def name", func(t *testing.T) {
 		// parsePackage itself does not deduplicate — that is assembleModel's job.
-		// Both packages contain 'temperature'; each call returns it independently.
+		// Both packages contain the capitalised 'Temperature' port def; each
+		// call returns it independently.
 		pkg1 := samplePackage("host_sys1", "asset1", "temperature", "rotation")
 		pkg2 := samplePackage("host_sys2", "asset2", "temperature", "level")
 		pd1, _, _, _, _ := parsePackage(pkg1)
 		pd2, _, _, _, _ := parsePackage(pkg2)
 		count := 0
 		for _, l := range append(pd1, pd2...) {
-			if extractPortDefName(l) == "temperature" {
+			if extractPortDefName(l) == "Temperature" {
 				count++
 			}
 		}
 		if count != 2 {
-			t.Errorf("expected 'temperature' to appear in both parses, count = %d", count)
+			t.Errorf("expected 'Temperature' to appear in both parses, count = %d", count)
 		}
 	})
 
@@ -427,8 +444,8 @@ func TestAssembleModel_SingleSystem(t *testing.T) {
 	if !strings.Contains(body, "package 'testCloud'") {
 		t.Error("output missing cloud package declaration")
 	}
-	if !strings.Contains(body, "port def 'setpoint'") {
-		t.Error("merged output missing port def 'setpoint'")
+	if !strings.Contains(body, "port def 'Setpoint'") {
+		t.Error("merged output missing port def 'Setpoint'")
 	}
 	if !strings.Contains(body, "part def 'controller_controllerUnitAsset' :> UnitAsset") {
 		t.Error("merged output missing UnitAsset def for controller (with mAF specialisation)")
@@ -462,16 +479,16 @@ func TestAssembleModel_DeduplicatesPortDefs(t *testing.T) {
 	tr.assembleModel(w)
 
 	body := w.Body.String()
-	count := strings.Count(body, "port def 'temperature'")
+	count := strings.Count(body, "port def 'Temperature'")
 	if count != 1 {
-		t.Errorf("'temperature' port def should appear exactly once, found %d times", count)
+		t.Errorf("'Temperature' port def should appear exactly once, found %d times", count)
 	}
 	// Other port defs should be present too.
-	if !strings.Contains(body, "port def 'level'") {
-		t.Error("missing port def 'level'")
+	if !strings.Contains(body, "port def 'Level'") {
+		t.Error("missing port def 'Level'")
 	}
-	if !strings.Contains(body, "port def 'pressure'") {
-		t.Error("missing port def 'pressure'")
+	if !strings.Contains(body, "port def 'Pressure'") {
+		t.Error("missing port def 'Pressure'")
 	}
 	// Both system block defs should appear.
 	if !strings.Contains(body, "part def 'asset1_asset1UnitAsset'") {
@@ -535,7 +552,7 @@ func TestAssembleModel_SkipsUnreachableSystem(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "port def 'okService'") {
+	if !strings.Contains(w.Body.String(), "port def 'OkService'") {
 		t.Error("missing content from reachable system")
 	}
 }
@@ -563,17 +580,17 @@ func TestAssembleModel_ResolvesConnect(t *testing.T) {
 	providerURL := "http://127.0.0.1:9001/sensor/probe_1/temperature"
 
 	producerPkg := `package 'host_sensor' {
-    port def 'temperature';
+    port def 'Temperature';
 
-    part def 'sensorSystem' {
-        attribute name : String = "sensor";
-        attribute host : String;
+    part def 'sensorSystem' :> ArrowheadSystem {
+        attribute redefines name : String = "sensor";
+        attribute redefines host : String;
         attribute httpPort : Integer;
         part 'probe_1' : 'sensor_probe_1UnitAsset';
     }
 
-    part def 'sensor_probe_1UnitAsset' {
-        out port 'temperature' : 'temperature';  // provided service
+    part def 'sensor_probe_1UnitAsset' :> UnitAsset {
+        out port 'temperature' : 'Temperature';  // provided service
     }
 
     part 'sensor' : 'sensorSystem' {
@@ -586,17 +603,17 @@ func TestAssembleModel_ResolvesConnect(t *testing.T) {
 `
 
 	consumerPkg := `package 'host_controller' {
-    port def 'temperature';
+    port def 'Temperature';
 
-    part def 'controllerSystem' {
-        attribute name : String = "controller";
-        attribute host : String;
+    part def 'controllerSystem' :> ArrowheadSystem {
+        attribute redefines name : String = "controller";
+        attribute redefines host : String;
         attribute httpPort : Integer;
         part 'ctrl_1' : 'controller_ctrl_1UnitAsset';
     }
 
-    part def 'controller_ctrl_1UnitAsset' {
-        in port 'temperature' : 'temperature';  // consumed service
+    part def 'controller_ctrl_1UnitAsset' :> UnitAsset {
+        in port 'temperature' : 'Temperature';  // consumed service
     }
 
     part 'controller' : 'controllerSystem' {

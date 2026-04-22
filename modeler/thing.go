@@ -504,7 +504,13 @@ func (t *Traits) emitCloudPackage(portDefs, abstractActions, blockDefs, behavior
 	}
 
 	fmt.Fprintf(&sb, "package '%s' {\n\n", t.CloudName)
-	sb.WriteString("    import mAF::*;\n\n")
+	// 'private import' prevents the imported names from being re-exported
+	// from this package — the Eclipse SysML v2 IDE flags a plain 'import'
+	// here. ScalarValues is the standard-library package that defines the
+	// primitive datatypes used in attribute declarations.
+	sb.WriteString("    private import ScalarValues::String;\n")
+	sb.WriteString("    private import ScalarValues::Integer;\n")
+	sb.WriteString("    private import mAF::*;\n\n")
 
 	if len(portDefs) > 0 {
 		sb.WriteString("    // ── Port Definitions ─────────────────────────────────────────────────────\n")
@@ -543,17 +549,19 @@ func (t *Traits) emitCloudPackage(portDefs, abstractActions, blockDefs, behavior
 	// LocalCloud instance (IBD): hosts, systems with attribute values, and connects.
 	sb.WriteString("    // ── Internal Block Diagram (IBD) ─────────────────────────────────────────\n")
 	fmt.Fprintf(&sb, "    part '%s' : '%s' {\n", t.CloudName, cloudDefName)
-	fmt.Fprintf(&sb, "        attribute name : String = \"%s\";\n\n", t.CloudName)
+	// 'name' is inherited from mAF::LocalCloud — must redefine, not redeclare.
+	fmt.Fprintf(&sb, "        attribute redefines name : String = \"%s\";\n\n", t.CloudName)
 
 	// 'redefines' is the conformant way to attach instance values to part
 	// usages already declared in the LocalCloud part def, without retyping
-	// them (which some strict SysML v2 tools flag as a redefinition conflict).
+	// them. Every attribute restated inside a 'part redefines' block is by
+	// definition inherited, so it also must use 'attribute redefines ...'.
 	for _, h := range hostNames {
 		info := hosts[h]
 		fmt.Fprintf(&sb, "        part redefines %s {\n", quotedIfNeeded(h))
-		fmt.Fprintf(&sb, "            attribute name : String = \"%s\";\n", h)
+		fmt.Fprintf(&sb, "            attribute redefines name : String = \"%s\";\n", h)
 		for _, ip := range info.ips {
-			fmt.Fprintf(&sb, "            attribute ipAddress : String = \"%s\";\n", ip)
+			fmt.Fprintf(&sb, "            attribute redefines ipAddress : String = \"%s\";\n", ip)
 		}
 		sb.WriteString("        }\n\n")
 	}
@@ -561,7 +569,7 @@ func (t *Traits) emitCloudPackage(portDefs, abstractActions, blockDefs, behavior
 	for _, f := range fragSorted {
 		fmt.Fprintf(&sb, "        part redefines %s {\n", quotedIfNeeded(f.partName))
 		if f.host != "" {
-			fmt.Fprintf(&sb, "            attribute host : String = \"%s\";\n", f.host)
+			fmt.Fprintf(&sb, "            attribute redefines host : String = \"%s\";\n", f.host)
 		}
 		protos := make([]string, 0, len(f.ports))
 		for p := range f.ports {
@@ -569,7 +577,7 @@ func (t *Traits) emitCloudPackage(portDefs, abstractActions, blockDefs, behavior
 		}
 		sort.Strings(protos)
 		for _, p := range protos {
-			fmt.Fprintf(&sb, "            attribute %sPort : Integer = %d;\n", p, f.ports[p])
+			fmt.Fprintf(&sb, "            attribute redefines %sPort : Integer = %d;\n", p, f.ports[p])
 		}
 		for _, pr := range f.provides {
 			fmt.Fprintf(&sb, "            // provides: %s\n", pr.url)

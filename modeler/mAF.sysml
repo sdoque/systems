@@ -16,6 +16,13 @@
 
 package mAF {
 
+    // The SysML v2 standard library defines primitive datatypes under
+    // ScalarValues. Without these imports, 'String' and 'Integer' are
+    // unresolved references in tools that follow the spec strictly
+    // (e.g. the Eclipse SysML v2 IDE).
+    private import ScalarValues::String;
+    private import ScalarValues::Integer;
+
     // ── Abstract action definitions ──────────────────────────────────────────
     // The three elementary actions a unit asset can perform: read a consumed
     // service (GetState), compute a control decision (Compute), and write

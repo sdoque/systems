@@ -44,6 +44,7 @@ func main() {
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		ProtoPort:   map[string]int{"https": 0, "http": 20170, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/mbaigo/tree/master/uaclient",
+		Host:        components.NewDevice(),
 		DName: pkix.Name{
 			CommonName:         sys.Name,
 			Organization:       []string{"Synecdoque"},

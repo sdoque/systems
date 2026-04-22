@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"strconv"
 	"time"
@@ -135,17 +136,21 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		log.Fatalf("invalid node id: %s", err)
 	}
 	rootUA := &components.UnitAsset{
-		Name:   "ObjectsFolder",
-		Owner:  sys,
-		Traits: rootTraits,
+		Name:        "ObjectsFolder",
+		Owner:       sys,
+		Details:     configuredAsset.Details,
+		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
+		Traits:      rootTraits,
 	}
 	rootUA.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
 		serving(rootTraits, w, r, servicePath)
 	}
 	nodelist = append(nodelist, rootUA)
 
-	// Check if "Node_Id" key exists to avoid a potential panic
+	// Register one UnitAsset per configured Node_Id. A single bad entry must
+	// not abort the whole loop — skip the offender and keep going.
 	if nodeIds, ok := plcConfig.NodeList["Node_Id"]; ok {
+		log.Printf("uaclient: found %d configured Node_Id entries", len(nodeIds))
 		for _, nodeId := range nodeIds {
 			t := &Traits{
 				Server: opcuaClient,
@@ -153,26 +158,40 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			}
 			t.NodeID, err = ua.ParseNodeID(nodeId)
 			if err != nil {
-				log.Printf("invalid node id: %s", err)
-				break
+				log.Printf("uaclient: skipping %q — invalid node id: %v", nodeId, err)
+				continue
 			}
 			nodeList, err := browse(ctx, rootTraits.Server.Node(t.NodeID), "", 0)
 			if err != nil {
-				fmt.Printf("Node %s browsing errror %s", nodeId, err)
+				log.Printf("uaclient: skipping %q — browse error: %v", nodeId, err)
+				continue
+			}
+			if len(nodeList) == 0 {
+				log.Printf("uaclient: skipping %q — browse returned no nodes", nodeId)
+				continue
 			}
 			t.NodeName = nodeList[0].BrowseName
+			// Remember the OPC UA data type so a PUT can coerce a numeric
+			// SignalA value to the exact integer/float width the server
+			// expects (writing a Double to an Int16 node is a type
+			// mismatch error on Siemens).
+			t.DataType = nodeList[0].DataType
+			t.Writable = nodeList[0].Writable
 			newUA := &components.UnitAsset{
-				Name:   t.NodeName,
-				Owner:  sys,
-				Traits: t,
+				Name:        t.NodeName,
+				Owner:       sys,
+				Details:     configuredAsset.Details,
+				ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
+				Traits:      t,
 			}
 			newUA.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
 				serving(t, w, r, servicePath)
 			}
 			nodelist = append(nodelist, newUA)
+			log.Printf("uaclient: registered %q as UnitAsset %q", nodeId, t.NodeName)
 		}
 	} else {
-		fmt.Println("Node_Id key not found in map")
+		log.Println("uaclient: no Node_Id entries found in systemconfig.json traits")
 	}
 
 	// Return the unit asset(s) and a cleanup function to close any connection
@@ -198,8 +217,45 @@ func (t *Traits) browseHandler(w http.ResponseWriter, r *http.Request) {
 func (t *Traits) access(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		vauleForm := t.read()
-		usecases.HTTPProcessGetRequest(w, r, &vauleForm)
+		valueForm := t.read()
+		if valueForm == nil {
+			http.Error(w, "unable to read value from OPC UA server", http.StatusBadGateway)
+			return
+		}
+		usecases.HTTPProcessGetRequest(w, r, valueForm)
+	case "PUT":
+		mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil {
+			http.Error(w, "invalid Content-Type: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		defer r.Body.Close()
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "could not read request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		newState, err := usecases.Unpack(body, mediaType)
+		if err != nil {
+			http.Error(w, "could not unpack value form: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		var val interface{}
+		switch ns := newState.(type) {
+		case *forms.SignalB_v1a:
+			val = ns.Value // bool
+		case *forms.SignalA_v1a:
+			val = ns.Value // float64 — coerced in write() based on DataType
+		default:
+			http.Error(w, fmt.Sprintf("unsupported form type: %T", ns), http.StatusBadRequest)
+			return
+		}
+		if err := t.write(val); err != nil {
+			log.Printf("write failed for node %s: %v", t.NodeID, err)
+			http.Error(w, "write failed: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}
@@ -207,31 +263,50 @@ func (t *Traits) access(w http.ResponseWriter, r *http.Request) {
 
 // -------------------------------------Unit asset's function methods
 
-// browseNode list the node(s)
+// browseNode lists the node(s) under the configured NodeID as an HTML table.
+// Retries once on transient session/channel errors (Siemens servers time out
+// idle sessions after ~30 s; gopcua re-establishes on the next request).
+// Returns an HTTP error rather than killing the process on any other failure.
 func (t *Traits) browseNode(w http.ResponseWriter) {
-
-	nodeList, err := browse(t.owner.Ctx, t.Server.Node(t.NodeID), "", 0)
+	var nodeList []NodeDef
+	var err error
+	for attempt := 0; attempt < 2; attempt++ {
+		nodeList, err = browse(t.owner.Ctx, t.Server.Node(t.NodeID), "", 0)
+		if err == nil {
+			break
+		}
+		if errors.Is(err, ua.StatusBadSessionIDInvalid) ||
+			errors.Is(err, ua.StatusBadSessionNotActivated) ||
+			errors.Is(err, ua.StatusBadSecureChannelIDInvalid) {
+			log.Printf("browse: transient session error, retrying: %v", err)
+			continue
+		}
+		break
+	}
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("browse failed for node %s: %v", t.NodeID, err)
+		http.Error(w, fmt.Sprintf("browse failed: %v", err), http.StatusBadGateway)
+		return
 	}
 
-	// Generate HTML output instead of CSV
 	w.Header().Set("Content-Type", "text/html")
 	fmt.Fprintf(w, "<table border='1'>")
 	fmt.Fprintf(w, "<tr><th>Name</th><th>Type</th><th>Addr</th><th>Unit (SI)</th><th>Scale</th><th>Min</th><th>Max</th><th>Writable</th><th>Description</th></tr>")
 	for _, s := range nodeList {
-		// Assume s.Records() returns an array or slice that can be indexed into.
 		fmt.Fprintf(w, "<tr>")
-		for _, field := range s.Records() { // Replace with your actual function to retrieve records
+		for _, field := range s.Records() {
 			fmt.Fprintf(w, "<td>%s</td>", field)
 		}
 		fmt.Fprintf(w, "</tr>")
 	}
 	fmt.Fprintf(w, "</table>")
-
 }
 
-func (t *Traits) read() (f forms.SignalA_v1a) {
+// read fetches the current value of the configured OPC UA node and wraps it
+// in the appropriate Arrowhead form: SignalB_v1a for booleans, SignalA_v1a
+// for numeric scalars. Returns nil on a read error or unsupported type so
+// the caller can surface a 5xx to the client.
+func (t *Traits) read() forms.Form {
 	req := &ua.ReadRequest{
 		MaxAge: 2000,
 		NodesToRead: []*ua.ReadValueID{
@@ -273,52 +348,163 @@ func (t *Traits) read() (f forms.SignalA_v1a) {
 
 		default:
 			log.Printf("Read failed: %s", err)
-			return f
+			return nil
 		}
 	}
 
-	if resp != nil && resp.Results[0].Status != ua.StatusOK {
-		log.Printf("Status not OK: %v", resp.Results[0].Status)
-		return f
-	}
-
-	var cValue float64
-	if resp != nil && len(resp.Results) > 0 && resp.Results[0].Status == ua.StatusOK {
-		value := resp.Results[0].Value.Value()
-
-		switch v := value.(type) {
-		case float64:
-			cValue = v
-		case float32:
-			cValue = float64(v)
-		case int:
-			cValue = float64(v)
-		case int64:
-			cValue = float64(v)
-		case int32:
-			cValue = float64(v)
-		case uint:
-			cValue = float64(v)
-		case uint64:
-			cValue = float64(v)
-		case uint32:
-			cValue = float64(v)
-		default:
-			log.Printf("Value is not a recognized number type: %#v", value)
-		}
-	} else if resp != nil && len(resp.Results) > 0 {
-		log.Printf("Status not OK: %v\n", resp.Results[0].Status)
-		return f
-	} else {
+	if resp == nil || len(resp.Results) == 0 {
 		log.Printf("No response received\n")
-		return f
+		return nil
+	}
+	if resp.Results[0].Status != ua.StatusOK {
+		log.Printf("Status not OK: %v", resp.Results[0].Status)
+		return nil
 	}
 
-	f.NewForm()
-	f.Value = cValue
-	f.Unit = "undefined"     // should get it from the server
-	f.Timestamp = time.Now() // should get it from the server
-	return f
+	value := resp.Results[0].Value.Value()
+	now := time.Now()
+
+	// Boolean nodes (discrete inputs, coils, digital outputs) → SignalB.
+	if b, ok := value.(bool); ok {
+		sb := &forms.SignalB_v1a{}
+		sb.NewForm()
+		sb.Value = b
+		sb.Timestamp = now
+		return sb
+	}
+
+	// Numeric nodes → SignalA. Go through every integer/float width OPC UA
+	// can return and promote to float64.
+	var cValue float64
+	switch v := value.(type) {
+	case float64:
+		cValue = v
+	case float32:
+		cValue = float64(v)
+	case int:
+		cValue = float64(v)
+	case int64:
+		cValue = float64(v)
+	case int32:
+		cValue = float64(v)
+	case int16:
+		cValue = float64(v)
+	case int8:
+		cValue = float64(v)
+	case uint:
+		cValue = float64(v)
+	case uint64:
+		cValue = float64(v)
+	case uint32:
+		cValue = float64(v)
+	case uint16:
+		cValue = float64(v)
+	case uint8:
+		cValue = float64(v)
+	default:
+		log.Printf("unsupported OPC UA value type for node %s: %#v", t.NodeID, value)
+		return nil
+	}
+
+	sa := &forms.SignalA_v1a{}
+	sa.NewForm()
+	sa.Value = cValue
+	sa.Unit = "undefined"
+	sa.Timestamp = now
+	return sa
+}
+
+// write pushes a new value to the configured OPC UA node. Booleans are sent
+// verbatim (suitable for discrete inputs, coils, and BOOL PLC tags).
+// SignalA numeric values arrive as float64 and are coerced to the node's
+// actual DataType (captured at node registration) so an Int16 node doesn't
+// reject a Double. Retries once on transient session/channel errors.
+func (t *Traits) write(value interface{}) error {
+	coerced, err := t.coerceForNode(value)
+	if err != nil {
+		return err
+	}
+	variant, err := ua.NewVariant(coerced)
+	if err != nil {
+		return fmt.Errorf("could not build OPC UA variant for %#v: %w", coerced, err)
+	}
+
+	req := &ua.WriteRequest{
+		NodesToWrite: []*ua.WriteValue{
+			{
+				NodeID:      t.NodeID,
+				AttributeID: ua.AttributeIDValue,
+				Value: &ua.DataValue{
+					EncodingMask: ua.DataValueValue,
+					Value:        variant,
+				},
+			},
+		},
+	}
+
+	var resp *ua.WriteResponse
+	for attempt := 0; attempt < 2; attempt++ {
+		resp, err = t.Server.Write(t.owner.Ctx, req)
+		if err == nil {
+			break
+		}
+		if errors.Is(err, ua.StatusBadSessionIDInvalid) ||
+			errors.Is(err, ua.StatusBadSessionNotActivated) ||
+			errors.Is(err, ua.StatusBadSecureChannelIDInvalid) {
+			log.Printf("write: transient session error, retrying: %v", err)
+			continue
+		}
+		break
+	}
+	if err != nil {
+		return err
+	}
+	if resp == nil || len(resp.Results) == 0 {
+		return fmt.Errorf("no write response")
+	}
+	if resp.Results[0] != ua.StatusOK {
+		return fmt.Errorf("server rejected write: %v", resp.Results[0])
+	}
+	return nil
+}
+
+// coerceForNode converts the incoming Go value to the Go type that matches
+// the OPC UA node's DataType string captured during registration. bool
+// values pass through. Numeric values (always float64 on the SignalA path)
+// are narrowed to the PLC's width. If DataType is unknown we pass the value
+// through and let the server complain with a precise status code.
+func (t *Traits) coerceForNode(value interface{}) (interface{}, error) {
+	if b, ok := value.(bool); ok {
+		return b, nil
+	}
+	f, ok := value.(float64)
+	if !ok {
+		return value, nil
+	}
+	switch t.DataType {
+	case "int8":
+		return int8(f), nil
+	case "int16":
+		return int16(f), nil
+	case "int32":
+		return int32(f), nil
+	case "int64":
+		return int64(f), nil
+	case "byte", "uint8":
+		return uint8(f), nil
+	case "uint16":
+		return uint16(f), nil
+	case "uint32":
+		return uint32(f), nil
+	case "uint64":
+		return uint64(f), nil
+	case "float32":
+		return float32(f), nil
+	case "float64", "":
+		return f, nil
+	default:
+		return f, nil
+	}
 }
 
 type NodeDef struct {

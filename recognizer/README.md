@@ -95,23 +95,35 @@ The YOLO microservice also exposes:
 - Python 3.9 or later
 - At least 2 GB free disk space (model weights + dependencies)
 
+### Conventions used below
+
+The Pi has two path conventions that show up in this project:
+
+- `~/yolo-env/` — the Python virtual environment. Lives in **your home directory** because several systems can share it.
+- `~/mbaigo/recognizer/` — the recognizer's working directory. Contains the Go binary (`recognizer_rpi64`), the Python service (`yolo_service.py`), the model weights (`yolov8n.pt`), and the generated `systemconfig.json`. Use the path your `downloader.sh` actually deploys to — if yours is `~/rpiExec/recognizer/`, substitute that everywhere below.
+
+Every shell command below names the directory you should be in at its prompt (`~` or `~/mbaigo/recognizer`), so copying and pasting in order should work without guesswork.
+
 ### Step 1 — Update the system
+
+Working directory: anywhere.
 
 ```bash
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y python3-pip python3-venv libopenblas-dev libatlas-base-dev
 ```
 
-### Step 2 — Create a virtual environment
-
-Bookworm enforces PEP 668, so a virtual environment is required:
+### Step 2 — Create a virtual environment in your home directory
 
 ```bash
+cd ~
 python3 -m venv ~/yolo-env
 source ~/yolo-env/bin/activate
 ```
 
-### Step 3 — Install dependencies
+After activating, your prompt gains a `(yolo-env)` prefix. Every `pip` and `python3` below assumes the venv is active. Run `source ~/yolo-env/bin/activate` again in any new terminal where you want to use it.
+
+### Step 3 — Install Python dependencies
 
 ```bash
 pip install flask ultralytics opencv-python-headless
@@ -127,29 +139,74 @@ python3 -c "from ultralytics import YOLO; YOLO('yolov8n.pt'); print('OK')"
 
 The first run downloads `yolov8n.pt` (~6 MB) from the Ultralytics CDN. Subsequent runs use the cached file from `~/.config/Ultralytics/`.
 
-### Step 5 — Start the microservice
+### Step 5 — Put the Python service and the model in the recognizer directory
+
+`yolo_service.py` ships with the recognizer source. Copy it (and the downloaded model weights) into the recognizer's working directory so the Go binary and the Python service sit side by side:
 
 ```bash
-source ~/yolo-env/bin/activate
+# From the host machine where you built the binary:
+scp yolo_service.py recognizer_rpi64 jan@<pi-ip>:~/mbaigo/recognizer/
+
+# On the Pi, once the file is there:
+cd ~/mbaigo/recognizer
+mv ~/yolov8n.pt .        # only if Step 4 downloaded the model into $HOME
+```
+
+You should now have at least these files in `~/mbaigo/recognizer/`:
+
+```
+recognizer_rpi64    yolo_service.py    yolov8n.pt
+```
+
+### Step 6 — Start the microservice
+
+```bash
+cd ~/mbaigo/recognizer
+source ~/yolo-env/bin/activate   # if not already active
 python3 yolo_service.py --model yolov8n.pt --port 5000
 ```
 
-Leave this running in one terminal (or set it up as a systemd service — see below). Then start the Go binary in another terminal:
+Expected output:
 
-```bash
-./recognizer_rpi64
+```
+Loading yolov8n.pt …
+Model ready. Listening on 127.0.0.1:5000
 ```
 
-### Step 6 — Test the microservice directly
+Leave this terminal open — the service runs in the foreground. Stop it with Ctrl+C when you're done.
+
+### Step 7 — Sanity-check the microservice
+
+In a **second terminal** (working directory: `~/mbaigo/recognizer`):
 
 ```bash
 curl -s http://localhost:5000/health
-# {"model": "yolov8n.pt", "status": "ok"}
-
-curl -X POST http://localhost:5000/detect \
-     -F "image=@test_input.jpg" | python3 -m json.tool
-# {"labels": ["person", "chair"], "annotated": "<base64>"}
+# expected: {"model": "yolov8n.pt", "status": "ok"}
 ```
+
+To test `/detect` you need a real JPEG on disk. If you don't have one handy, grab the canonical Ultralytics test image:
+
+```bash
+wget https://ultralytics.com/images/bus.jpg
+
+curl -s -X POST http://localhost:5000/detect \
+     -F "image=@bus.jpg" \
+  | python3 -m json.tool
+# expected: {"labels": ["bus", "person", ...], "annotated": "<long base64 string>"}
+```
+
+There is **no** `detect.py` CLI; the service is accessed only over HTTP.
+
+### Step 8 — Start the Go binary
+
+Still in a second terminal:
+
+```bash
+cd ~/mbaigo/recognizer
+./recognizer_rpi64
+```
+
+On first run it generates `systemconfig.json` and exits; review the file, then run it again. From that point on the Go binary and the Python service run as a pair — restart either one independently.
 
 ---
 
@@ -165,13 +222,15 @@ After=network.target
 [Service]
 Type=simple
 User=jan
-WorkingDirectory=/home/jan/rpiExec/recognizer
+WorkingDirectory=/home/jan/mbaigo/recognizer
 ExecStart=/home/jan/yolo-env/bin/python3 yolo_service.py --model yolov8n.pt --port 5000
 Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+Adjust `User=` and the paths if your setup uses a different username or deploys under `/home/jan/rpiExec/recognizer`.
 
 Enable and start:
 
@@ -230,13 +289,13 @@ GOOS=linux GOARCH=arm64 go build -o recognizer_rpi64
 Copy binary and Python service to the Raspberry Pi:
 
 ```bash
-scp recognizer_rpi64 yolo_service.py jan@192.168.1.x:rpiExec/recognizer/
+scp recognizer_rpi64 yolo_service.py jan@192.168.1.x:~/mbaigo/recognizer/
 ```
 
 Run from the system's own directory:
 
 ```bash
-cd ~/rpiExec/recognizer
+cd ~/mbaigo/recognizer
 
 # Terminal 1 — start the YOLO microservice
 source ~/yolo-env/bin/activate
@@ -251,6 +310,12 @@ On first run without a `systemconfig.json`, the Go binary generates one and exit
 ---
 
 ## Troubleshooting
+
+### `python3: can't open file '.../yolo_service.py': [Errno 2] No such file or directory`
+
+Python is looking for the script in your current working directory. Either `cd ~/mbaigo/recognizer` first and run `python3 yolo_service.py`, or pass the full path: `python3 ~/mbaigo/recognizer/yolo_service.py`. If the file genuinely isn't there, copy it from the source repo (see Step 5 of the install).
+
+There is **no** `detect.py` — the recognizer talks to the YOLO service only over HTTP, not via a Python CLI.
 
 ### `YOLO service unreachable at http://localhost:5000`
 

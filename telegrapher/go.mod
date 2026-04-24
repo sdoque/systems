@@ -1,4 +1,4 @@
-module github.com/sdoque/telegrapher
+module github.com/sdoque/systems/telegrapher
 
 go 1.26.2
 

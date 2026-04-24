@@ -1,4 +1,4 @@
-module mqttgen
+module github.com/sdoque/systems/telegrapher/mqttGen
 
 go 1.22.6
 

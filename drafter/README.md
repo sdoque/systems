@@ -247,6 +247,5 @@ GOOS=windows GOARCH=amd64 go build -o drafter.exe
 The design philosophy behind this system — how unit assets, services, and the
 channel tray pattern compose into a larger mbaigo system — is described in:
 
-> van Deventer, J. A. (2025). *Building Arrowhead-compliant IoT systems with
-> mbaigo: a Go-based framework for service-oriented automation*.
+> van Deventer, J. A. (2025). *A Model Based Implementation of an IoT Framework*.
 > Zenodo. <https://doi.org/10.5281/zenodo.18504110>

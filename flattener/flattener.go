@@ -13,7 +13,7 @@
  *   Jan A. van Deventer, Luleå - initial implementation
  ***************************************************************************SDG*/
 
-// The Flatner system adjusts the thermostat setpoint inversely to the electricity
+// The Flattener system adjusts the thermostat setpoint inversely to the electricity
 // spot price, flattening energy peak demand: high price → low setpoint, low price → high setpoint.
 
 package main
@@ -35,14 +35,14 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	sys := components.NewSystem("flatner", ctx)
+	sys := components.NewSystem("flattener", ctx)
 
 	sys.Husk = &components.Husk{
 		Description: "adjusts the thermostat setpoint inversely to the electricity spot price to flatten energy peak demand.",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
 		ProtoPort:   map[string]int{"https": 0, "http": 20182, "coap": 0},
-		InfoLink:    "https://github.com/sdoque/systems/tree/main/flatner",
+		InfoLink:    "https://github.com/sdoque/systems/tree/main/flattener",
 		DName: pkix.Name{
 			CommonName:         sys.Name,
 			Organization:       []string{"Synecdoque"},

@@ -84,7 +84,7 @@ sequenceDiagram
 | `thermostat` | PID controller that consumes a temperature service and drives a servo motor to a target setpoint |
 | `ethermostat` | P-controller that discovers electrical heating plugs (via beekeeper) and matching temperature services (via meteorologue) by functional location, and switches each plug on or off to maintain a per-heater setpoint |
 | `leveler` | Consumes a temperature and a servo position service to maintain a setpoint via feedback control |
-| `flatner` | Adjusts a thermostat setpoint inversely to the electricity spot price to flatten peak energy demand |
+| `flattener` | Adjusts a thermostat setpoint inversely to the electricity spot price to flatten peak energy demand |
 | `collector` | Ingests time-series signals from other services into an InfluxDB database |
 | `emulator` | Replays historical signals stored in JSON, XML, or CSV files as live Arrowhead services |
 | `nurse` | Monitors asset measurements and reports anomalies to a SAP system as maintenance notifications |

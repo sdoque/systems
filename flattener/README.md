@@ -1,8 +1,8 @@
-# mbaigo System: Flatner
+# mbaigo System: Flattener
 
-The word *flatner* refers to the goal of flattening electricity demand peaks. By adjusting a thermostat's setpoint in response to the current spot price of electricity, the system shifts heating load away from expensive peak hours — reducing both cost and grid stress.
+The word *flattener* refers to the goal of flattening electricity demand peaks. By adjusting a thermostat's setpoint in response to the current spot price of electricity, the system shifts heating load away from expensive peak hours — reducing both cost and grid stress.
 
-The Flatner consumes the hourly electricity spot price from [elprisetjustnu.se](https://www.elprisetjustnu.se) and applies a linear inverse mapping: when the price is high, the setpoint is lowered; when the price is low, the setpoint is raised. The result is pushed directly to the thermostat via the Arrowhead orchestrator.
+The Flattener consumes the hourly electricity spot price from [elprisetjustnu.se](https://www.elprisetjustnu.se) and applies a linear inverse mapping: when the price is high, the setpoint is lowered; when the price is low, the setpoint is raised. The result is pushed directly to the thermostat via the Arrowhead orchestrator.
 
 ---
 
@@ -29,7 +29,7 @@ The ratio is clamped to [0, 1], so prices outside the configured range always re
 ```mermaid
 sequenceDiagram
     participant API as elprisetjustnu.se
-    participant F as Flatner
+    participant F as Flattener
     participant O as Arrowhead Orchestrator
     participant R as Arrowhead Service Registrar
     participant T as Thermostat
@@ -47,8 +47,8 @@ sequenceDiagram
         T-->>F: 200 OK (acknowledged setpoint)
     end
 
-    note over F: GET /flatner/ComfortController/setpoint → current setpoint
-    note over F: GET /flatner/ComfortController/price    → current price
+    note over F: GET /flattener/ComfortController/setpoint → current setpoint
+    note over F: GET /flattener/ComfortController/price    → current price
 ```
 
 ---
@@ -91,7 +91,7 @@ Example `systemconfig.json` excerpt:
 }
 ```
 
-The Flatner also needs an orchestration rule so it can discover the thermostat's `setpoint` service. Ensure the orchestrator is configured to match a consumer with `definition: "setpoint"` to the thermostat provider.
+The Flattener also needs an orchestration rule so it can discover the thermostat's `setpoint` service. Ensure the orchestrator is configured to match a consumer with `definition: "setpoint"` to the thermostat provider.
 
 ---
 
@@ -111,13 +111,13 @@ Sweden is divided into four electricity price areas:
 ## Compiling
 
 ```bash
-go build -o flatner
+go build -o flattener
 ```
 
 Cross-compile for Raspberry Pi 4/5 (64-bit):
 
 ```bash
-GOOS=linux GOARCH=arm64 go build -o flatner_rpi64
+GOOS=linux GOARCH=arm64 go build -o flattener_rpi64
 ```
 
 Run from its own directory — the system reads and writes `systemconfig.json` locally. If the file is missing, a template is generated and the program exits so you can edit it.

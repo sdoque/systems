@@ -31,7 +31,7 @@ import (
 
 //-------------------------------------Define the unit asset
 
-// Traits holds the configurable parameters for the flatner unit asset.
+// Traits holds the configurable parameters for the flattener unit asset.
 type Traits struct {
 	MinSetPoint float64 `json:"minSetPoint"` // °C used when price is at or above MaxPrice
 	MaxSetPoint float64 `json:"maxSetPoint"` // °C used when price is at or below MinPrice
@@ -124,7 +124,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	go t.run()
 
 	return ua, func() {
-		log.Println("Flatner shutting down")
+		log.Println("Flattener shutting down")
 	}
 }
 
@@ -147,7 +147,7 @@ func (t *Traits) run() {
 		case <-ticker.C:
 			t.updateSetPoint()
 		case <-t.owner.Ctx.Done():
-			log.Println("Flatner: stopping control loop")
+			log.Println("Flattener: stopping control loop")
 			return
 		}
 	}
@@ -158,31 +158,31 @@ func (t *Traits) run() {
 func (t *Traits) updateSetPoint() {
 	price, err := fetchCurrentPrice(t.Region)
 	if err != nil {
-		log.Printf("Flatner: could not fetch price: %v\n", err)
+		log.Printf("Flattener: could not fetch price: %v\n", err)
 		return
 	}
 	t.currentPrice = price
 	t.currentSetPoint = t.priceToSetPoint(price)
-	log.Printf("Flatner: price=%.4f SEK/kWh → setpoint=%.1f °C\n", price, t.currentSetPoint)
+	log.Printf("Flattener: price=%.4f SEK/kWh → setpoint=%.1f °C\n", price, t.currentSetPoint)
 
 	cer := t.ua.CervicesMap["setpoint"]
 
 	// Rediscover setpoint services on every run so that heaters which come online
-	// after Flatner starts (or are added later) are picked up automatically.
+	// after Flattener starts (or are added later) are picked up automatically.
 	cer.Nodes = make(map[string][]components.NodeInfo)
 	if err := usecases.Search4MultipleServices(cer, t.owner); err != nil {
-		log.Printf("Flatner: could not discover setpoint services: %v\n", err)
+		log.Printf("Flattener: could not discover setpoint services: %v\n", err)
 		return
 	}
 	if len(cer.Nodes) == 0 {
-		log.Println("Flatner: no setpoint services found — nothing to push")
+		log.Println("Flattener: no setpoint services found — nothing to push")
 		return
 	}
 	total := 0
 	for _, nodes := range cer.Nodes {
 		total += len(nodes)
 	}
-	log.Printf("Flatner: discovered %d setpoint service(s)\n", total)
+	log.Printf("Flattener: discovered %d setpoint service(s)\n", total)
 
 	// Build the setpoint form.
 	now := time.Now()
@@ -195,7 +195,7 @@ func (t *Traits) updateSetPoint() {
 
 	body, err := usecases.Pack(&sp, "application/json")
 	if err != nil {
-		log.Printf("Flatner: could not pack setpoint form: %v\n", err)
+		log.Printf("Flattener: could not pack setpoint form: %v\n", err)
 		return
 	}
 
@@ -208,9 +208,9 @@ func (t *Traits) updateSetPoint() {
 				Nodes:      map[string][]components.NodeInfo{sysNode: {ni}},
 			}
 			if _, err := usecases.SetState(singleCer, t.owner, body); err != nil {
-				log.Printf("Flatner: could not push setpoint to %s (%s): %v\n", sysNode, ni.URL, err)
+				log.Printf("Flattener: could not push setpoint to %s (%s): %v\n", sysNode, ni.URL, err)
 			}
-			log.Printf("Flatner: pushed %.1f °C to %s\n", t.currentSetPoint, ni.URL)
+			log.Printf("Flattener: pushed %.1f °C to %s\n", t.currentSetPoint, ni.URL)
 		}
 	}
 }

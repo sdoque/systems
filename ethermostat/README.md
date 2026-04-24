@@ -52,9 +52,9 @@ Clamped to [0, 100]. The plug is switched **ON** when `output > 50` (i.e. room t
 
 With the defaults, the plug turns on when the room is more than 0 °C below setpoint and off when it is at or above setpoint.
 
-## Flatner integration
+## Flattener integration
 
-eThermostat registers its `setpoint` services with the Arrowhead service mesh. [Flatner](../flatner/README.md) discovers all registered `setpoint` services and adjusts them inversely to the electricity spot price — pushing the setpoints down during expensive periods to flatten peak energy demand. No extra configuration is required in eThermostat.
+eThermostat registers its `setpoint` services with the Arrowhead service mesh. [Flattener](../flattener/README.md) discovers all registered `setpoint` services and adjusts them inversely to the electricity spot price — pushing the setpoints down during expensive periods to flatten peak energy demand. No extra configuration is required in eThermostat.
 
 ## Configuration (`systemconfig.json`)
 
@@ -131,7 +131,7 @@ eThermostat will log a retry message every 15 s until beekeeper and meteorologue
 | `orchestrator` | Returns service endpoints on request |
 | `beekeeper` | Provides OnOff services for ZigBee smart plugs |
 | `meteorologue` | Provides Temperature services from weather station modules |
-| `flatner` | Optional — adjusts setpoints based on electricity spot price |
+| `flattener` | Optional — adjusts setpoints based on electricity spot price |
 
 ## Contributors
 

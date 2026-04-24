@@ -1,4 +1,4 @@
-module github.com/sdoque/systems/flatner
+module github.com/sdoque/systems/flattener
 
 go 1.26.2
 

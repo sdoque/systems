@@ -185,10 +185,15 @@ type XMLSamples struct {
 func (t *Traits) emulateAsset(ctx context.Context, details map[string][]string) {
 	samples, err := loadSamples(t.InputFile)
 	if err != nil {
-		log.Fatalf("failed to load samples from %s: %v", t.InputFile, err)
+		// log-and-return, not Fatalf: this runs in a goroutine, so os.Exit
+		// would tear down the whole host process (and, in tests, the test
+		// binary) on a single asset's load failure.
+		log.Printf("failed to load samples from %s: %v", t.InputFile, err)
+		return
 	}
 	if len(samples) == 0 {
-		log.Fatalf("no samples found in %s", t.InputFile)
+		log.Printf("no samples found in %s", t.InputFile)
+		return
 	}
 
 	interval := detectInterval(samples)

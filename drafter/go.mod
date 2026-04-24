@@ -1,4 +1,4 @@
-module github.com/sdoque/systems/Drafter
+module github.com/sdoque/systems/drafter
 
 go 1.26.2
 

@@ -1,0 +1,18 @@
+# =============================================================================
+# Configuration for the `typos` spellchecker
+# -----------------------------------------------------------------------------
+# Picked up automatically by the `typos` CLI and by the crate-ci/typos GitHub
+# Action when placed at the repo root.
+#
+# When CI flags a domain term (sensor name, protocol acronym, Arrowhead term)
+# as a typo, add a line under [default.extend-words] in this shape:
+#
+#     CorrectWord = "CorrectWord"
+#
+# Matching is case-insensitive, so one entry covers every casing.
+# =============================================================================
+
+[default.extend-words]
+
+# Whitelist domain terms below as they come up. Example:
+# PN = "PN"

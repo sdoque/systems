@@ -14,5 +14,10 @@
 
 [default.extend-words]
 
-# Whitelist domain terms below as they come up. Example:
-# PN = "PN"
+# Eclipse Mosquitto — the MQTT broker product. Flagged by typos as if it were
+# a misspelling of "mosquito".
+Mosquitto = "Mosquitto"
+
+# AAS — Asset Administration Shell (Industry 4.0 / Platform Industrie 4.0).
+# The three-letter acronym clashes with the dictionary word "ass".
+AAS = "AAS"

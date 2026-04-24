@@ -17,7 +17,7 @@ func main() {
 
 	sys := components.NewSystem("messenger", ctx)
 	sys.Husk = &components.Husk{
-		Description: "is a logging system that recieves log messages from other systems.",
+		Description: "is a logging system that receives log messages from other systems.",
 		Details:     map[string][]string{"Developer": {"alex"}},
 		ProtoPort:   map[string]int{"https": 0, "http": 20106, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/messenger",

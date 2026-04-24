@@ -37,7 +37,7 @@ func main() {
 	// instantiate the System
 	sys := components.NewSystem("photographer", ctx)
 
-	// instatiate the husk
+	// instantiate the husk
 	sys.Husk = &components.Husk{
 		Description: " takes a picture using a camera and saves a file",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},

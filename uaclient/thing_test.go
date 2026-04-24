@@ -98,8 +98,8 @@ func TestInitTemplate(t *testing.T) {
 	if !ok {
 		t.Fatal("Traits should be *Traits")
 	}
-	if tr.ServerAdrress == "" {
-		t.Error("ServerAdrress default should not be empty")
+	if tr.ServerAddress == "" {
+		t.Error("ServerAddress default should not be empty")
 	}
 }
 

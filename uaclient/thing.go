@@ -39,7 +39,7 @@ import (
 // -------------------------------------Define the unit asset
 // Traits are Asset-specific configurable parameters
 type Traits struct {
-	ServerAdrress string              `json:"serverAddress"`
+	ServerAddress string              `json:"serverAddress"`
 	NodeList      map[string][]string `json:"NodeList"`
 	Server        *opcua.Client
 	NodeID        *ua.NodeID
@@ -87,7 +87,7 @@ func initTemplate() *components.UnitAsset {
 			access.SubPath: &access,
 		},
 		Traits: &Traits{
-			ServerAdrress: "opc.tcp://192.168.1.2:53530/OPCUA/SimulationServer",
+			ServerAddress: "opc.tcp://192.168.1.2:53530/OPCUA/SimulationServer",
 		},
 	}
 }
@@ -112,7 +112,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		}
 	}
 
-	endpoint := plcConfig.ServerAdrress
+	endpoint := plcConfig.ServerAddress
 	opcuaClient, err := opcua.NewClient(endpoint)
 	if err != nil {
 		log.Fatal(err)

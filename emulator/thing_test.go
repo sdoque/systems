@@ -226,7 +226,7 @@ func TestDetectInterval(t *testing.T) {
 		}
 	})
 
-	t.Run("unparseable timestamps fall back to 1s", func(t *testing.T) {
+	t.Run("unparsable timestamps fall back to 1s", func(t *testing.T) {
 		samples := []Sample{
 			{Timestamp: "not-a-time"},
 			{Timestamp: "also-not-a-time"},

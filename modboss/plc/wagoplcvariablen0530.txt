@@ -1,0 +1,115 @@
+PROGRAM PLC_PRG
+
+// Inputs
+
+VAR
+
+    I_Slider1_Front_PB        : BOOL; // I1
+
+    I_Slider1_Rear_PB         : BOOL; // I2
+
+    I_Slider2_Front_PB        : BOOL; // I3
+
+    I_Slider2_Rear_PB         : BOOL; // I4
+
+    I_Slider1_PhotoSensor     : BOOL; // I5
+
+    I_MillingMachine_PhotoSensor : BOOL; // I6
+
+    I_LoadingStation_PhotoSensor : BOOL; // I7 
+
+    I_DrillingMachine_PhotoSensor : BOOL; // I8
+
+    I_OutputConveyor_PhotoSensor  : BOOL; // I9
+
+END_VAR
+
+
+// Outputs 
+
+VAR
+
+    Q_Slider1_Motor_Forward   : BOOL; // Q1
+
+    Q_Slider1_Motor_Backward  : BOOL; // Q2
+
+    Q_Slider2_Motor_Forward   : BOOL; // Q3
+
+    Q_Slider2_Motor_Backward  : BOOL; // Q4
+
+    Q_FeedConveyor_Motor      : BOOL; // Q5
+
+    Q_MillingConveyor_Motor   : BOOL; // Q6
+
+    Q_MillingMachine_Motor    : BOOL; // Q7
+
+    Q_DrillingConveyor_Motor  : BOOL; // Q8
+
+    Q_DrillingMachine_Motor   : BOOL; // Q9
+
+    Q_OutputConveyor_Motor    : BOOL; // Q10
+
+END_VAR
+
+// Holding Register Variables
+VAR
+	MillingTimeS : INT;
+	DrillingTimeS : INT;
+	TransferedMillingTime :INT;
+	TransferedDrillingTime :INT;
+	Checkgo :INT;
+	Finish :INT;
+END_VAR
+
+// Internal Variables 
+
+VAR
+
+   	// Startup Variables
+    Homing_Complete : BOOL := FALSE; // Tracks whether startup is complete
+
+    // Section 1 - 6 Variables (same as before)
+    Loading_Start : TIME();  
+    Stop_Start   : TIME();  
+    Loading_Active : BOOL := FALSE;
+	Loading_Done: BOOL := FALSE;
+	OneTimeS1: BOOL :=FALSE;
+	  
+
+    Slider_Forward_Timer : TON;  
+    Slider_Rear_Active   : BOOL := FALSE;  
+    //Slider_Front_Used  : BOOL := FALSE;
+	//Slider_Done : BOOL;  
+
+    Milling_Machining_Start  : TIME();  
+    Milling_Resume_Timer     : TON;  
+    Conveyor_Safety_Start    : TIME();  
+    Milling_Conveyor_Active  : BOOL := FALSE;  
+    Machining_Time_Holding   : TIME := T#5S;
+	Section3_Active : BOOL;
+	Milling_Active :BOOL; 
+	CheckDouble :Bool; 
+
+    Drilling_Conveyor_Timer    : TON;  
+    Drilling_Safety_Start     : TIME();  
+    Drilling_Machine_Start     : TIME();  
+    Drilling_Resume_Timer      : TON;  
+    Drilling_Conveyor_Active   : BOOL := FALSE;  
+    Drilling_Machine_Active    : BOOL := FALSE;
+	Section4_Active : BOOL;
+	Drilling_Active :BOOL; 
+	OnlyOneTime :BOOL; 
+
+    Slider2_Forward_Start : TIME();  
+    Slider2_Front_Active  : BOOL := FALSE;  
+    Slider2_Rear_Active   : BOOL := FALSE;
+	//Slider2_Front_Used  : BOOL := FALSE;
+	//Slider_Done2 : BOOL;
+	Loading_Done2: BOOL;  
+
+    Output_Stop_Start : TIME;  
+    Output_Conveyor_Active : BOOL := FALSE; 
+	Section6_Active : BOOL;
+   
+   
+END_VAR

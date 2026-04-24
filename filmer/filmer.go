@@ -37,7 +37,7 @@ func main() {
 	// instantiate the System
 	sys := components.NewSystem("filmer", ctx)
 
-	// instatiate the husk
+	// instantiate the husk
 	sys.Husk = &components.Husk{
 		Description: "streams live MJPEG video from a Raspberry Pi camera",
 		Details:     map[string][]string{"Developer": {"Arrowhead"}},

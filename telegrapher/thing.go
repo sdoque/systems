@@ -84,7 +84,7 @@ func initTemplate() *components.UnitAsset {
 
 //-------------------------------------Instantiate the unit assets based on configuration
 
-// newResource creates the Resource resource with its pointers and channels based on the configuration using the tConig structs
+// newResource creates the Resource resource with its pointers and channels based on the configuration using the Traits struct
 func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (*components.UnitAsset, func()) {
 	topic := configuredAsset.Name
 	lastSlashIndex := strings.LastIndex(topic, "/")

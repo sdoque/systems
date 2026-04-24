@@ -162,14 +162,24 @@ func (t *Traits) discoverAndPoll() {
 }
 
 // backgroundPoll periodically re-discovers services and refreshes switch states.
+// When no services are known yet (e.g. beehive started before beekeeper) it retries
+// every 3 seconds so the dashboard populates quickly once beekeeper registers.
+// Once services are found it settles into the configured Period interval.
 func (t *Traits) backgroundPoll() {
-	ticker := time.NewTicker(time.Duration(t.Period) * time.Second)
-	defer ticker.Stop()
 	for {
+		t.mu.RLock()
+		hasServices := len(t.switches) > 0
+		t.mu.RUnlock()
+
+		interval := time.Duration(t.Period) * time.Second
+		if !hasServices {
+			interval = 3 * time.Second
+		}
+
 		select {
 		case <-t.owner.Ctx.Done():
 			return
-		case <-ticker.C:
+		case <-time.After(interval):
 			t.discoverAndPoll()
 		}
 	}
@@ -287,12 +297,19 @@ func toggleHandler(t *Traits, w http.ResponseWriter, r *http.Request, ctx contex
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		http.Error(w, "upstream returned "+resp.Status, http.StatusBadGateway)
+		return
+	}
 
-	// Update local state immediately so the UI reflects the change before the next poll.
+	// Re-fetch the confirmed state from beekeeper rather than applying an optimistic
+	// update. This keeps beehive accurate even when beekeeper restarts mid-session.
+	actualState, online := fetchOnOffState(targetURL)
 	t.mu.Lock()
 	for i, sw := range t.switches {
 		if sw.Name == name {
-			t.switches[i].State = newState
+			t.switches[i].State = actualState
+			t.switches[i].Online = online
 			break
 		}
 	}

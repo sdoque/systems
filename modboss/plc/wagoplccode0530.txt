@@ -1,0 +1,174 @@
+IF I_Slider1_Rear_PB  THEN //condition for section 1 
+	
+	// Section 1: Loading Section
+	IF NOT I_LoadingStation_PhotoSensor AND Checkgo = 0 AND Loading_Active =FALSE THEN
+		Checkgo :=1;
+	END_IF
+	
+	IF NOT I_LoadingStation_PhotoSensor AND Loading_Active =FALSE AND Loading_Done =FALSE AND Checkgo=2 THEN  
+		Loading_Active := TRUE;
+		Loading_Start := TIME();
+		Checkgo :=0;
+		//Q_FeedConveyor_Motor := TRUE; //neu
+	
+	END_IF;
+	
+	IF Loading_Active = TRUE THEN
+		Q_FeedConveyor_Motor := TRUE;
+	ELSE
+		Q_FeedConveyor_Motor := FALSE;
+	END_IF;
+	IF Loading_Active AND NOT I_Slider1_PhotoSensor AND NOT OneTimeS1 THEN 
+		Stop_Start := TIME();
+		OneTimeS1 :=TRUE;
+	END_IF;
+	
+	
+	IF (TIME()-Stop_Start>T#2000MS AND OneTimeS1 )OR (Loading_Active = TRUE  AND TIME()-Loading_Start > T#5000MS) THEN
+		
+		Loading_Active := FALSE;
+		IF TIME()-Stop_Start>T#2000MS THEN
+			Loading_Done := TRUE; 
+			OneTimeS1 :=FALSE;// Connection to next section
+			//Q_FeedConveyor_Motor := FALSE;
+			//Slider_Done := FALSE; //Connection
+		END_IF;
+	END_IF;
+END_IF;
+IF  Loading_Done  THEN // conditions for section2
+	
+	//Section2
+   	IF  I_MillingMachine_PhotoSensor  AND Slider_Rear_Active = FALSE THEN
+	 	Q_Slider1_Motor_Forward := TRUE;
+	 	Q_MillingConveyor_Motor := TRUE; //Connection
+ 	END_IF
+
+	IF Slider_Rear_Active = FALSE AND I_Slider1_Front_PB THEN 
+			Q_Slider1_Motor_Forward := FALSE;
+			Section3_Active := TRUE; //Connection to Section 3
+			Conveyor_Safety_Start :=TIME(); ////Connection to Section 3
+			Q_Slider1_Motor_Backward := TRUE;
+			Slider_Rear_Active := TRUE;
+			//Slider_Front_Used := TRUE;
+	END_IF;
+	IF I_Slider1_Rear_PB AND Slider_Rear_Active THEN 
+			Q_Slider1_Motor_Backward := FALSE;
+			//Slider_Done:=TRUE;
+			//Slider_Front_Used := FALSE;
+			Slider_Rear_Active := FALSE;
+			Loading_Done :=FALSE;
+	END_IF;
+	//IF Slider_Done = TRUE THEN
+		//Loading_Done :=FALSE;
+	//END_IF
+END_IF
+IF Section3_Active THEN // condition for section 3
+	//section 3
+	
+	IF (TIME()-Conveyor_Safety_Start>T#2S) AND Loading_Done = FALSE THEN //connection (Loading_Done)
+			
+			Q_MillingConveyor_Motor := FALSE;
+			
+	
+		
+	END_IF
+	IF I_MillingMachine_PhotoSensor = FALSE THEN
+		Q_MillingConveyor_Motor := FALSE;
+	END_IF
+	IF I_MillingMachine_PhotoSensor = FALSE AND Milling_Active =FALSE THEN 
+		Milling_Active := TRUE;
+		Milling_Machining_Start := TIME();
+		Q_MillingMachine_Motor := TRUE;
+		
+	END_IF
+	IF (TIME()- Milling_Machining_Start> DINT_TO_TIME(MillingTimeS*1000))AND Milling_Active = TRUE THEN
+		Q_MillingMachine_Motor := FALSE;
+		IF I_DrillingMachine_PhotoSensor =TRUE THEN
+			 
+			Drilling_Safety_Start :=TIME(); //connetion
+			Q_MillingConveyor_Motor := TRUE; 
+			Q_DrillingConveyor_Motor := TRUE; //connection
+			Section4_Active := TRUE; //connection
+			// Drilling_Active :=FALSE;//connection
+			Section3_Active := FALSE;
+			Milling_Active := FALSE;
+			CheckDouble:=TRUE; //connection
+			TransferedMillingTime :=0; //modbus Variable
+		END_IF
+	END_IF
+END_IF
+IF Section4_Active THEN //Condition for section 4
+	IF I_DrillingMachine_PhotoSensor =FALSE OR (TIME()-Drilling_Safety_Start > T#5S ) THEN
+		IF Section3_Active =FALSE AND Q_Slider1_Motor_Forward = FALSE THEN //connection
+			Q_MillingConveyor_Motor := FALSE; //connection
+		END_IF //connection
+		
+		Q_DrillingConveyor_Motor := FALSE;
+		CheckDouble :=FALSE;
+		
+		 
+	END_IF
+	IF I_DrillingMachine_PhotoSensor = FALSE AND Drilling_Active =FALSE THEN 
+		Drilling_Active := TRUE;
+		Drilling_Machine_Start := TIME();
+		Q_DrillingMachine_Motor := TRUE;
+		
+		OnlyOneTime := TRUE;
+	END_IF
+	IF (TIME()- Drilling_Machine_Start> DINT_TO_TIME(DrillingTimeS*1000)) AND Drilling_Active = TRUE THEN
+		Q_DrillingMachine_Motor := FALSE;
+		IF I_Slider2_Rear_PB AND Loading_Done2 =FALSE THEN 
+			Q_DrillingConveyor_Motor := TRUE;
+			IF OnlyOneTime = TRUE THEN
+				Slider2_Forward_Start := TIME();
+				OnlyOneTime := FALSE; 
+			END_IF
+			IF (TIME() - Slider2_Forward_Start > T#1S) AND OnlyOneTime=FALSE THEN
+				
+				
+				TransferedDrillingTime :=0; //modbus connection
+				Loading_Done2 := TRUE; //connection
+				//Slider_Done2 := FALSE; //Connection
+				IF CheckDouble =FALSE THEN
+					Q_DrillingConveyor_Motor := FALSE;
+					Section4_Active := FALSE;
+				END_IF
+				
+				Drilling_Active :=FALSE;
+			END_IF	
+		END_IF	
+		
+	END_IF
+END_IF
+IF   Loading_Done2  THEN // conditions for section5
+	IF Slider2_Rear_Active = FALSE AND I_OutputConveyor_PhotoSensor  THEN
+		Q_Slider2_Motor_Forward := TRUE;
+		Q_OutputConveyor_Motor := TRUE; //Connection
+		
+	END_IF
+	IF  Slider2_Rear_Active=FALSE AND I_Slider2_Front_PB THEN 
+		Q_Slider2_Motor_Forward := FALSE;
+		Section6_Active := TRUE;// connection
+		Output_Stop_Start :=TIME(); //connection
+		Q_Slider2_Motor_Backward := TRUE;
+		Slider2_Rear_Active := TRUE;
+		//Slider2_Front_Used := TRUE;
+	END_IF;
+	IF I_Slider2_Rear_PB AND Slider2_Rear_Active THEN 
+		Q_Slider2_Motor_Backward := FALSE;
+		//Slider_Done2:=TRUE;
+		//Slider2_Front_Used := FALSE;
+		Slider2_Rear_Active := FALSE;
+		Loading_Done2 :=FALSE;
+	END_IF;
+	//IF Slider_Done2 = TRUE THEN
+		//Loading_Done2 :=FALSE;
+	//END_IF
+END_IF
+IF Section6_Active THEN //conditions for section6
+	IF I_OutputConveyor_PhotoSensor = FALSE OR(TIME()-Output_Stop_Start > T#3S)THEN
+		Q_OutputConveyor_Motor := FALSE;
+		Section6_Active := FALSE;
+		Finish :=1;
+	END_IF
+END_IF

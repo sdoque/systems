@@ -20,13 +20,11 @@ import (
 	"context"
 	"crypto/x509/pkix"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
-	"github.com/sdoque/mbaigo/forms"
 	"github.com/sdoque/mbaigo/usecases"
 )
 
@@ -100,57 +98,5 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 		t.readSignal(w, r)
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
-	}
-}
-
-// readSignal gets the unit asset's signal datum and sends it in a signal form
-func (t *Traits) readSignal(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		getMeasuremet := STray{
-			Action: "read",
-			// Buffer 1 prevents emulateAsset from blocking forever if the handler exits early.
-			ValueP: make(chan forms.SignalA_v1a, 1),
-			Error:  make(chan error, 1),
-		}
-
-		// IMPORTANT: Protect the send. Your previous code could block forever here.
-		select {
-		case t.trayChan <- getMeasuremet:
-			// delivered
-		case <-r.Context().Done():
-			http.Error(w, "Request cancelled", http.StatusRequestTimeout)
-			log.Println("Signal reading request cancelled by client")
-			return
-		case <-time.After(1 * time.Second):
-			http.Error(w, "Asset busy", http.StatusGatewayTimeout)
-			log.Println("Failure to enqueue signal reading request (asset busy)")
-			return
-		}
-
-		// Now wait for the response (or timeout/cancel)
-		select {
-		case err := <-getMeasuremet.Error:
-			fmt.Printf("Logic error in getting measurement, %s\n", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-
-		case signalForm := <-getMeasuremet.ValueP:
-			usecases.HTTPProcessGetRequest(w, r, &signalForm)
-			return
-
-		case <-r.Context().Done():
-			http.Error(w, "Request cancelled", http.StatusRequestTimeout)
-			log.Println("Signal reading request cancelled while waiting for response")
-			return
-
-		case <-time.After(5 * time.Second):
-			http.Error(w, "Request timed out", http.StatusGatewayTimeout)
-			log.Println("Failure to process signal reading request (timed out waiting for response)")
-			return
-		}
-
-	default:
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}
 }

@@ -101,11 +101,13 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		Definition: "level",
 		Protos:     sProtocols,
 		Nodes:      make(map[string][]components.NodeInfo),
+		Mode:       "get",
 	}
 	pumpCervice := &components.Cervice{
 		Definition: "pumpSpeed",
 		Protos:     sProtocols,
 		Nodes:      make(map[string][]components.NodeInfo),
+		Mode:       "set",
 	}
 	cervMap := components.Cervices{
 		levelCervice.Definition: levelCervice,
@@ -143,6 +145,44 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 
 	return ua, func() {
 		log.Println("Shutting down leveler ", configuredAsset.Name)
+	}
+}
+
+//-------------------------------------Service handlers
+
+func (t *Traits) setpt(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		setPointForm := t.getSetPoint()
+		usecases.HTTPProcessGetRequest(w, r, &setPointForm)
+	case "PUT":
+		sig, err := usecases.HTTPProcessSetRequest(w, r)
+		if err != nil {
+			log.Println("Error with the setting request of the position ", err)
+		}
+		t.setSetPoint(sig)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+	}
+}
+
+func (t *Traits) diff(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		signalErr := t.getError()
+		usecases.HTTPProcessGetRequest(w, r, &signalErr)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+	}
+}
+
+func (t *Traits) variations(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		signalErr := t.getJitter()
+		usecases.HTTPProcessGetRequest(w, r, &signalErr)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}
 }
 

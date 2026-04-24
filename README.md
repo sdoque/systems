@@ -59,6 +59,8 @@ sequenceDiagram
 | `revolutionary` | Reads digital/analog inputs and writes digital outputs on a RevPi Connect 4 PLC |
 | `uaclient` | Browses an OPC UA server and exposes its nodes as readable (and where supported, writable) Arrowhead services |
 | `telegrapher` | Bridges MQTT topics into the Arrowhead local cloud — subscribes to topics (GET) and publishes to them (PUT) |
+| `busdriver` | Reads OBD-II signals from a vehicle via SocketCAN (Waveshare RS485 CAN HAT on Raspberry Pi); each configured PID becomes one Arrowhead service |
+| `sailor` | Reads NMEA 2000 signals from a vessel's CAN bus via SocketCAN (SK Pang PiCAN-M HAT on Raspberry Pi); each configured PGN field becomes one Arrowhead service |
 
 ### Actuators
 
@@ -80,12 +82,20 @@ sequenceDiagram
 | System | Description |
 |---|---|
 | `thermostat` | PID controller that consumes a temperature service and drives a servo motor to a target setpoint |
+| `ethermostat` | P-controller that discovers electrical heating plugs (via beekeeper) and matching temperature services (via meteorologue) by functional location, and switches each plug on or off to maintain a per-heater setpoint |
 | `leveler` | Consumes a temperature and a servo position service to maintain a setpoint via feedback control |
-| `flatner` | Adjusts a thermostat setpoint inversely to the electricity spot price to flatten peak energy demand |
+| `flattener` | Adjusts a thermostat setpoint inversely to the electricity spot price to flatten peak energy demand |
 | `collector` | Ingests time-series signals from other services into an InfluxDB database |
 | `emulator` | Replays historical signals stored in JSON, XML, or CSV files as live Arrowhead services |
 | `nurse` | Monitors asset measurements and reports anomalies to a SAP system as maintenance notifications |
 | `sapper` | Simulates a SAP PM/MM system — receives maintenance notifications and exposes order creation and status as services |
+
+### Order management
+
+| System | Description |
+|---|---|
+| `clerk` | Browser-based order entry front-end for pen holder orders; validates inputs, forwards orders to Tracker, and proxies lookups back to the browser |
+| `tracker` | Persists pen holder orders in a SQLite database; exposes a REST service for creating, updating, and retrieving orders; order lookup requires both order number and email address |
 
 ### Dashboard
 
@@ -99,4 +109,22 @@ sequenceDiagram
 |---|---|
 | `cloudmodel` | Assembles SysML v2 BDD/IBD models of all systems currently registered in the local cloud |
 | `kgrapher` | Assembles OWL/RDF knowledge graph ontologies of all systems in the local cloud |
+| `democrat` | Bridges the Arrowhead local cloud knowledge graph to FA³ST Asset Administration Shells (AAS) |
 | `messenger` | Centralized logging system that receives and stores log messages from other systems |
+
+### Learning
+
+| System | Description |
+|---|---|
+| `Drafter` | Skeleton / template system for students; demonstrates the stateless handler pattern and the channel tray pattern side by side |
+
+---
+
+## Background
+
+The design philosophy behind these systems — how unit assets, services, and the
+channel tray pattern fit together — is described in:
+
+> van Deventer, J. A. (2025). *Building Arrowhead-compliant IoT systems with
+> mbaigo: a Go-based framework for service-oriented automation*.
+> Zenodo. <https://doi.org/10.5281/zenodo.18504110>

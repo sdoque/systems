@@ -56,8 +56,20 @@ func parseLOOP(data []byte) (*LOOPReading, error) {
 	if len(data) < loopPacketSize {
 		return nil, fmt.Errorf("LOOP packet too short: got %d bytes, want %d", len(data), loopPacketSize)
 	}
-	if data[0] != 'L' || data[1] != 'O' || data[2] != 'O' || data[3] != 'P' {
-		return nil, fmt.Errorf("invalid LOOP header: %q", string(data[0:4]))
+	// Davis Vantage Pro2 firmware documents byte 3 of a LOOP packet as 'P'
+	// (0x50), but several firmware revisions in the wild populate byte 3
+	// with the barometer trend byte instead (e.g. 0xC4 for "falling
+	// rapidly"). The authoritative validation is the CRC below, not this
+	// marker, so we only require the "LOO" prefix. A diagnostic dump is
+	// emitted when the prefix doesn't match so a genuine misalignment is
+	// still easy to spot.
+	if data[0] != 'L' || data[1] != 'O' || data[2] != 'O' {
+		dumpLen := 16
+		if len(data) < dumpLen {
+			dumpLen = len(data)
+		}
+		return nil, fmt.Errorf("invalid LOOP header: %q (first %d bytes: % X)",
+			string(data[0:4]), dumpLen, data[:dumpLen])
 	}
 	if crc16(data[:loopPacketSize]) != 0 {
 		return nil, fmt.Errorf("LOOP packet CRC error")

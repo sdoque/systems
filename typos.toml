@@ -1,0 +1,34 @@
+# =============================================================================
+# Configuration for the `typos` spellchecker
+# -----------------------------------------------------------------------------
+# Picked up automatically by the `typos` CLI and by the crate-ci/typos GitHub
+# Action when placed at the repo root.
+#
+# When CI flags a domain term (sensor name, protocol acronym, Arrowhead term)
+# as a typo, add a line under [default.extend-words] in this shape:
+#
+#     CorrectWord = "CorrectWord"
+#
+# Matching is case-insensitive, so one entry covers every casing.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Paths excluded from spellchecking
+# -----------------------------------------------------------------------------
+# WAGO PLC Structured Text files are vendor-format exports, not prose or Go
+# code we maintain. The typos (e.g. "Transfered", "connetion") are baked into
+# PLC variable names that the runtime and Modbus mapping reference by exact
+# spelling — renaming them would break the deployed controller.
+# -----------------------------------------------------------------------------
+[files]
+extend-exclude = ["modboss/plc/"]
+
+[default.extend-words]
+
+# Eclipse Mosquitto — the MQTT broker product. Flagged by typos as if it were
+# a misspelling of "mosquito".
+Mosquitto = "Mosquitto"
+
+# AAS — Asset Administration Shell (Industry 4.0 / Platform Industrie 4.0).
+# The three-letter acronym clashes with the dictionary word "ass".
+AAS = "AAS"

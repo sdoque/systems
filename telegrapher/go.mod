@@ -1,10 +1,10 @@
 module github.com/sdoque/telegrapher
 
-go 1.25.8
+go 1.26.2
 
 require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1
-	github.com/sdoque/mbaigo v0.1.0-alpha.3
+	github.com/sdoque/mbaigo v0.1.0-alpha.4
 )
 
 require (

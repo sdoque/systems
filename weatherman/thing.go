@@ -240,6 +240,13 @@ func readLOOP(portName string, baudRate int) (*LOOPReading, error) {
 		return nil, fmt.Errorf("wake console: %w", err)
 	}
 
+	// After wake-up the buffer may hold one leftover byte from the console's
+	// "\n\r" reply (wakeConsole returns as soon as it sees either byte).
+	// A short drain clears it so the ACK read below is aligned. No ESC: if
+	// the console were streaming, the next LOOP read would expose it via
+	// the hex dump in parseLOOP.
+	drainUntilQuiet(port, 150*time.Millisecond, 500*time.Millisecond)
+
 	// Extend timeout for data transfer.
 	port.SetReadTimeout(5 * time.Second)
 
@@ -247,13 +254,8 @@ func readLOOP(portName string, baudRate int) (*LOOPReading, error) {
 		return nil, fmt.Errorf("send LOOP command: %w", err)
 	}
 
-	// The console responds with an ACK (0x06) followed by the 99-byte packet.
-	ack := make([]byte, 1)
-	if _, err := io.ReadFull(port, ack); err != nil {
-		return nil, fmt.Errorf("read ACK: %w", err)
-	}
-	if ack[0] != 0x06 {
-		return nil, fmt.Errorf("expected ACK (0x06), got 0x%02x", ack[0])
+	if err := readACK(port); err != nil {
+		return nil, err
 	}
 
 	packet := make([]byte, loopPacketSize)
@@ -262,6 +264,46 @@ func readLOOP(portName string, baudRate int) (*LOOPReading, error) {
 	}
 
 	return parseLOOP(packet)
+}
+
+// drainUntilQuiet reads and discards pending bytes from the serial port
+// until no more arrive within quietTime, or until maxTotal has elapsed.
+// The cap prevents an infinite loop when the console is stuck in LOOP
+// streaming mode and ESC was not (or could not be) honoured — in that case
+// the subsequent LOOP read will fail with a diagnostic hex dump rather
+// than hang forever.
+func drainUntilQuiet(port serial.Port, quietTime, maxTotal time.Duration) {
+	port.SetReadTimeout(quietTime)
+	buf := make([]byte, 64)
+	deadline := time.Now().Add(maxTotal)
+	for time.Now().Before(deadline) {
+		n, _ := port.Read(buf)
+		if n == 0 {
+			return
+		}
+	}
+}
+
+// readACK reads a single byte expecting the Davis <ACK> (0x06), tolerating
+// a small number of leading line-ending bytes (\n, \r) left over from a
+// wake-up or ESC acknowledgement. Any other non-ACK byte is a genuine
+// protocol error.
+func readACK(port serial.Port) error {
+	b := make([]byte, 1)
+	for skipped := 0; skipped < 8; skipped++ {
+		if _, err := io.ReadFull(port, b); err != nil {
+			return fmt.Errorf("read ACK: %w", err)
+		}
+		switch b[0] {
+		case 0x06:
+			return nil
+		case '\n', '\r':
+			continue
+		default:
+			return fmt.Errorf("expected ACK (0x06), got 0x%02x", b[0])
+		}
+	}
+	return fmt.Errorf("too many bytes before ACK")
 }
 
 // wakeConsole sends newline characters and waits for the console to acknowledge.

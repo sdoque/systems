@@ -99,11 +99,13 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		Definition: "temperature",
 		Protos:     sProtocols,
 		Nodes:      make(map[string][]components.NodeInfo),
+		Mode:       "get",
 	}
 	rotCervice := &components.Cervice{
 		Definition: "rotation",
 		Protos:     sProtocols,
 		Nodes:      make(map[string][]components.NodeInfo),
+		Mode:       "set",
 	}
 	cervMap := components.Cervices{
 		tempCervice.Definition: tempCervice,
@@ -141,6 +143,49 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 
 	return ua, func() {
 		log.Println("Shutting down thermostat ", configuredAsset.Name)
+	}
+}
+
+//-------------------------------------Service handlers
+
+// setpt handles the get and set requests for the thermostat set point
+func (t *Traits) setpt(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		setPointForm := t.getSetPoint()
+		usecases.HTTPProcessGetRequest(w, r, &setPointForm)
+	case "PUT":
+		sig, err := usecases.HTTPProcessSetRequest(w, r)
+		if err != nil {
+			log.Println("Error with the setting request of the position ", err)
+		}
+		t.setSetPoint(sig)
+		confirmed := t.getSetPoint()
+		usecases.HTTPProcessGetRequest(w, r, &confirmed)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+	}
+}
+
+// diff handles the get requests for the thermostat error signal
+func (t *Traits) diff(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		signalErr := t.getError()
+		usecases.HTTPProcessGetRequest(w, r, &signalErr)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+	}
+}
+
+// variations handles the get requests for the thermostat jitter signal
+func (t *Traits) variations(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		signalErr := t.getJitter()
+		usecases.HTTPProcessGetRequest(w, r, &signalErr)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}
 }
 

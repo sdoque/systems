@@ -16,13 +16,15 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -37,12 +39,18 @@ import (
 // Traits holds the configurable parameters for the YOLO unit asset.
 type Traits struct {
 	FunctionalLocation string `json:"functionalLocation"` // optional: filter photograph service by location
-	YOLOModel          string `json:"yoloModel"`          // YOLO model file (default: yolov8n.pt)
-	PythonCmd          string `json:"pythonCmd"`          // Python interpreter (default: python3)
-	DetectScript       string `json:"detectScript"`       // path to the detection script (default: detect.py)
+	YOLOServiceURL     string `json:"yoloServiceURL"`     // URL of the YOLO microservice (default: http://localhost:5000)
+	YOLOModel          string `json:"yoloModel"`          // model name forwarded to the service (default: yolov8n.pt)
 
 	owner *components.System
 	ua    *components.UnitAsset
+}
+
+// yoloResponse is the JSON body returned by POST /detect on the YOLO microservice.
+type yoloResponse struct {
+	Labels    []string `json:"labels"`
+	Annotated string   `json:"annotated"` // base64-encoded JPEG
+	Error     string   `json:"error,omitempty"`
 }
 
 // ------------------------------------- Instantiate a unit asset template
@@ -65,9 +73,8 @@ func initTemplate() *components.UnitAsset {
 			recognizeSvc.SubPath: &recognizeSvc,
 		},
 		Traits: &Traits{
-			YOLOModel:    "yolov8n.pt",
-			PythonCmd:    "python3",
-			DetectScript: "detect.py",
+			YOLOServiceURL: "http://localhost:5000",
+			YOLOModel:      "yolov8n.pt",
 		},
 	}
 }
@@ -77,10 +84,9 @@ func initTemplate() *components.UnitAsset {
 // newResource creates the runtime unit asset from the configuration file.
 func newResource(uac usecases.ConfigurableAsset, sys *components.System) (*components.UnitAsset, func()) {
 	t := &Traits{
-		YOLOModel:    "yolov8n.pt",
-		PythonCmd:    "python3",
-		DetectScript: "detect.py",
-		owner:        sys,
+		YOLOServiceURL: "http://localhost:5000",
+		YOLOModel:      "yolov8n.pt",
+		owner:          sys,
 	}
 	if len(uac.Traits) > 0 {
 		if err := json.Unmarshal(uac.Traits[0], t); err != nil {
@@ -98,6 +104,7 @@ func newResource(uac usecases.ConfigurableAsset, sys *components.System) (*compo
 		Protos:     components.SProtocols(sys.Husk.ProtoPort),
 		Details:    photographDetails,
 		Nodes:      make(map[string][]components.NodeInfo),
+		Mode:       "get",
 	}
 
 	ua := &components.UnitAsset{
@@ -120,9 +127,10 @@ func newResource(uac usecases.ConfigurableAsset, sys *components.System) (*compo
 
 // runPipeline orchestrates the full recognition cycle:
 //  1. GET the photograph service → FileForm_v1 with the source JPEG URL
-//  2. Download the JPEG
-//  3. Run YOLOv8 detection → annotated JPEG saved to files/
-//  4. Return a FileForm_v1 pointing to the annotated image
+//  2. Download the JPEG bytes
+//  3. POST to the YOLO microservice → labels + annotated JPEG
+//  4. Save the annotated JPEG to files/
+//  5. Return a FileForm_v1 pointing to the annotated image
 func (t *Traits) runPipeline() (*forms.FileForm_v1, error) {
 	// Step 1: get a fresh photograph via the Arrowhead orchestrator.
 	cer := t.ua.CervicesMap["photograph"]
@@ -136,21 +144,16 @@ func (t *Traits) runPipeline() (*forms.FileForm_v1, error) {
 	}
 	log.Printf("recognizer: source image: %s\n", ff.FileURL)
 
-	// Step 2: download the JPEG.
-	srcPath, err := downloadFile(ff.FileURL)
+	// Step 2: download the JPEG as bytes.
+	imageData, err := downloadImage(ff.FileURL)
 	if err != nil {
 		return nil, fmt.Errorf("downloading image: %w", err)
 	}
-	defer os.Remove(srcPath) // clean up temp file
 
-	// Step 3: run YOLO detection.
-	timestamp := time.Now().Format("20060102-150405")
-	outFilename := fmt.Sprintf("annotated_%s.jpg", timestamp)
-	outPath := filepath.Join("files", outFilename)
-
-	labels, err := t.runYOLO(srcPath, outPath)
+	// Step 3: send to the YOLO microservice.
+	labels, annotatedJPEG, err := t.callYOLOService(imageData)
 	if err != nil {
-		return nil, fmt.Errorf("YOLO detection: %w", err)
+		return nil, fmt.Errorf("YOLO service: %w", err)
 	}
 
 	if len(labels) > 0 {
@@ -159,7 +162,17 @@ func (t *Traits) runPipeline() (*forms.FileForm_v1, error) {
 		log.Println("recognizer: no objects detected")
 	}
 
-	// Step 4: build the response form.
+	// Step 4: save the annotated image to files/.
+	if err := os.MkdirAll("files", 0o755); err != nil {
+		return nil, fmt.Errorf("creating files directory: %w", err)
+	}
+	outFilename := fmt.Sprintf("annotated_%s.jpg", time.Now().Format("20060102-150405"))
+	outPath := filepath.Join("files", outFilename)
+	if err := os.WriteFile(outPath, annotatedJPEG, 0o644); err != nil {
+		return nil, fmt.Errorf("saving annotated image: %w", err)
+	}
+
+	// Step 5: build the response form.
 	host := t.owner.Husk.Host.IPAddresses[0]
 	port := t.owner.Husk.ProtoPort["http"]
 	annotatedURL := fmt.Sprintf("http://%s:%d/recognizer/%s/files/%s", host, port, t.ua.Name, outFilename)
@@ -171,46 +184,56 @@ func (t *Traits) runPipeline() (*forms.FileForm_v1, error) {
 	return &result, nil
 }
 
-// downloadFile fetches a URL and writes it to a temporary file, returning the path.
-func downloadFile(url string) (string, error) {
-	resp, err := http.Get(url)
+// callYOLOService posts the image to the YOLO microservice and returns the detected
+// labels and the annotated JPEG bytes.
+func (t *Traits) callYOLOService(imageData []byte) (labels []string, annotatedJPEG []byte, err error) {
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+
+	fw, err := mw.CreateFormFile("image", "image.jpg")
 	if err != nil {
-		return "", err
+		return nil, nil, fmt.Errorf("building multipart request: %w", err)
+	}
+	if _, err := fw.Write(imageData); err != nil {
+		return nil, nil, fmt.Errorf("writing image to request: %w", err)
+	}
+	if t.YOLOModel != "" {
+		_ = mw.WriteField("model", t.YOLOModel)
+	}
+	mw.Close()
+
+	resp, err := http.Post(t.YOLOServiceURL+"/detect", mw.FormDataContentType(), &body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("YOLO service unreachable at %s: %w", t.YOLOServiceURL, err)
 	}
 	defer resp.Body.Close()
 
-	tmp, err := os.CreateTemp("", "recognizer-*.jpg")
-	if err != nil {
-		return "", err
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil, fmt.Errorf("YOLO service returned %s", resp.Status)
 	}
-	defer tmp.Close()
 
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
-		os.Remove(tmp.Name())
-		return "", err
+	var result yoloResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, nil, fmt.Errorf("decoding YOLO service response: %w", err)
 	}
-	return tmp.Name(), nil
+	if result.Error != "" {
+		return nil, nil, fmt.Errorf("YOLO service error: %s", result.Error)
+	}
+
+	annotated, err := base64.StdEncoding.DecodeString(result.Annotated)
+	if err != nil {
+		return nil, nil, fmt.Errorf("decoding annotated image: %w", err)
+	}
+
+	return result.Labels, annotated, nil
 }
 
-// runYOLO calls detect.py with the source image path and output path.
-// It returns the list of detected object labels printed by the script.
-func (t *Traits) runYOLO(srcPath, outPath string) ([]string, error) {
-	if err := os.MkdirAll("files", os.ModePerm); err != nil {
-		return nil, fmt.Errorf("creating files directory: %w", err)
-	}
-
-	cmd := exec.Command(t.PythonCmd, t.DetectScript, srcPath, outPath, t.YOLOModel)
-	output, err := cmd.Output()
+// downloadImage fetches a URL and returns the response body as bytes.
+func downloadImage(url string) ([]byte, error) {
+	resp, err := http.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("detect.py: %w", err)
+		return nil, err
 	}
-
-	// detect.py prints one label per line on stdout.
-	var labels []string
-	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
-		if line != "" {
-			labels = append(labels, line)
-		}
-	}
-	return labels, nil
+	defer resp.Body.Close()
+	return io.ReadAll(resp.Body)
 }

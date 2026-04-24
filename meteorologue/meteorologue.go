@@ -77,6 +77,15 @@ func main() {
 	if err := json.Unmarshal(rawResources[0], &uac); err != nil {
 		log.Fatalf("resource configuration error: %v\n", err)
 	}
+
+	// Cancel the context if a shutdown signal arrives while newResources is blocking
+	// (e.g. waiting for the one-time OAuth2 browser authorization).
+	go func() {
+		<-sys.Sigs
+		fmt.Println("\nshutting down system", sys.Name)
+		cancel()
+	}()
+
 	assets, cleanup := newResources(uac, &sys)
 	defer cleanup()
 	for _, ua := range assets {
@@ -92,10 +101,8 @@ func main() {
 	// start the HTTP request handler and server
 	go usecases.SetoutServers(&sys)
 
-	// wait for shutdown signal
-	<-sys.Sigs
-	fmt.Println("\nshutting down system", sys.Name)
-	cancel()
+	// wait for context cancellation (triggered by the signal goroutine above)
+	<-ctx.Done()
 	time.Sleep(2 * time.Second)
 }
 

@@ -1,4 +1,4 @@
-github.com/sdoque/mbaigo v0.1.0-alpha.3 h1:dGm79bHk5ICPjKzaDQsHyJq5+1OT+2kcbQxnVkkeBTk=
-github.com/sdoque/mbaigo v0.1.0-alpha.3/go.mod h1:bvlsxtug7x2L/AdSB/21+nYRQP2Bcu291r1yr+rdpyE=
-periph.io/x/conn/v3 v3.7.2 h1:qt9dE6XGP5ljbFnCKRJ9OOCoiOyBGlw7JZgoi72zZ1s=
-periph.io/x/conn/v3 v3.7.2/go.mod h1:Ao0b4sFRo4QOx6c1tROJU1fLJN1hUIYggjOrkIVnpGg=
+github.com/sdoque/mbaigo v0.1.0-alpha.4 h1:jFxIIP3+kSC3LwamzZFytxnO+K/5WY79YYekw7lEvyg=
+github.com/sdoque/mbaigo v0.1.0-alpha.4/go.mod h1:IUaNyy+TmZOnjiaJlwaZYlhlx/X10zMQxttMBVv0Fv4=
+github.com/stianeikeland/go-rpio/v4 v4.6.0 h1:eAJgtw3jTtvn/CqwbC82ntcS+dtzUTgo5qlZKe677EY=
+github.com/stianeikeland/go-rpio/v4 v4.6.0/go.mod h1:A3GvHxC1Om5zaId+HqB3HKqx4K/AqeckxB7qRjxMK7o=

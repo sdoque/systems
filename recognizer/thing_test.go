@@ -16,14 +16,19 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// minimalJPEG returns a small byte slice that starts with a JPEG magic header.
+// It is not a valid image but is sufficient for round-trip tests.
+func minimalJPEG() []byte {
+	return []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10}
+}
 
 // TestInitTemplate verifies name, mission, service registration, and default trait values.
 func TestInitTemplate(t *testing.T) {
@@ -43,14 +48,11 @@ func TestInitTemplate(t *testing.T) {
 	if !ok {
 		t.Fatal("Traits should be *Traits")
 	}
+	if tr.YOLOServiceURL == "" {
+		t.Error("YOLOServiceURL default should not be empty")
+	}
 	if tr.YOLOModel == "" {
 		t.Error("YOLOModel default should not be empty")
-	}
-	if tr.PythonCmd == "" {
-		t.Error("PythonCmd default should not be empty")
-	}
-	if tr.DetectScript == "" {
-		t.Error("DetectScript default should not be empty")
 	}
 }
 
@@ -78,131 +80,149 @@ func TestServing_InvalidService(t *testing.T) {
 	}
 }
 
-// TestDownloadFile_Success verifies that downloadFile writes the server's response body
-// to a temporary file and returns a valid path.
-func TestDownloadFile_Success(t *testing.T) {
-	content := []byte{0xFF, 0xD8, 0xFF, 0xE0} // JPEG magic bytes
+// TestDownloadImage_Success verifies that downloadImage returns the server's response body.
+func TestDownloadImage_Success(t *testing.T) {
+	content := minimalJPEG()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/jpeg")
 		w.Write(content)
 	}))
 	defer srv.Close()
 
-	path, err := downloadFile(srv.URL)
+	got, err := downloadImage(srv.URL)
 	if err != nil {
-		t.Fatalf("downloadFile returned error: %v", err)
-	}
-	defer os.Remove(path)
-
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("could not read downloaded file: %v", err)
+		t.Fatalf("downloadImage returned error: %v", err)
 	}
 	if string(got) != string(content) {
-		t.Errorf("file content mismatch: got %v, want %v", got, content)
+		t.Errorf("content mismatch: got %v, want %v", got, content)
 	}
 }
 
-// TestDownloadFile_Unreachable verifies that an unreachable URL returns an error.
-func TestDownloadFile_Unreachable(t *testing.T) {
-	_, err := downloadFile("http://127.0.0.1:1/no-such-server")
+// TestDownloadImage_Unreachable verifies that an unreachable URL returns an error.
+func TestDownloadImage_Unreachable(t *testing.T) {
+	_, err := downloadImage("http://127.0.0.1:1/no-such-server")
 	if err == nil {
 		t.Error("expected error for unreachable URL, got nil")
 	}
 }
 
-// TestRunYOLO_Success verifies that runYOLO returns the labels printed by the detection script.
-func TestRunYOLO_Success(t *testing.T) {
-	// Write a stub script that creates the output file and prints two labels.
-	script := writeTempScript(t, `
-import sys, os
-out = sys.argv[2]
-os.makedirs(os.path.dirname(out) if os.path.dirname(out) else '.', exist_ok=True)
-open(out, 'wb').write(b'\xff\xd8')  # minimal JPEG header
-print('person')
-print('chair')
-`)
-	outDir := t.TempDir()
-	outPath := filepath.Join(outDir, "annotated.jpg")
+// TestCallYOLOService_Success verifies the full happy path: multipart POST accepted,
+// JSON decoded, base64 annotated image decoded, labels returned.
+func TestCallYOLOService_Success(t *testing.T) {
+	annotatedBytes := minimalJPEG()
+	annotatedB64 := base64.StdEncoding.EncodeToString(annotatedBytes)
 
-	tr := &Traits{PythonCmd: "python3", DetectScript: script, YOLOModel: "yolov8n.pt"}
-	labels, err := tr.runYOLO("input.jpg", outPath)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/detect" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(yoloResponse{
+			Labels:    []string{"person", "chair"},
+			Annotated: annotatedB64,
+		})
+	}))
+	defer srv.Close()
+
+	tr := &Traits{YOLOServiceURL: srv.URL, YOLOModel: "yolov8n.pt"}
+	labels, annotated, err := tr.callYOLOService(minimalJPEG())
 	if err != nil {
-		t.Fatalf("runYOLO returned error: %v", err)
+		t.Fatalf("callYOLOService returned error: %v", err)
 	}
 	if len(labels) != 2 || labels[0] != "person" || labels[1] != "chair" {
 		t.Errorf("labels: got %v, want [person chair]", labels)
 	}
+	if string(annotated) != string(annotatedBytes) {
+		t.Errorf("annotated bytes mismatch")
+	}
 }
 
-// TestRunYOLO_NoDetections verifies that an empty stdout produces an empty label slice.
-func TestRunYOLO_NoDetections(t *testing.T) {
-	script := writeTempScript(t, `
-import sys, os
-out = sys.argv[2]
-os.makedirs(os.path.dirname(out) if os.path.dirname(out) else '.', exist_ok=True)
-open(out, 'wb').write(b'\xff\xd8')
-# no output — nothing detected
-`)
-	outDir := t.TempDir()
-	outPath := filepath.Join(outDir, "annotated.jpg")
+// TestCallYOLOService_NoDetections verifies that an empty label list is returned cleanly.
+func TestCallYOLOService_NoDetections(t *testing.T) {
+	annotatedB64 := base64.StdEncoding.EncodeToString(minimalJPEG())
 
-	tr := &Traits{PythonCmd: "python3", DetectScript: script, YOLOModel: "yolov8n.pt"}
-	labels, err := tr.runYOLO("input.jpg", outPath)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(yoloResponse{Labels: []string{}, Annotated: annotatedB64})
+	}))
+	defer srv.Close()
+
+	tr := &Traits{YOLOServiceURL: srv.URL}
+	labels, _, err := tr.callYOLOService(minimalJPEG())
 	if err != nil {
-		t.Fatalf("runYOLO returned error: %v", err)
+		t.Fatalf("callYOLOService returned error: %v", err)
 	}
 	if len(labels) != 0 {
-		t.Errorf("expected no labels, got %v", labels)
+		t.Errorf("expected empty labels, got %v", labels)
 	}
 }
 
-// TestRunYOLO_ScriptFails verifies that a non-zero exit from the detection script returns an error.
-func TestRunYOLO_ScriptFails(t *testing.T) {
-	script := writeTempScript(t, `import sys; sys.exit(1)`)
-
-	tr := &Traits{PythonCmd: "python3", DetectScript: script, YOLOModel: "yolov8n.pt"}
-	_, err := tr.runYOLO("input.jpg", filepath.Join(t.TempDir(), "out.jpg"))
+// TestCallYOLOService_ServiceDown verifies that an unreachable service URL returns an error.
+func TestCallYOLOService_ServiceDown(t *testing.T) {
+	tr := &Traits{YOLOServiceURL: "http://127.0.0.1:1"}
+	_, _, err := tr.callYOLOService(minimalJPEG())
 	if err == nil {
-		t.Error("expected error when script exits with code 1, got nil")
+		t.Error("expected error when YOLO service is unreachable, got nil")
+	}
+	if !strings.Contains(err.Error(), "unreachable") {
+		t.Errorf("error should mention unreachable, got: %v", err)
 	}
 }
 
-// TestRunYOLO_LabelWhitespaceTrimming verifies that blank lines in script output are ignored.
-func TestRunYOLO_LabelWhitespaceTrimming(t *testing.T) {
-	script := writeTempScript(t, `
-import sys, os
-out = sys.argv[2]
-os.makedirs(os.path.dirname(out) if os.path.dirname(out) else '.', exist_ok=True)
-open(out, 'wb').write(b'\xff\xd8')
-print('\nperson\n\nlaptop\n')
-`)
-	outDir := t.TempDir()
-	outPath := filepath.Join(outDir, "annotated.jpg")
+// TestCallYOLOService_NonOKResponse verifies that a non-200 upstream response returns an error.
+func TestCallYOLOService_NonOKResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "model not loaded", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
 
-	tr := &Traits{PythonCmd: "python3", DetectScript: script, YOLOModel: "yolov8n.pt"}
-	labels, err := tr.runYOLO("input.jpg", outPath)
-	if err != nil {
-		t.Fatalf("runYOLO returned error: %v", err)
-	}
-	for _, l := range labels {
-		if strings.TrimSpace(l) == "" {
-			t.Errorf("blank label found in output: %v", labels)
-		}
-	}
-	if len(labels) != 2 {
-		t.Errorf("expected 2 labels, got %v", labels)
+	tr := &Traits{YOLOServiceURL: srv.URL}
+	_, _, err := tr.callYOLOService(minimalJPEG())
+	if err == nil {
+		t.Error("expected error for non-200 response, got nil")
 	}
 }
 
-// TestTraitsJSON verifies that Traits fields round-trip correctly through JSON unmarshalling,
-// matching the structure used in systemconfig.json.
+// TestCallYOLOService_ServiceError verifies that a non-empty error field in the JSON response
+// is propagated as a Go error.
+func TestCallYOLOService_ServiceError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(yoloResponse{Error: "could not decode image"})
+	}))
+	defer srv.Close()
+
+	tr := &Traits{YOLOServiceURL: srv.URL}
+	_, _, err := tr.callYOLOService(minimalJPEG())
+	if err == nil {
+		t.Error("expected error from service error field, got nil")
+	}
+	if !strings.Contains(err.Error(), "could not decode image") {
+		t.Errorf("error should contain service message, got: %v", err)
+	}
+}
+
+// TestCallYOLOService_InvalidBase64 verifies that a malformed base64 annotated field returns an error.
+func TestCallYOLOService_InvalidBase64(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(yoloResponse{Labels: []string{"cat"}, Annotated: "!!!not-valid-base64!!!"})
+	}))
+	defer srv.Close()
+
+	tr := &Traits{YOLOServiceURL: srv.URL}
+	_, _, err := tr.callYOLOService(minimalJPEG())
+	if err == nil {
+		t.Error("expected error for invalid base64 annotated field, got nil")
+	}
+}
+
+// TestTraitsJSON verifies that Traits fields round-trip correctly through JSON unmarshalling.
 func TestTraitsJSON(t *testing.T) {
 	raw := []byte(`{
 		"functionalLocation": "Entrance",
-		"yoloModel":          "yolov8s.pt",
-		"pythonCmd":          "/usr/bin/python3",
-		"detectScript":       "/opt/recognizer/detect.py"
+		"yoloServiceURL":     "http://localhost:5001",
+		"yoloModel":          "yolov8s.pt"
 	}`)
 
 	var tr Traits
@@ -212,29 +232,10 @@ func TestTraitsJSON(t *testing.T) {
 	if tr.FunctionalLocation != "Entrance" {
 		t.Errorf("FunctionalLocation: got %q", tr.FunctionalLocation)
 	}
+	if tr.YOLOServiceURL != "http://localhost:5001" {
+		t.Errorf("YOLOServiceURL: got %q", tr.YOLOServiceURL)
+	}
 	if tr.YOLOModel != "yolov8s.pt" {
 		t.Errorf("YOLOModel: got %q", tr.YOLOModel)
 	}
-	if tr.PythonCmd != "/usr/bin/python3" {
-		t.Errorf("PythonCmd: got %q", tr.PythonCmd)
-	}
-	if tr.DetectScript != "/opt/recognizer/detect.py" {
-		t.Errorf("DetectScript: got %q", tr.DetectScript)
-	}
-}
-
-// ------------------------------------- helpers
-
-// writeTempScript writes a Python script to a temporary file and returns its path.
-func writeTempScript(t *testing.T, code string) string {
-	t.Helper()
-	f, err := os.CreateTemp(t.TempDir(), "stub-*.py")
-	if err != nil {
-		t.Fatalf("creating temp script: %v", err)
-	}
-	defer f.Close()
-	if _, err := f.WriteString(code); err != nil {
-		t.Fatalf("writing temp script: %v", err)
-	}
-	return f.Name()
 }

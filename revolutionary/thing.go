@@ -20,7 +20,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"os/exec"
@@ -112,6 +114,69 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 
 	return ua, func() {
 		log.Printf("disconnecting from %s\n", configuredAsset.Name)
+	}
+}
+
+//-------------------------------------Service handlers
+
+// access gets the unit asset's AIO channel datum and sends it in a signal form
+func (t *Traits) access(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		// Prepare a fresh tray for this request
+		requestTray := ServiceTray{
+			SampledDatum: make(chan forms.SignalA_v1a),
+			Error:        make(chan error),
+		}
+		t.serviceChannel <- requestTray
+		select {
+		case err := <-requestTray.Error:
+			log.Printf("Logic error in getting measurement: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		case signalForm := <-requestTray.SampledDatum:
+			usecases.HTTPProcessGetRequest(w, r, &signalForm)
+			return
+		case <-time.After(5 * time.Second):
+			http.Error(w, "Request timed out", http.StatusGatewayTimeout)
+			log.Println("Timeout on GET access")
+			return
+		}
+
+	case http.MethodPost, http.MethodPut:
+		// Unpack the incoming form
+		log.Printf("Unpacking output signal form for %s", t.name)
+		contentType := r.Header.Get("Content-Type")
+		mediaType, _, err := mime.ParseMediaType(contentType)
+		if err != nil {
+			log.Printf("Error parsing media type: %v", err)
+			http.Error(w, "Unsupported Media Type", http.StatusUnsupportedMediaType)
+			return
+		}
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			log.Printf("Error reading request body: %v", err)
+			http.Error(w, "Bad request", http.StatusBadRequest)
+			return
+		}
+		serviceReq, err := usecases.Unpack(bodyBytes, mediaType)
+		if err != nil {
+			log.Printf("Error unpacking output signal form: %v", err)
+			http.Error(w, "Bad request", http.StatusBadRequest)
+			return
+		}
+		outputForm, ok := serviceReq.(*forms.SignalA_v1a)
+		if !ok {
+			log.Println("Unexpected form type in access")
+			http.Error(w, "Bad request", http.StatusBadRequest)
+			return
+		}
+
+		t.outputChannel <- outputForm.Value // Send the value to the output channel for processing
+		w.WriteHeader(http.StatusOK)        // Respond with 200 OK if the write is successful
+
+	default:
+		http.Error(w, "Method not supported", http.StatusMethodNotAllowed)
 	}
 }
 

@@ -134,10 +134,10 @@ func TestExtractMeasurements_NAModule2(t *testing.T) {
 	m := extractMeasurements("NAModule2", dd)
 
 	checks := map[string]float64{
-		"wind_speed":  float64(ws),
-		"wind_angle":  float64(wa),
-		"gust_speed":  float64(gs),
-		"gust_angle":  float64(ga),
+		"wind_speed": float64(ws),
+		"wind_angle": float64(wa),
+		"gust_speed": float64(gs),
+		"gust_angle": float64(ga),
 	}
 	for k, want := range checks {
 		if m[k] != want {

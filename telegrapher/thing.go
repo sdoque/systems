@@ -84,7 +84,7 @@ func initTemplate() *components.UnitAsset {
 
 //-------------------------------------Instantiate the unit assets based on configuration
 
-// newResource creates the Resource resource with its pointers and channels based on the configuration using the tConig structs
+// newResource creates the Resource resource with its pointers and channels based on the configuration using the Traits struct
 func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (*components.UnitAsset, func()) {
 	topic := configuredAsset.Name
 	lastSlashIndex := strings.LastIndex(topic, "/")
@@ -149,6 +149,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			Definition: service,
 			Protos:     sProtocols,
 			Nodes:      make(map[string][]components.NodeInfo),
+			Mode:       "get",
 		}
 		newCervice.Details = topicDetrails
 		cervMap := components.Cervices{newCervice.Definition: newCervice}
@@ -246,6 +247,35 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	return ua, func() {
 		log.Println("Disconnecting from MQTT broker")
 		t.mClient.Disconnect(250)
+	}
+}
+
+//-------------------------------------Service handlers
+
+func (t *Traits) access(w http.ResponseWriter, r *http.Request, servicePath string) {
+	switch r.Method {
+	case "GET":
+		msg := t.Message
+		if len(msg) > 0 {
+			w.WriteHeader(http.StatusOK)
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(msg)
+		} else {
+			http.Error(w, "The subscribed topic is not being published", http.StatusBadRequest)
+		}
+	case "PUT":
+		log.Printf("MQTT client is connected: %v", t.mClient.IsConnected())
+
+		if err := t.publishRaw([]byte(`{"test":123}`)); err != nil {
+			log.Printf("Failed to publish: %v", err)
+			http.Error(w, "MQTT publish failed", http.StatusInternalServerError)
+			return
+		}
+		log.Printf("MQTT client is connected: %v", t.mClient.IsConnected())
+
+		w.WriteHeader(http.StatusAccepted)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}
 }
 

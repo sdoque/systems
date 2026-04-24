@@ -61,6 +61,8 @@ sequenceDiagram
     W-->>C: 200 OK (SignalA_v1a, °C)
 ```
 
+> **Firmware note.** The parser accepts any value at byte 3 of the LOOP packet, not just the ASCII `'P'` (0x50) documented in the Davis reference. Some Vantage Pro2 firmware revisions populate byte 3 with the barometer trend value (e.g. `0xC4` = -60 = "falling rapidly") instead of the `'P'` marker. The CRC-16 over the full 99 bytes is the authoritative integrity check; the header prefix check requires only `"LOO"`.
+
 ---
 
 ## Services

@@ -20,13 +20,11 @@ import (
 	"context"
 	"crypto/x509/pkix"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
-	"github.com/sdoque/mbaigo/forms"
 	"github.com/sdoque/mbaigo/usecases"
 )
 
@@ -100,33 +98,5 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 		t.readTemp(w, r)
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
-	}
-}
-
-// readTemp gets the unit asset's temperature datum and sends it in a signal form
-func (t *Traits) readTemp(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case "GET":
-		getMeasuremet := STray{
-			Action: "read",
-			ValueP: make(chan forms.SignalA_v1a),
-			Error:  make(chan error),
-		}
-		t.trayChan <- getMeasuremet
-		select {
-		case err := <-getMeasuremet.Error:
-			fmt.Printf("Logic error in getting measurement, %s\n", err)
-			w.WriteHeader(http.StatusInternalServerError) // Use 500 for an internal error
-			return
-		case temperatureForm := <-getMeasuremet.ValueP:
-			usecases.HTTPProcessGetRequest(w, r, &temperatureForm)
-			return
-		case <-time.After(5 * time.Second): // Optional timeout
-			http.Error(w, "Request timed out", http.StatusGatewayTimeout)
-			log.Println("Failure to process temperature reading request")
-			return
-		}
-	default:
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}
 }

@@ -148,7 +148,10 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 			v = 1.0
 		}
 		t.cache.update(t.assetName, map[string]float64{"on_off": v}, time.Now())
-		w.WriteHeader(http.StatusNoContent)
+
+		// Echo back the acknowledged state so callers using SetState get a valid response.
+		sig.Timestamp = time.Now()
+		usecases.HTTPProcessGetRequest(w, r, sig)
 
 	default:
 		http.Error(w, "Method is not supported.", http.StatusMethodNotAllowed)

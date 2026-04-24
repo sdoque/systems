@@ -1,9 +1,9 @@
 module github.com/sdoque/systems/weatherman
 
-go 1.26.1
+go 1.26.2
 
 require (
-	github.com/sdoque/mbaigo v0.1.0-alpha.3
+	github.com/sdoque/mbaigo v0.1.0-alpha.4
 	go.bug.st/serial v1.6.2
 )
 

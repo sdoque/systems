@@ -37,7 +37,7 @@ func main() {
 	// instantiate the System
 	sys := components.NewSystem("photographer", ctx)
 
-	// instatiate the husk
+	// instantiate the husk
 	sys.Husk = &components.Husk{
 		Description: " takes a picture using a camera and saves a file",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
@@ -100,20 +100,5 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 		fmt.Fprint(w, "OK")
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
-	}
-}
-
-func (t *Traits) photograph(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case "GET":
-		fileForm, err := t.takePicture()
-		if err != nil {
-			log.Println(err)
-			http.Error(w, "Failed to take a picture, check if PiCam is connected", http.StatusNotFound)
-			return
-		}
-		usecases.HTTPProcessGetRequest(w, r, &fileForm)
-	default:
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}
 }

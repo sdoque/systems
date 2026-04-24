@@ -127,6 +127,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			Details:    measurement.Details,
 			Protos:     sProtocols,
 			Nodes:      make(map[string][]components.NodeInfo),
+			Mode:       "get",
 		}
 		cervMap[cMeasurement.Definition] = cMeasurement
 	}
@@ -162,6 +163,18 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		wg.Wait()
 		log.Println("Disconnecting from InfluxDB")
 		t.client.Close()
+	}
+}
+
+//-------------------------------------Service handlers
+
+// measQuery handles GET requests for the list of measurements in the bucket.
+func (t *Traits) measQuery(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		t.q4measurements(w)
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}
 }
 

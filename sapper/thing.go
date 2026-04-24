@@ -37,7 +37,7 @@ import (
 // Traits holds the configurable parameters for the sapper unit asset.
 type Traits struct {
 	CompletionDelay time.Duration `json:"completionDelay"` // stored as seconds; multiplied by time.Second at runtime
-	GraphDBURL      string        `json:"graphDbUrl"`       // SPARQL update endpoint; empty = disabled
+	GraphDBURL      string        `json:"graphDbUrl"`      // SPARQL update endpoint; empty = disabled
 	orders          map[string]*Order
 	mu              sync.Mutex
 	seq             atomic.Int64 // monotonic counter for order IDs
@@ -92,6 +92,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		Definition: "SignalMonitoring",
 		Protos:     sProtocols,
 		Nodes:      make(map[string][]components.NodeInfo),
+		Mode:       "get",
 	}
 	t.monitor = monitorCervice
 

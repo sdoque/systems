@@ -87,7 +87,7 @@ func TestInitTemplate(t *testing.T) {
 // ── Traits serialization ──────────────────────────────────────────────────────
 
 func TestTraitsSerialization(t *testing.T) {
-	original := Traits{CompletionDelay: 45}
+	original := &Traits{CompletionDelay: 45}
 	data, err := json.Marshal(original)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -123,8 +123,8 @@ func TestNewResource(t *testing.T) {
 
 	traitJSON, _ := json.Marshal(Traits{CompletionDelay: 10})
 	cfgAsset := usecases.ConfigurableAsset{
-		Name:    "SAPSimulator",
-		Traits:  []json.RawMessage{traitJSON},
+		Name:     "SAPSimulator",
+		Traits:   []json.RawMessage{traitJSON},
 		Services: []components.Service{{Definition: "MaintenanceOrder", SubPath: "orders"}},
 	}
 

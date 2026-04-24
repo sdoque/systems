@@ -44,6 +44,7 @@ func main() {
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		ProtoPort:   map[string]int{"https": 0, "http": 20170, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/mbaigo/tree/master/uaclient",
+		Host:        components.NewDevice(),
 		DName: pkix.Name{
 			CommonName:         sys.Name,
 			Organization:       []string{"Synecdoque"},
@@ -102,24 +103,5 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 		t.access(w, r)
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
-	}
-}
-
-func (t *Traits) browseHandler(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case "GET":
-		t.browseNode(w)
-	default:
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
-	}
-}
-
-func (t *Traits) access(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case "GET":
-		vauleForm := t.read()
-		usecases.HTTPProcessGetRequest(w, r, &vauleForm)
-	default:
-		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}
 }

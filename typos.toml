@@ -12,6 +12,17 @@
 # Matching is case-insensitive, so one entry covers every casing.
 # =============================================================================
 
+# -----------------------------------------------------------------------------
+# Paths excluded from spellchecking
+# -----------------------------------------------------------------------------
+# WAGO PLC Structured Text files are vendor-format exports, not prose or Go
+# code we maintain. The typos (e.g. "Transfered", "connetion") are baked into
+# PLC variable names that the runtime and Modbus mapping reference by exact
+# spelling — renaming them would break the deployed controller.
+# -----------------------------------------------------------------------------
+[files]
+extend-exclude = ["modboss/plc/"]
+
 [default.extend-words]
 
 # Eclipse Mosquitto — the MQTT broker product. Flagged by typos as if it were

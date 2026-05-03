@@ -42,6 +42,9 @@ func main() {
 	// instantiate the System
 	sys := components.NewSystem("serviceregistrar", ctx)
 
+	// Watch for SIGINT immediately so Ctrl+C interrupts blocking startup steps.
+	usecases.WatchShutdown(&sys, cancel)
+
 	// Instantiate the Capsule
 	sys.Husk = &components.Husk{
 		Description: "is an Arrowhead mandatory core system that keeps track of the currently available services.",
@@ -91,9 +94,8 @@ func main() {
 	go usecases.SetoutServers(&sys)
 
 	// wait for shutdown signal, and gracefully close properly goroutines with context
-	<-sys.Sigs
-	fmt.Println("\nShutting down system", sys.Name)
-	cancel()
+	<-sys.Ctx.Done()
+	log.Println("shutting down system", sys.Name)
 	time.Sleep(3 * time.Second)
 }
 

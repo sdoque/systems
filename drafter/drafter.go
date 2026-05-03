@@ -31,7 +31,6 @@ import (
 	"context"
 	"crypto/x509/pkix"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -47,6 +46,9 @@ func main() {
 
 	// ── system instantiation ───────────────────────────────────────────────────
 	sys := components.NewSystem("drafter", ctx)
+
+	// Watch for SIGINT immediately so Ctrl+C interrupts blocking startup steps.
+	usecases.WatchShutdown(&sys, cancel)
 
 	sys.Husk = &components.Husk{
 		Description: "skeleton system for learning the mbaigo architecture",
@@ -89,9 +91,8 @@ func main() {
 	go usecases.SetoutServers(&sys)
 
 	// ── wait for Ctrl-C ────────────────────────────────────────────────────────
-	<-sys.Sigs
-	fmt.Println("\nshutting down system", sys.Name)
-	cancel()
+	<-sys.Ctx.Done()
+	log.Println("shutting down system", sys.Name)
 	time.Sleep(2 * time.Second)
 }
 

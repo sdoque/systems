@@ -19,7 +19,6 @@ import (
 	"context"
 	"crypto/x509/pkix"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -35,6 +34,9 @@ func main() {
 
 	// instantiate the System
 	sys := components.NewSystem("sapper", ctx)
+
+	// Watch for SIGINT immediately so Ctrl+C interrupts blocking startup steps.
+	usecases.WatchShutdown(&sys, cancel)
 
 	// Instantiate the husk
 	sys.Husk = &components.Husk{
@@ -85,9 +87,8 @@ func main() {
 	go usecases.SetoutServers(&sys)
 
 	// Wait for shutdown signal
-	<-sys.Sigs
-	fmt.Println("\nshuting down system", sys.Name)
-	cancel()
+	<-sys.Ctx.Done()
+	log.Println("shutting down system", sys.Name)
 	time.Sleep(2 * time.Second)
 }
 

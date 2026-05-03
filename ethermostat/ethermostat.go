@@ -34,6 +34,9 @@ func main() {
 
 	sys := components.NewSystem("ethermostat", ctx)
 
+	// Watch for SIGINT immediately so Ctrl+C interrupts blocking startup steps.
+	usecases.WatchShutdown(&sys, cancel)
+
 	sys.Husk = &components.Husk{
 		Description: "controls electrical heating plugs based on temperature readings from meteorologue",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
@@ -71,11 +74,6 @@ func main() {
 	}
 	// Forward shutdown signals to the context immediately so that Ctrl+C
 	// unblocks the discovery retry loop inside newResources.
-	go func() {
-		<-sys.Sigs
-		cancel()
-	}()
-
 	assets, cleanup := newResources(uac, &sys)
 	defer cleanup()
 	for _, ua := range assets {

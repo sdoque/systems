@@ -36,6 +36,9 @@ func main() {
 	// instantiate the System
 	sys := components.NewSystem("ds18b20", ctx)
 
+	// Watch for SIGINT immediately so Ctrl+C interrupts blocking startup steps.
+	usecases.WatchShutdown(&sys, cancel)
+
 	// instantiate the husk
 	sys.Husk = &components.Husk{
 		Description: "reads the temperature from 1-wire sensors",
@@ -85,9 +88,8 @@ func main() {
 	go usecases.SetoutServers(&sys)
 
 	// wait for shutdown signal, and gracefully close properly goroutines with context
-	<-sys.Sigs // wait for a SIGINT (Ctrl+C) signal
-	log.Println("\nshuting down system", sys.Name)
-	cancel()                    // cancel the context, signaling the goroutines to stop
+	<-sys.Ctx.Done()
+	log.Println("shutting down system", sys.Name)
 	time.Sleep(2 * time.Second) // allow the go routines to be executed, which might take more time than the main routine to end
 }
 

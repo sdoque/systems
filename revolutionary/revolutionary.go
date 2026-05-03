@@ -36,6 +36,9 @@ func main() {
 	// instantiate the System
 	sys := components.NewSystem("revolutionary", ctx)
 
+	// Watch for SIGINT immediately so Ctrl+C interrupts blocking startup steps.
+	usecases.WatchShutdown(&sys, cancel)
+
 	// instantiate the husk
 	sys.Husk = &components.Husk{
 		Description: "interacts with the RevPi Connect 4 PLC",

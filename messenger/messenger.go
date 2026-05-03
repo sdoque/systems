@@ -16,6 +16,9 @@ func main() {
 	defer cancel()
 
 	sys := components.NewSystem("messenger", ctx)
+
+	// Watch for SIGINT immediately so Ctrl+C interrupts blocking startup steps.
+	usecases.WatchShutdown(&sys, cancel)
 	sys.Husk = &components.Husk{
 		Description: "is a logging system that receives log messages from other systems.",
 		Details:     map[string][]string{"Developer": {"alex"}},

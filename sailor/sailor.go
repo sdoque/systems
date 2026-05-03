@@ -31,7 +31,6 @@ import (
 	"context"
 	"crypto/x509/pkix"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -45,6 +44,9 @@ func main() {
 	defer cancel()
 
 	sys := components.NewSystem("sailor", ctx)
+
+	// Watch for SIGINT immediately so Ctrl+C interrupts blocking startup steps.
+	usecases.WatchShutdown(&sys, cancel)
 	sys.Husk = &components.Husk{
 		Description: "NMEA 2000 gateway — exposes vessel signals as Arrowhead services",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
@@ -87,9 +89,8 @@ func main() {
 	usecases.RegisterServices(&sys)
 	go usecases.SetoutServers(&sys)
 
-	<-sys.Sigs
-	fmt.Println("\nshutting down system", sys.Name)
-	cancel()
+	<-sys.Ctx.Done()
+	log.Println("shutting down system", sys.Name)
 	time.Sleep(2 * time.Second)
 }
 

@@ -22,7 +22,6 @@ import (
 	"context"
 	"crypto/x509/pkix"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -36,6 +35,9 @@ func main() {
 	defer cancel()
 
 	sys := components.NewSystem("flattener", ctx)
+
+	// Watch for SIGINT immediately so Ctrl+C interrupts blocking startup steps.
+	usecases.WatchShutdown(&sys, cancel)
 
 	sys.Husk = &components.Husk{
 		Description: "adjusts the thermostat setpoint inversely to the electricity spot price to flatten energy peak demand.",
@@ -77,9 +79,8 @@ func main() {
 	usecases.RegisterServices(&sys)
 	go usecases.SetoutServers(&sys)
 
-	<-sys.Sigs
-	fmt.Println("\nshuting down system", sys.Name)
-	cancel()
+	<-sys.Ctx.Done()
+	log.Println("shutting down system", sys.Name)
 	time.Sleep(2 * time.Second)
 }
 

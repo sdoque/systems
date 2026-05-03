@@ -37,6 +37,9 @@ func main() {
 
 	sys := components.NewSystem("beehive", ctx)
 
+	// Watch for SIGINT immediately so Ctrl+C interrupts blocking startup steps.
+	usecases.WatchShutdown(&sys, cancel)
+
 	sys.Husk = &components.Husk{
 		Description: "web dashboard with on/off toggle switches for all ZigBee devices in the local cloud",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
@@ -79,9 +82,8 @@ func main() {
 	usecases.RegisterServices(&sys)
 	go usecases.SetoutServers(&sys)
 
-	<-sys.Sigs
-	fmt.Println("\nshutting down system", sys.Name)
-	cancel()
+	<-sys.Ctx.Done()
+	log.Println("shutting down system", sys.Name)
 	time.Sleep(2 * time.Second)
 }
 

@@ -169,7 +169,10 @@ func setLightState(cfg DeconzConfig, lightID string, on bool) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	// Preserve the framework's TLS transport while imposing a timeout —
+	// http.DefaultClient itself has no timeout. Without Transport set the
+	// fresh client would lose mTLS configuration installed by enrolment.
+	resp, err := (&http.Client{Timeout: 5 * time.Second, Transport: http.DefaultClient.Transport}).Do(req)
 	if err != nil {
 		return err
 	}

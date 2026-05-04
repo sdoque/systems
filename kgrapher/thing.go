@@ -183,7 +183,9 @@ func (t *Traits) assembleOntologies(w http.ResponseWriter) {
 	}
 	req = req.WithContext(ctx)
 
-	client := &http.Client{}
+	// Use the framework's TLS-configured transport so this call works
+	// against an HTTPS-only service registrar.
+	client := &http.Client{Transport: http.DefaultClient.Transport}
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("Error receiving the systems list from service registrar, %s\n", err)
@@ -342,7 +344,10 @@ func (t *Traits) assembleOntologies(w http.ResponseWriter) {
 	}
 	req.Header.Set("Content-Type", "text/turtle")
 
-	client = &http.Client{}
+	// Triple-store endpoint is typically HTTP-only on localhost, but use the
+	// framework transport for consistency in case the deployment ever moves
+	// it to HTTPS.
+	client = &http.Client{Transport: http.DefaultClient.Transport}
 	resp, err = client.Do(req)
 	if err != nil {
 		log.Println("Error PUTting snapshot:", err)

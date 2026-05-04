@@ -229,7 +229,8 @@ func (t *Traits) lookupFromTracker(w http.ResponseWriter, id, email string) {
 	}
 
 	targetURL := baseURL + "?id=" + url.QueryEscape(id) + "&email=" + url.QueryEscape(email)
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Get(targetURL)
+	// Preserve framework-installed TLS so this works against an HTTPS-only tracker.
+	resp, err := (&http.Client{Timeout: 10 * time.Second, Transport: http.DefaultClient.Transport}).Get(targetURL)
 	if err != nil {
 		cer.Nodes = make(map[string][]components.NodeInfo)
 		http.Error(w, "tracker error: "+err.Error(), http.StatusBadGateway)

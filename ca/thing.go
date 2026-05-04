@@ -51,8 +51,14 @@ func (t *Traits) isMaitreDAuthorized(ip string) bool {
 
 // requestAttestation contacts the maitreD on hostIP and asks it to verify the executable
 // identified by pid. Returns nil if the maitreD approves, an error otherwise.
+//
+// hostIP comes from net.SplitHostPort on the requester's RemoteAddr, which strips
+// the IPv6 brackets. We use net.JoinHostPort to put them back, otherwise a same-host
+// request from the IPv6 loopback (::1) would build the malformed URL
+// "http://::1:20101/..." that http.Post cannot parse.
 func (t *Traits) requestAttestation(hostIP string, pid int) error {
-	url := fmt.Sprintf("http://%s:%d/maitreD/maitreD/attest", hostIP, t.MaitreDPort)
+	host := net.JoinHostPort(hostIP, strconv.Itoa(t.MaitreDPort))
+	url := "http://" + host + "/maitreD/maitreD/attest"
 	body, _ := json.Marshal(map[string]int{"pid": pid})
 	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -106,13 +112,18 @@ func initTemplate() *components.UnitAsset {
 			certify.SubPath:   &certify,
 			whitelist.SubPath: &whitelist,
 		},
-		// Default maitreDHosts includes both loopback addresses so that a CA
-		// and a maitreD running on the same host work out-of-the-box. The
-		// resolver may pick either IPv4 or IPv6 for "localhost"; listing both
-		// removes the guesswork. Operators add real LAN IPs as the deployment
-		// extends to multiple hosts.
+		// Defaults are secure-by-default:
+		//   - MaitreDHosts includes both loopback addresses so a CA and a
+		//     maitreD running on the same host work out-of-the-box (the
+		//     resolver may pick either IPv4 or IPv6 for "localhost").
+		//     Operators add real LAN IPs as the deployment extends.
+		//   - MaitreDPort is set to the standard mbaigo maitreD port (20101).
+		//     Setting it to 0 silently disables attestation entirely; we
+		//     refuse to ship that as the default. Operators who genuinely
+		//     want to bypass attestation must set it to 0 deliberately.
 		Traits: &Traits{
 			MaitreDHosts: []string{"127.0.0.1", "::1"},
+			MaitreDPort:  20101,
 		},
 	}
 }
@@ -249,9 +260,21 @@ func (t *Traits) certifying(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := t.requestAttestation(clientIP, pid); err != nil {
+			log.Printf("certify: attestation failed for CN=%q from %q (pid=%d): %v",
+				csr.Subject.CommonName, clientIP, pid, err)
 			http.Error(w, "Attestation failed: "+err.Error(), http.StatusForbidden)
 			return
 		}
+	} else {
+		// MaitreDPort == 0: attestation is disabled. The CSR will be signed
+		// without contacting the maitreD. This is convenient for early-stage
+		// development and isolated testing, but it leaves the CA in a
+		// "trust everything" mode that bypasses the security model
+		// described in the paper. Log every such issuance so a post-incident
+		// review can identify deauthorised binaries that nevertheless
+		// obtained certs because attestation was disabled.
+		log.Printf("WARNING: certify: attestation disabled (maitreDPort=0); signing CN=%q from %q without verification",
+			csr.Subject.CommonName, clientIP)
 	}
 
 	signedCert, err := signCSR(csr, t.certificate, t.privateKey)

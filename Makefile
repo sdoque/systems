@@ -87,14 +87,20 @@ $(foreach sys,$(SYSTEMS),$(eval $(call build_system,$(sys))))
 # and serves it to maitreDs on every host; the maitreDs deny attestation for
 # any process whose hash is not on that list.
 #
-# This section walks the just-built binaries in $(STAGING) and writes:
+# This section walks the just-built binaries in $(STAGING) and writes both
+# files into $(STAGING)/ca/, alongside the CA binary they belong to:
 #
-#   whitelist.json          — flat array of hashes; the wire format the CA reads.
-#   whitelist-manifest.txt  — annotated `system → hash` mapping with VERSION
-#                              and BUILD_DATE, for human review and audit.
+#   $(STAGING)/ca/whitelist.json          — flat array of hashes; the wire
+#                                            format the CA reads at runtime.
+#   $(STAGING)/ca/whitelist-manifest.txt  — annotated `system → hash` map
+#                                            with VERSION and BUILD_DATE,
+#                                            for human review and audit.
 #
-# Deployment: copy whitelist.json to the CA host's working directory, e.g.
-#     scp $(STAGING)/whitelist.json ca-host:/path/to/ca/whitelist.json
+# Co-locating with the CA binary lets a single `rsync $(STAGING)/ca/` deploy
+# both the executable and the authorisation file as one atomic operation.
+#
+# Deployment: rsync the CA's directory to its host, e.g.
+#     rsync -av $(STAGING)/ca/ ca-host:/path/to/ca/
 # Every maitreD picks up the new list on its next sync (≤5 min by default).
 #
 # `release` depends on `whitelist`, so a single `make release VERSION=1.2.3`
@@ -103,12 +109,13 @@ $(foreach sys,$(SYSTEMS),$(eval $(call build_system,$(sys))))
 # Note: uses `shasum -a 256`, which is present on macOS and on most Linux
 # distros. If your build host has only `sha256sum`, swap it in below.
 
-whitelist: $(STAGING)/whitelist.json $(STAGING)/whitelist-manifest.txt
+whitelist: $(STAGING)/ca/whitelist.json $(STAGING)/ca/whitelist-manifest.txt
 
 # Flat JSON array — the wire format expected by the CA's loadWhitelist().
 # Depends on every staged binary, so editing any system's source and
 # re-running `make rpi` causes the whitelist to regenerate automatically.
-$(STAGING)/whitelist.json: $(foreach sys,$(SYSTEMS),$(STAGING)/$(sys)/$(sys)_rpi64)
+$(STAGING)/ca/whitelist.json: $(foreach sys,$(SYSTEMS),$(STAGING)/$(sys)/$(sys)_rpi64)
+	@mkdir -p $(STAGING)/ca
 	@printf '[\n' > $@
 	@first=1; for sys in $(SYSTEMS); do \
 		bin=$(STAGING)/$$sys/$${sys}_rpi64; \
@@ -121,7 +128,8 @@ $(STAGING)/whitelist.json: $(foreach sys,$(SYSTEMS),$(STAGING)/$(sys)/$(sys)_rpi
 
 # Human-readable manifest — never read by code, always read by people.
 # Use this to answer "what binary is hash e3b0c44…?" during ops review.
-$(STAGING)/whitelist-manifest.txt: $(foreach sys,$(SYSTEMS),$(STAGING)/$(sys)/$(sys)_rpi64)
+$(STAGING)/ca/whitelist-manifest.txt: $(foreach sys,$(SYSTEMS),$(STAGING)/$(sys)/$(sys)_rpi64)
+	@mkdir -p $(STAGING)/ca
 	@printf 'Whitelist manifest — VERSION=%s built %s\n\n' \
 		"$(VERSION)" "$(BUILD_DATE)" > $@
 	@for sys in $(SYSTEMS); do \

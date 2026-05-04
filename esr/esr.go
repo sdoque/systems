@@ -120,24 +120,62 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 }
 
 // renderListItems builds the sorted <li> HTML fragment sent to SSE subscribers.
+//
+// Each service shows one endpoint per configured protocol. Plain-HTTP links
+// are clickable for browser-driven inspection by deployment technicians.
+// HTTPS endpoints are rendered as labels rather than active links because the
+// framework's TLS server requires mTLS (`tls.RequireAndVerifyClientCert`),
+// which a regular browser cannot satisfy without an installed client cert
+// signed by this cloud's CA. Programmatic peers using `http.DefaultClient`
+// configured by `installTLSConfig` reach those endpoints; humans cannot.
 func renderListItems(servicesList []forms.ServiceRecord_v1) string {
 	sort.Slice(servicesList, func(i, j int) bool {
 		return servicesList[i].Id < servicesList[j].Id
 	})
+
+	// Protocol render order: HTTP first because it is the browser-clickable
+	// link; HTTPS afterwards as an mTLS-labelled endpoint.
+	protoOrder := []string{"http", "https", "coap"}
+
 	var sb strings.Builder
 	for _, servRec := range servicesList {
-		metaservice := ""
+		var details strings.Builder
 		for key, values := range servRec.Details {
-			metaservice += key + ": " + fmt.Sprintf("%v", values) + " "
+			fmt.Fprintf(&details, "%s: %v ", key, values)
 		}
-		hyperlink := "http://" + servRec.IPAddresses[0] + ":" + strconv.Itoa(int(servRec.ProtoPort["http"])) + "/" + servRec.SystemName + "/" + servRec.SubPath
+
 		parts := strings.Split(servRec.SubPath, "/")
 		uaName := parts[0]
-		sb.WriteString("<li><p>Service ID: " + strconv.Itoa(int(servRec.Id)) +
-			" with definition <b><a href=\"" + hyperlink + "\">" + servRec.ServiceDefinition + "</b></a>" +
-			" from the <b>" + servRec.SystemName + "/" + uaName + "</b>" +
-			" with details " + metaservice +
-			" will expire at: " + servRec.EndOfValidity + "</p></li>")
+
+		var endpoints strings.Builder
+		for _, proto := range protoOrder {
+			port, ok := servRec.ProtoPort[proto]
+			if !ok || port == 0 {
+				continue
+			}
+			url := proto + "://" + servRec.IPAddresses[0] + ":" + strconv.Itoa(port) +
+				"/" + servRec.SystemName + "/" + servRec.SubPath
+			if proto == "http" {
+				// Browser-clickable plain-HTTP link.
+				fmt.Fprintf(&endpoints, ` <a href="%s">%s</a>`, url, proto)
+			} else {
+				// mTLS endpoint (HTTPS) or non-HTTP protocols (CoAP):
+				// shown as a labelled span so the URL is visible but not
+				// clickable into a regular browser session.
+				fmt.Fprintf(&endpoints, ` <span title="requires mTLS">[%s: %s]</span>`, proto, url)
+			}
+		}
+
+		fmt.Fprintf(&sb,
+			"<li><p>Service ID: %d with definition <b>%s</b> from the <b>%s/%s</b>"+
+				" — endpoints:%s — with details %s — will expire at: %s</p></li>",
+			servRec.Id,
+			servRec.ServiceDefinition,
+			servRec.SystemName, uaName,
+			endpoints.String(),
+			details.String(),
+			servRec.EndOfValidity,
+		)
 	}
 	return sb.String()
 }

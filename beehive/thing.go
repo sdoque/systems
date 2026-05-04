@@ -189,7 +189,8 @@ func (t *Traits) backgroundPoll() {
 
 // fetchOnOffState retrieves the current boolean value from one on_off service URL.
 func fetchOnOffState(url string) (state bool, online bool) {
-	client := &http.Client{Timeout: 3 * time.Second}
+	// Preserve framework-installed TLS so this works against HTTPS-only peers.
+	client := &http.Client{Timeout: 3 * time.Second, Transport: http.DefaultClient.Transport}
 	resp, err := client.Get(url)
 	if err != nil {
 		return false, false
@@ -290,7 +291,8 @@ func toggleHandler(t *Traits, w http.ResponseWriter, r *http.Request, ctx contex
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	// Preserve framework-installed TLS so this works against HTTPS-only peers.
+	client := &http.Client{Timeout: 5 * time.Second, Transport: http.DefaultClient.Transport}
 	resp, err := client.Do(req)
 	if err != nil {
 		http.Error(w, "upstream error: "+err.Error(), http.StatusBadGateway)

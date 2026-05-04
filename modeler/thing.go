@@ -142,7 +142,10 @@ func (t *Traits) assembleModel(w http.ResponseWriter) {
 	}
 	req = req.WithContext(ctx)
 
-	client := &http.Client{}
+	// Preserve the framework-configured Transport so this call uses mTLS
+	// when the registrar serves only HTTPS. http.DefaultClient.Transport is
+	// set up by installTLSConfig at enrolment.
+	client := &http.Client{Transport: http.DefaultClient.Transport}
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("Error fetching system list: %s\n", err)

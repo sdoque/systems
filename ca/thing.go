@@ -162,6 +162,15 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		log.Fatalf("failed to encode certificate to PEM format")
 	}
 	sys.Husk.Certificate = string(certPEM)
+	// The CA serves its own HTTPS server using its self-signed root cert. The
+	// framework's startHTTPSServer needs three Husk fields populated:
+	//   Certificate — the server cert (already set above).
+	//   Pkey         — the matching private key.
+	//   CA_cert      — the trust root for verifying CLIENT certs in mTLS.
+	//                  For the CA, this is its own cert: the CA trusts certs
+	//                  it has signed, all of which chain back to itself.
+	sys.Husk.Pkey = t.privateKey
+	sys.Husk.CA_cert = string(certPEM)
 
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,

@@ -508,14 +508,14 @@ func TestRenderListItemsProtocols(t *testing.T) {
 	services := []forms.ServiceRecord_v1{
 		{
 			Id: 1, SystemName: "ca", SubPath: "certification/certify",
-			IPAddresses: []string{"10.0.0.33"},
-			ProtoPort:   map[string]int{"http": 20100, "https": 30100, "coap": 0},
+			IPAddresses:       []string{"10.0.0.33"},
+			ProtoPort:         map[string]int{"http": 20100, "https": 30100, "coap": 0},
 			ServiceDefinition: "certify",
 		},
 		{
 			Id: 2, SystemName: "secret", SubPath: "vault/get",
-			IPAddresses: []string{"10.0.0.99"},
-			ProtoPort:   map[string]int{"http": 0, "https": 30200},
+			IPAddresses:       []string{"10.0.0.99"},
+			ProtoPort:         map[string]int{"http": 0, "https": 30200},
 			ServiceDefinition: "fetch",
 		},
 	}

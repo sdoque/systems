@@ -329,8 +329,14 @@ func generateSelfSignedCert(sys *components.System) ([]byte, []byte, error) {
 		IPAddresses:           ipAddrs,
 		NotBefore:             notBefore,
 		NotAfter:              notAfter,
-		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		KeyUsage: x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		// ExtKeyUsage on the CA root must include every purpose the certs it
+		// signs will be used for. End-entity system certs in this cloud carry
+		// both ServerAuth and ClientAuth (they serve mTLS *and* call mTLS).
+		// Per RFC 5280, an issuer's ExtKeyUsage must be a superset of the
+		// cert it signs. Without ClientAuth here, every mTLS handshake fails
+		// with "x509: certificate specifies an incompatible key usage".
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		BasicConstraintsValid: true,
 		IsCA:                  true,
 	}

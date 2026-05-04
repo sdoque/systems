@@ -20,7 +20,6 @@ import (
 	"context"
 	"crypto/x509/pkix"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -34,6 +33,9 @@ func main() {
 	defer cancel()
 
 	sys := components.NewSystem("clerk", ctx)
+
+	// Watch for SIGINT immediately so Ctrl+C interrupts blocking startup steps.
+	usecases.WatchShutdown(&sys, cancel)
 
 	sys.Husk = &components.Husk{
 		Description: "browser-based order entry form for pen holder orders",
@@ -75,9 +77,8 @@ func main() {
 	usecases.RegisterServices(&sys)
 	go usecases.SetoutServers(&sys)
 
-	<-sys.Sigs
-	fmt.Println("\nshutting down system", sys.Name)
-	cancel()
+	<-sys.Ctx.Done()
+	log.Println("shutting down system", sys.Name)
 	time.Sleep(2 * time.Second)
 }
 

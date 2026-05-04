@@ -32,3 +32,15 @@ Mosquitto = "Mosquitto"
 # AAS — Asset Administration Shell (Industry 4.0 / Platform Industrie 4.0).
 # The three-letter acronym clashes with the dictionary word "ass".
 AAS = "AAS"
+
+# OT — Operational Technology. Standard industrial-automation term used in
+# the authorizer specs and architectural prose. The dictionary otherwise
+# flags it as a misspelling of TO/OF/OR/NOT.
+OT = "OT"
+
+# "unmarshaling" — the canonical Go spelling. Go's standard library uses
+# `json.Unmarshal` (single L), and the verb form follows: "unmarshaling".
+# The typos dictionary prefers the British "unmarshalling" (double L), but
+# changing our prose to disagree with `go doc encoding/json` would be more
+# confusing than the spellchecker's preference.
+unmarshaling = "unmarshaling"

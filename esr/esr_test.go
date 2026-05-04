@@ -500,6 +500,49 @@ func TestRenderListItems(t *testing.T) {
 	}
 }
 
+// renderListItems must show every configured protocol per service. HTTP is
+// rendered as a clickable link (browsers can hit it); HTTPS is rendered as a
+// non-clickable label because the framework's mTLS requirement excludes
+// browser-only clients. Ports of 0 must be skipped entirely.
+func TestRenderListItemsProtocols(t *testing.T) {
+	services := []forms.ServiceRecord_v1{
+		{
+			Id: 1, SystemName: "ca", SubPath: "certification/certify",
+			IPAddresses:       []string{"10.0.0.33"},
+			ProtoPort:         map[string]int{"http": 20100, "https": 30100, "coap": 0},
+			ServiceDefinition: "certify",
+		},
+		{
+			Id: 2, SystemName: "secret", SubPath: "vault/get",
+			IPAddresses:       []string{"10.0.0.99"},
+			ProtoPort:         map[string]int{"http": 0, "https": 30200},
+			ServiceDefinition: "fetch",
+		},
+	}
+
+	result := renderListItems(services)
+
+	// Service 1 is reachable on both HTTP and HTTPS.
+	if !strings.Contains(result, `href="http://10.0.0.33:20100/ca/certification/certify"`) {
+		t.Error("HTTP endpoint for service 1 missing or malformed")
+	}
+	if !strings.Contains(result, `https://10.0.0.33:30100/ca/certification/certify`) {
+		t.Error("HTTPS endpoint for service 1 missing")
+	}
+	// HTTPS must NOT be inside an <a href="..."> — clicking it would fail mTLS.
+	if strings.Contains(result, `href="https://`) {
+		t.Error("HTTPS endpoints must not be rendered as clickable <a> links")
+	}
+
+	// Service 2 is HTTPS-only; no HTTP link should be rendered.
+	if strings.Contains(result, "http://10.0.0.99:0") {
+		t.Error("Port-0 HTTP must be skipped, not rendered as :0")
+	}
+	if !strings.Contains(result, "https://10.0.0.99:30200/secret/vault/get") {
+		t.Error("HTTPS endpoint for service 2 missing")
+	}
+}
+
 // ----------------------------------------------- //
 // Tests for notify()
 // ----------------------------------------------- //

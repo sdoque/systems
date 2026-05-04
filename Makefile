@@ -10,19 +10,21 @@ BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 BUILD_HASH := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 PKG        := github.com/sdoque/mbaigo/components
 
-SYSTEMS := beehive beekeeper busdriver clerk collector democrat \
+SYSTEMS := beehive beekeeper busdriver ca clerk collector democrat \
            drafter ds18b20 emulator esr ethermostat filmer flattener kgrapher \
-           leveler messenger meteorologue modeler modboss nurse orchestrator \
-           parallax photographer recognizer revolutionary sapper sailor \
-           telegrapher thermostat tracker uaclient weatherman
+           leveler maitreD messenger meteorologue modeler modboss nurse \
+           orchestrator parallax photographer recognizer revolutionary sapper \
+           sailor telegrapher thermostat tracker uaclient weatherman
 
-.PHONY: all ci release rpi test lint clean $(SYSTEMS)
+.PHONY: all ci release rpi test lint clean whitelist $(SYSTEMS)
 
 # Default target: build everything
 all: rpi
 
 # Clean rebuild with version stamp: make release VERSION=1.2.3
-release: clean rpi
+# Produces both the cross-compiled binaries and the matching whitelist.json
+# that authorises exactly those binaries for certificate issuance.
+release: clean rpi whitelist
 
 # Full pipeline: tests and lint must pass before building
 ci: lint test rpi
@@ -76,6 +78,66 @@ $(STAGING)/$(1)/README.md: $(1)/README.md
 endef
 
 $(foreach sys,$(SYSTEMS),$(eval $(call build_system,$(sys))))
+
+# --- Whitelist generation -----------------------------------------------------
+#
+# A release of mbaigo systems must be paired with a whitelist that authorises
+# exactly the binaries in that release. The security/ca Certificate Authority
+# reads `whitelist.json` (a flat JSON array of SHA-256 hex strings) at runtime
+# and serves it to maitreDs on every host; the maitreDs deny attestation for
+# any process whose hash is not on that list.
+#
+# This section walks the just-built binaries in $(STAGING) and writes both
+# files into $(STAGING)/ca/, alongside the CA binary they belong to:
+#
+#   $(STAGING)/ca/whitelist.json          — flat array of hashes; the wire
+#                                            format the CA reads at runtime.
+#   $(STAGING)/ca/whitelist-manifest.txt  — annotated `system → hash` map
+#                                            with VERSION and BUILD_DATE,
+#                                            for human review and audit.
+#
+# Co-locating with the CA binary lets a single `rsync $(STAGING)/ca/` deploy
+# both the executable and the authorisation file as one atomic operation.
+#
+# Deployment: rsync the CA's directory to its host, e.g.
+#     rsync -av $(STAGING)/ca/ ca-host:/path/to/ca/
+# Every maitreD picks up the new list on its next sync (≤5 min by default).
+#
+# `release` depends on `whitelist`, so a single `make release VERSION=1.2.3`
+# produces binaries and the matching authorisation file in one shot.
+#
+# Note: uses `shasum -a 256`, which is present on macOS and on most Linux
+# distros. If your build host has only `sha256sum`, swap it in below.
+
+whitelist: $(STAGING)/ca/whitelist.json $(STAGING)/ca/whitelist-manifest.txt
+
+# Flat JSON array — the wire format expected by the CA's loadWhitelist().
+# Depends on every staged binary, so editing any system's source and
+# re-running `make rpi` causes the whitelist to regenerate automatically.
+$(STAGING)/ca/whitelist.json: $(foreach sys,$(SYSTEMS),$(STAGING)/$(sys)/$(sys)_rpi64)
+	@mkdir -p $(STAGING)/ca
+	@printf '[\n' > $@
+	@first=1; for sys in $(SYSTEMS); do \
+		bin=$(STAGING)/$$sys/$${sys}_rpi64; \
+		hash=$$(shasum -a 256 $$bin | cut -d' ' -f1); \
+		if [ $$first -eq 1 ]; then first=0; else printf ',\n' >> $@; fi; \
+		printf '  "%s"' "$$hash" >> $@; \
+	done
+	@printf '\n]\n' >> $@
+	@echo "Wrote $@"
+
+# Human-readable manifest — never read by code, always read by people.
+# Use this to answer "what binary is hash e3b0c44…?" during ops review.
+$(STAGING)/ca/whitelist-manifest.txt: $(foreach sys,$(SYSTEMS),$(STAGING)/$(sys)/$(sys)_rpi64)
+	@mkdir -p $(STAGING)/ca
+	@printf 'Whitelist manifest — VERSION=%s built %s\n\n' \
+		"$(VERSION)" "$(BUILD_DATE)" > $@
+	@for sys in $(SYSTEMS); do \
+		bin=$(STAGING)/$$sys/$${sys}_rpi64; \
+		hash=$$(shasum -a 256 $$bin | cut -d' ' -f1); \
+		printf '%-20s  %s\n' "$$sys" "$$hash" >> $@; \
+	done
+	@echo "Wrote $@"
 
 # --- Housekeeping -------------------------------------------------------------
 

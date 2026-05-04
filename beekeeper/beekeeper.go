@@ -37,6 +37,9 @@ func main() {
 
 	sys := components.NewSystem("beekeeper", ctx)
 
+	// Watch for SIGINT immediately so Ctrl+C interrupts blocking startup steps.
+	usecases.WatchShutdown(&sys, cancel)
+
 	sys.Husk = &components.Husk{
 		Description: "exposes ZigBee devices paired to a RaspBee II / deCONZ gateway as Arrowhead services",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
@@ -82,9 +85,8 @@ func main() {
 	usecases.RegisterServices(&sys)
 	go usecases.SetoutServers(&sys)
 
-	<-sys.Sigs
-	fmt.Println("\nshutting down system", sys.Name)
-	cancel()
+	<-sys.Ctx.Done()
+	log.Println("shutting down system", sys.Name)
 	time.Sleep(2 * time.Second)
 }
 

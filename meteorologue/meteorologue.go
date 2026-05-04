@@ -20,7 +20,6 @@ import (
 	"context"
 	"crypto/x509/pkix"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -37,6 +36,9 @@ func main() {
 
 	// instantiate the System
 	sys := components.NewSystem("meteorologue", ctx)
+
+	// Watch for SIGINT immediately so Ctrl+C interrupts blocking startup steps.
+	usecases.WatchShutdown(&sys, cancel)
 
 	// instantiate the husk
 	sys.Husk = &components.Husk{
@@ -80,12 +82,6 @@ func main() {
 
 	// Cancel the context if a shutdown signal arrives while newResources is blocking
 	// (e.g. waiting for the one-time OAuth2 browser authorization).
-	go func() {
-		<-sys.Sigs
-		fmt.Println("\nshutting down system", sys.Name)
-		cancel()
-	}()
-
 	assets, cleanup := newResources(uac, &sys)
 	defer cleanup()
 	for _, ua := range assets {

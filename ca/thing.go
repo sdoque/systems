@@ -325,11 +325,11 @@ func generateSelfSignedCert(sys *components.System) ([]byte, []byte, error) {
 			Organization: []string{"Synecdoque"},
 			CommonName:   "synecdoque.com",
 		},
-		DNSNames:              dnsNames,
-		IPAddresses:           ipAddrs,
-		NotBefore:             notBefore,
-		NotAfter:              notAfter,
-		KeyUsage: x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		DNSNames:    dnsNames,
+		IPAddresses: ipAddrs,
+		NotBefore:   notBefore,
+		NotAfter:    notAfter,
+		KeyUsage:    x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 		// ExtKeyUsage on the CA root must include every purpose the certs it
 		// signs will be used for. End-entity system certs in this cloud carry
 		// both ServerAuth and ClientAuth (they serve mTLS *and* call mTLS).

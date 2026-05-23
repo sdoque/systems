@@ -29,4 +29,5 @@ serviceRegistry.db
 *.pem
 **/files/
 *.pdf
+*.xlsx
 

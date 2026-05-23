@@ -56,16 +56,16 @@ func TestInitTemplate(t *testing.T) {
 func TestFindSignal_Found(t *testing.T) {
 	tr := &Traits{
 		Signals: []SignalT{
-			{Name: "temperature", Threshold: 75.0},
-			{Name: "pressure", Threshold: 10.0},
+			{Name: "temperature", LowerThreshold: 0.0, UpperThreshold: 75.0},
+			{Name: "pressure", LowerThreshold: 10.0, UpperThreshold: 25.0},
 		},
 	}
 	s := tr.findSignal("pressure")
 	if s == nil {
 		t.Fatal("expected to find 'pressure' signal, got nil")
 	}
-	if s.Threshold != 10.0 {
-		t.Errorf("threshold = %v, want 10.0", s.Threshold)
+	if s.LowerThreshold != 10.0 || s.UpperThreshold != 25.0 {
+		t.Errorf("range = [%v, %v], want [10.0, 25.0]", s.LowerThreshold, s.UpperThreshold)
 	}
 }
 
@@ -227,11 +227,12 @@ func newTraitsWithPendingOrder(orderID, signalName string) *Traits {
 		SAP_URL: "http://localhost",
 		Signals: []SignalT{
 			{
-				Name:          signalName,
-				Threshold:     75.0,
-				Operational:   false,
-				TOverCount:    map[string]int{"node1": 5},
-				WorkRequested: map[string]bool{"node1": true},
+				Name:           signalName,
+				LowerThreshold: 10.0,
+				UpperThreshold: 25.0,
+				Operational:    false,
+				TOverCount:     map[string]int{"node1": 5},
+				WorkRequested:  map[string]bool{"node1": true},
 			},
 		},
 		pendingOrders: map[string]string{orderID: signalName},
@@ -323,7 +324,7 @@ func TestState(t *testing.T) {
 	tr := &Traits{
 		SAP_URL: "http://localhost",
 		Signals: []SignalT{
-			{Name: "temperature", Threshold: 75.0, Operational: true, TOverCount: map[string]int{}, WorkRequested: map[string]bool{}},
+			{Name: "temperature", LowerThreshold: 0.0, UpperThreshold: 75.0, Operational: true, TOverCount: map[string]int{}, WorkRequested: map[string]bool{}},
 		},
 	}
 	tr.ua = &components.UnitAsset{Name: "HealthTracker"}
@@ -336,7 +337,7 @@ func TestState(t *testing.T) {
 		t.Errorf("state output missing signal name 'temperature': %s", body)
 	}
 	if !strings.Contains(body, "75") {
-		t.Errorf("state output missing threshold value: %s", body)
+		t.Errorf("state output missing upper threshold value: %s", body)
 	}
 }
 
@@ -345,7 +346,7 @@ func TestState(t *testing.T) {
 func TestServing_GET_monitor(t *testing.T) {
 	tr := &Traits{
 		Signals: []SignalT{
-			{Name: "temperature", Threshold: 80.0, Operational: true, TOverCount: map[string]int{}, WorkRequested: map[string]bool{}},
+			{Name: "temperature", LowerThreshold: 0.0, UpperThreshold: 80.0, Operational: true, TOverCount: map[string]int{}, WorkRequested: map[string]bool{}},
 		},
 		pendingOrders: map[string]string{},
 	}

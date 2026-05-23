@@ -1,6 +1,7 @@
-# mbaigo systems
+# mbaigo systems as building blocks
 
 The Arrowhead Framework is used to compose a *system of systems* for a specific purpose.
+At the same time, a system of systems is a system itself, with emerging behaviors. (Synecdoque is a figure of speech in which a part is made to represent the whole or vice versa.)
 
 It is similar to building with LEGO: the same set of building blocks can be assembled into different solutions (e.g., a plane or a car), and the final assembly represents a distinct functional concept. For example, to build a climate control solution, you would select and integrate systems such as a temperature sensor system, a valve (actuator) system, and a thermostat/control system.
 

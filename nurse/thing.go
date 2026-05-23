@@ -39,13 +39,16 @@ import (
 
 // -------------------------------------Define a measurement (or signal)
 type SignalT struct {
-	Name          string              `json:"serviceDefinition"`
-	Details       map[string][]string `json:"details"`
-	Period        time.Duration       `json:"samplingPeriod"`
-	Threshold     float64             `json:"threshold"`
-	TOverCount    map[string]int      `json:"-"` // consecutive over-threshold count per source node
-	WorkRequested map[string]bool     `json:"-"` // pending maintenance order per source node
-	Operational   bool                `json:"-"` // false when any node has a pending order
+	Name              string              `json:"serviceDefinition"`
+	Details           map[string][]string `json:"details"`
+	Period            time.Duration       `json:"samplingPeriod"`
+	LowerThreshold    float64             `json:"lowerThreshold"`
+	UpperThreshold    float64             `json:"upperThreshold"`
+	TOverCount        map[string]int      `json:"-"` // consecutive out-of-range count per source node
+	WorkRequested     map[string]bool     `json:"-"` // pending maintenance order per source node
+	Operational       bool                `json:"-"` // false when any node has a pending order
+	ValveTagByNode    map[string]string   `json:"-"` // node → actuator FL tag resolved from GraphDB
+	UnresolvableNodes map[string]bool     `json:"-"` // nodes whose actuator could not be resolved; skipped
 }
 
 //-------------------------------------Define the unit asset
@@ -53,6 +56,7 @@ type SignalT struct {
 // Traits holds the configurable parameters for the nurse unit asset.
 type Traits struct {
 	SAP_URL       string            `json:"sap_url"`
+	GraphDB_URL   string            `json:"graphdb_url"`
 	Signals       []SignalT         `json:"signals"`
 	pendingOrders map[string]string // orderID → signalName; not serialized
 	owner         *components.System
@@ -78,14 +82,16 @@ func initTemplate() *components.UnitAsset {
 			monitorService.SubPath: &monitorService,
 		},
 		Traits: &Traits{
-			SAP_URL: "http://192.168.1.108:20191/sapper/SAPSimulator/orders",
+			SAP_URL:     "http://192.168.1.108:20191/sapper/SAPSimulator/orders",
+			GraphDB_URL: "http://13.79.36.131:7200/repositories/arrowhead-skoghall-v2",
 			Signals: []SignalT{
 				{
-					Name:        "temperature",
-					Details:     map[string][]string{"Unit": {"Celsius"}},
-					Period:      4,
-					Threshold:   75.0,
-					Operational: true,
+					Name:           "pressure",
+					Details:        map[string][]string{"Unit": {"kPa"}},
+					Period:         4,
+					LowerThreshold: 10.0,
+					UpperThreshold: 25.0,
+					Operational:    true,
 				},
 			},
 		},
@@ -112,6 +118,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		t.Signals[i].Operational = true
 		t.Signals[i].TOverCount = make(map[string]int)
 		t.Signals[i].WorkRequested = make(map[string]bool)
+		t.Signals[i].ValveTagByNode = make(map[string]string)
+		t.Signals[i].UnresolvableNodes = make(map[string]bool)
 	}
 
 	// Derive the health endpoint from the SAP URL (replace the API path with /health)
@@ -126,6 +134,17 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	} else {
 		fmt.Printf("SAP server is down (%v, in %s)\n", r.Err, r.Duration)
 	}
+
+	// GraphDB is load-bearing: without it the nurse cannot resolve a sensor
+	// to its associated asset and any maintenance order it raised would be
+	// misdirected. Refuse to start rather than emit confused work orders.
+	if t.GraphDB_URL == "" {
+		log.Fatalf("nurse: graphdb_url is required in configuration")
+	}
+	if err := CheckGraphDBUp(t.GraphDB_URL, 5*time.Second); err != nil {
+		log.Fatalf("nurse: GraphDB unreachable at %s: %v", t.GraphDB_URL, err)
+	}
+	log.Printf("GraphDB reachable at %s", t.GraphDB_URL)
 
 	sProtocols := components.SProtocols(sys.Husk.ProtoPort)
 	cervices := make(components.Cervices)
@@ -189,7 +208,7 @@ func UnmarshalTraits(rawTraits []json.RawMessage) ([]Traits, error) {
 //-------------------------------------Unit asset's function methods
 
 // sigMon periodically monitors all providers of a signal and requests maintenance
-// when any single source exceeds the threshold 5 consecutive times.
+// when any single source stays outside the [lower, upper] range 5 consecutive times.
 func (t *Traits) sigMon(name string, period time.Duration) error {
 	ticker := time.NewTicker(period)
 	defer ticker.Stop()
@@ -218,11 +237,21 @@ func (t *Traits) sigMon(name string, period time.Duration) error {
 				log.Printf("Discovered %d provider(s) for %s\n", len(cer.Nodes), name)
 			}
 
+			// Resolve the actuator (e.g. valve) each provider's sensor diagnoses.
+			// Done here, before polling, so a missing diagnosesActuator relationship
+			// surfaces during normal operation rather than under an anomaly.
+			t.resolveActuators(sig, cer.Nodes)
+
 			// Query each provider individually to preserve its identity for per-source counting.
 			failed := false
 			for node, nodeInfos := range cer.Nodes {
 				if failed {
 					break
+				}
+				// Skip nodes whose actuator could not be resolved — sending an order
+				// for a misidentified asset is worse than sending no order at all.
+				if sig.UnresolvableNodes[node] {
+					continue
 				}
 				for _, ni := range nodeInfos {
 					// Skip this node while its maintenance order is pending.
@@ -251,19 +280,18 @@ func (t *Traits) sigMon(name string, period time.Duration) error {
 					log.Printf("Measurement: %s from %s, Value: %.2f, Time: %s\n",
 						name, node, tup.Value, time.Now().Format(time.RFC3339))
 
-					if tup.Value > sig.Threshold {
+					if tup.Value < sig.LowerThreshold || tup.Value > sig.UpperThreshold {
 						sig.TOverCount[node]++
-						log.Printf("ALERT: %s/%s value %.2f exceeds threshold %.2f (count: %d/5)\n",
-							name, node, tup.Value, sig.Threshold, sig.TOverCount[node])
+						log.Printf("ALERT: %s/%s value %.2f outside range [%.2f, %.2f] (count: %d/5)\n",
+							name, node, tup.Value, sig.LowerThreshold, sig.UpperThreshold, sig.TOverCount[node])
 						if sig.TOverCount[node] >= 5 {
 							sig.Operational = false
 							sig.WorkRequested[node] = true
 							log.Printf("Signal %s/%s non-operational, requesting maintenance\n", name, node)
 							equipmentID := assetNameFromURL(ni.URL)
-							location := ""
-							if locs, ok := ni.Details["FunctionalLocation"]; ok && len(locs) > 0 {
-								location = locs[0]
-							}
+							// The actuator FL tag resolved from GraphDB is the SAP
+							// dispatch target — the sensor only diagnoses the fault.
+							location := sig.ValveTagByNode[node]
 							orderID := t.requestMaintenanceOrder(sig, equipmentID, location)
 							if orderID != "" {
 								t.pendingOrders[orderID] = name
@@ -273,7 +301,7 @@ func (t *Traits) sigMon(name string, period time.Duration) error {
 							}
 						}
 					} else if sig.TOverCount[node] > 0 {
-						log.Printf("Signal %s/%s back below threshold (resetting count from %d)\n",
+						log.Printf("Signal %s/%s back in range (resetting count from %d)\n",
 							name, node, sig.TOverCount[node])
 						sig.TOverCount[node] = 0
 					}
@@ -301,8 +329,8 @@ func (t *Traits) state(w http.ResponseWriter) {
 		if pending == "" {
 			pending = " none"
 		}
-		text += fmt.Sprintf("Signal: %s, Threshold: %f, TOverCount:[%s], Operational: %t, WorkRequested:[%s]\n",
-			signal.Name, signal.Threshold, counts, signal.Operational, pending)
+		text += fmt.Sprintf("Signal: %s, Range: [%.2f, %.2f], TOverCount:[%s], Operational: %t, WorkRequested:[%s]\n",
+			signal.Name, signal.LowerThreshold, signal.UpperThreshold, counts, signal.Operational, pending)
 	}
 	w.Write([]byte(text))
 }
@@ -425,6 +453,144 @@ func CheckServerUp(rawURL string, timeout time.Duration) CheckResult {
 	return CheckResult{Up: true, StatusCode: resp.StatusCode, Duration: time.Since(start)}
 }
 
+// resolveActuators looks up the actuator (e.g. valve) functional-location tag
+// for every newly-discovered node in nodes. The result is cached on the signal
+// so each sensor pays the lookup cost at most once. A sensor with no
+// diagnosesActuator relationship, with multiple candidates, or whose lookup
+// fails for any reason is marked unresolvable and skipped in future polls —
+// emitting a maintenance order against a misidentified asset is a worse
+// failure mode than emitting nothing.
+//
+// The expected graph shape is:
+//
+//	<sensor-iri>  afo:hasName            "<sensor-tag>" .
+//	<sensor-iri>  afo:diagnosesActuator  <valve-fl-iri> .
+//	<valve-fl-iri> arrowhead:functionalLocation "<valve-tag>" .
+//
+// The third triple is already in the Skoghall store for modelled equipment;
+// the first two must be added by INSERT when the sensor's knowledge graph
+// is published to GraphDB.
+func (t *Traits) resolveActuators(sig *SignalT, nodes map[string][]components.NodeInfo) {
+	for node, nodeInfos := range nodes {
+		if _, ok := sig.ValveTagByNode[node]; ok {
+			continue
+		}
+		if sig.UnresolvableNodes[node] {
+			continue
+		}
+		if len(nodeInfos) == 0 {
+			continue
+		}
+		sensorName := assetNameFromURL(nodeInfos[0].URL)
+		if sensorName == "" {
+			log.Printf("nurse: cannot extract sensor name from %s; marking node %s unresolvable",
+				nodeInfos[0].URL, node)
+			sig.UnresolvableNodes[node] = true
+			continue
+		}
+		tag, err := resolveActuatorTag(t.GraphDB_URL, sensorName, 5*time.Second)
+		if err != nil {
+			log.Printf("nurse: cannot resolve actuator for sensor %s on node %s: %v",
+				sensorName, node, err)
+			sig.UnresolvableNodes[node] = true
+			continue
+		}
+		log.Printf("nurse: sensor %s on node %s diagnoses actuator at %s",
+			sensorName, node, tag)
+		sig.ValveTagByNode[node] = tag
+	}
+}
+
+// resolveActuatorTag asks GraphDB for the FL tag of the actuator a sensor
+// diagnoses. Returns the tag on success, or an error if the sensor has no
+// diagnosesActuator triple, has more than one match (ambiguous), or the
+// endpoint is unreachable.
+func resolveActuatorTag(endpoint, sensorName string, timeout time.Duration) (string, error) {
+	query := fmt.Sprintf(`PREFIX afo: <https://arrowheadweb.org/ont/afo#>
+PREFIX arrowhead: <https://arrowheadweb.org/ont/arrowhead#>
+SELECT ?valveTag WHERE {
+  ?sensor afo:hasName %q .
+  ?sensor afo:diagnosesActuator ?valveFL .
+  ?valveFL arrowhead:functionalLocation ?valveTag .
+}`, sensorName)
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(query))
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/sparql-query")
+	req.Header.Set("Accept", "application/sparql-results+json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("HTTP %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	var result struct {
+		Results struct {
+			Bindings []map[string]struct {
+				Value string `json:"value"`
+			} `json:"bindings"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode response: %w", err)
+	}
+
+	bs := result.Results.Bindings
+	switch len(bs) {
+	case 0:
+		return "", fmt.Errorf("no diagnosesActuator relationship for sensor %q", sensorName)
+	case 1:
+		tag := bs[0]["valveTag"].Value
+		if tag == "" {
+			return "", fmt.Errorf("empty valveTag binding for sensor %q", sensorName)
+		}
+		return tag, nil
+	default:
+		return "", fmt.Errorf("ambiguous diagnosesActuator for sensor %q (%d matches)",
+			sensorName, len(bs))
+	}
+}
+
+// CheckGraphDBUp probes the GraphDB SPARQL endpoint with a trivial query.
+// It verifies both reachability and that the repository accepts SPARQL —
+// a simple TCP/HTTP check would not catch a wrong repository name. Returns
+// nil on success, an error explaining the failure otherwise.
+func CheckGraphDBUp(endpoint string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	const probe = `SELECT (1 AS ?ok) WHERE {}`
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(probe))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/sparql-query")
+	req.Header.Set("Accept", "application/sparql-results+json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("status %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
 // assetNameFromURL extracts the unit asset name from an Arrowhead service URL.
 // The path structure is /<system>/<asset>/<service>, so the asset is segment [2].
 func assetNameFromURL(rawURL string) string {
@@ -449,7 +615,7 @@ func (t *Traits) requestMaintenanceOrder(sig *SignalT, equipmentID string, locat
 		EquipmentID:          equipmentID,
 		FunctionalLocation:   location,
 		Plant:                "1000",
-		Description:          fmt.Sprintf("Signal %s exceeded threshold %.2f", sig.Name, sig.Threshold),
+		Description:          fmt.Sprintf("Signal %s out of range [%.2f, %.2f]", sig.Name, sig.LowerThreshold, sig.UpperThreshold),
 		Priority:             "3",
 		MaintenanceOrderType: "PM01",
 		PlannedStartTime:     &start,

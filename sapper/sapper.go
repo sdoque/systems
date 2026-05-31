@@ -95,7 +95,7 @@ func main() {
 // serving dispatches incoming HTTP requests to the appropriate handler.
 func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
-	case "orders":
+	case "maintenanceorders":
 		switch r.Method {
 		case http.MethodPost:
 			t.createOrderHandler(w, r)
@@ -104,6 +104,8 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 		default:
 			http.Error(w, "Method not supported", http.StatusMethodNotAllowed)
 		}
+	case "firefighting":
+		t.firefightingHandler(w, r)
 	default:
 		http.Error(w, "Invalid service path [do not modify subpath in configuration file]", http.StatusBadRequest)
 	}

@@ -43,8 +43,8 @@ func TestInitTemplate(t *testing.T) {
 	if !ok {
 		t.Fatal("Traits should be *Traits")
 	}
-	if tr.SAP_URL == "" {
-		t.Error("SAP_URL default should not be empty")
+	if tr.GraphDB_URL == "" {
+		t.Error("GraphDB_URL default should not be empty")
 	}
 	if len(tr.Signals) == 0 {
 		t.Error("template should include at least one signal")
@@ -96,40 +96,6 @@ func TestAssetNameFromURL(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("assetNameFromURL(%q) = %q, want %q", tc.url, got, tc.want)
 		}
-	}
-}
-
-// ------------------------------------- CheckServerUp
-
-func TestCheckServerUp_Up(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	r := CheckServerUp(srv.URL, 2*time.Second)
-	if !r.Up {
-		t.Errorf("expected Up=true, got false (%v)", r.Err)
-	}
-	if r.StatusCode != http.StatusOK {
-		t.Errorf("StatusCode = %d, want 200", r.StatusCode)
-	}
-}
-
-func TestCheckServerUp_Down(t *testing.T) {
-	r := CheckServerUp("http://127.0.0.1:1/health", 500*time.Millisecond)
-	if r.Up {
-		t.Error("expected Up=false for unreachable server")
-	}
-	if r.Err == nil {
-		t.Error("expected a non-nil error")
-	}
-}
-
-func TestCheckServerUp_InvalidURL(t *testing.T) {
-	r := CheckServerUp("://not a url", 1*time.Second)
-	if r.Up {
-		t.Error("expected Up=false for invalid URL")
 	}
 }
 
@@ -224,7 +190,6 @@ func TestConvertMaintenanceDoneEventToTurtle_DefaultBaseIRI(t *testing.T) {
 
 func newTraitsWithPendingOrder(orderID, signalName string) *Traits {
 	return &Traits{
-		SAP_URL: "http://localhost",
 		Signals: []SignalT{
 			{
 				Name:           signalName,
@@ -322,7 +287,6 @@ func TestUpdate_InvalidJSON(t *testing.T) {
 
 func TestState(t *testing.T) {
 	tr := &Traits{
-		SAP_URL: "http://localhost",
 		Signals: []SignalT{
 			{Name: "temperature", LowerThreshold: 0.0, UpperThreshold: 75.0, Operational: true, TOverCount: map[string]int{}, WorkRequested: map[string]bool{}},
 		},

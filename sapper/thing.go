@@ -223,8 +223,8 @@ type Traits struct {
 	GraphDBURL      string        `json:"graphDbUrl"`      // SPARQL update endpoint; empty = disabled
 	orders          map[string]*Order
 	mu              sync.Mutex
-	seq             atomic.Int64        // monotonic counter for order IDs
-	primeOnce       sync.Once           // guards a single graph-peek before the first order is allocated
+	seq             atomic.Int64 // monotonic counter for order IDs
+	primeOnce       sync.Once    // guards a single graph-peek before the first order is allocated
 	monitor         *components.Cervice
 	enrichment      *components.Cervice // discovers the nurse's enrichment endpoint
 	owner           *components.System

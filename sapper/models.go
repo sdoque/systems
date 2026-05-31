@@ -71,9 +71,9 @@ type OrderResponse struct {
 type Order struct {
 	ID                  string
 	Notification        string
-	Status              string          // CRTD → REL → TECO
+	Status              string // CRTD → REL → TECO
 	CreatedAt           time.Time
-	ReleasedAt          time.Time       // zero until enrichAndRelease is called
+	ReleasedAt          time.Time // zero until enrichAndRelease is called
 	Request             OrderRequest
 	SuggestedEnrichment string          // template the firefighting UI prefills when this order is selected; defaults to the seals/gaskets example
 	Enrichment          json.RawMessage // planner's actual submission; nil until released

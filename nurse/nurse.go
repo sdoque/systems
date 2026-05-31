@@ -105,6 +105,13 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 		default:
 			http.Error(w, "Method is not supported.", http.StatusMethodNotAllowed)
 		}
+	case "enrichment":
+		switch r.Method {
+		case http.MethodPost:
+			t.enrichment(w, r)
+		default:
+			http.Error(w, "Method is not supported.", http.StatusMethodNotAllowed)
+		}
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}

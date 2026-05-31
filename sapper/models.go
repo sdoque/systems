@@ -15,7 +15,10 @@
 
 package main
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // OrderRequest is the body sent by the nurse (or any consumer) to create a maintenance order.
 // Field names match the nurse's MaintenanceOrderEvent JSON tags so no translation is needed.
@@ -62,12 +65,18 @@ type OrderResponse struct {
 }
 
 // Order is the in-memory representation of a maintenance order managed by the sapper.
+// An order is created in CRTD status by the nurse and stays there until a planner
+// enriches it via the firefighting UI; that submission flips it to REL and starts
+// the TECO countdown.
 type Order struct {
-	ID           string
-	Notification string
-	Status       string // CRTD → REL → TECO
-	CreatedAt    time.Time
-	Request      OrderRequest
+	ID                  string
+	Notification        string
+	Status              string          // CRTD → REL → TECO
+	CreatedAt           time.Time
+	ReleasedAt          time.Time       // zero until enrichAndRelease is called
+	Request             OrderRequest
+	SuggestedEnrichment string          // template the firefighting UI prefills when this order is selected; defaults to the seals/gaskets example
+	Enrichment          json.RawMessage // planner's actual submission; nil until released
 }
 
 // CompletionEvent is POSTed to the consumer's monitor endpoint when an order reaches TECO.

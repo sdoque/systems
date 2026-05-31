@@ -2,60 +2,95 @@
 
 ## Purpose
 
-The *Sapper* system bridges the Arrowhead local cloud with **SAP Plant Maintenance** (SAP Hana PM module). The name comes from the French *Sapeur* — a combat engineer who keeps equipment operational under field conditions. It is an apt metaphor: the sapper detects that a component has failed, dispatches a repair order, and reports back when the equipment is back in service.
+The *Sapper* bridges the Arrowhead local cloud with **SAP Plant Maintenance**
+(SAP Hana PM module). The name is from the French *sapeur* — a combat engineer
+who keeps equipment operational under field conditions. The Sapper's role is
+the same: accept a maintenance request raised by some condition-monitoring
+consumer, route it through a SAP-style lifecycle that includes a **human
+planner step**, and report back when the work is technically completed so the
+consumer can resume monitoring.
 
-In the Arrowhead architecture the sapper:
+In simulation mode the Sapper embeds the full lifecycle internally; for
+production it can be adapted to forward orders to a real SAP system through
+Alex Chiquito's
+[SAP Maintenance Order Adaptor](https://github.com/AlexChiquito/SAP-Maintenance-order-adaptor).
 
-1. **Accepts maintenance order requests** from any authorized consumer (e.g. the Nurse) over a registered `MaintenanceOrder` service.
-2. **Manages the order lifecycle** — progressing the status from `CRTD` (created) → `REL` (released) → `TECO` (technically completed).
-3. **Notifies the consumer** when the order reaches `TECO` by discovering the consumer's monitoring endpoint at runtime via Arrowhead orchestration — no hard-coded callback URL required.
+## Architecture
 
-In simulation mode the sapper embeds the full SAP lifecycle internally; for production it can be adapted to forward orders to a real SAP system.
+Three responsibilities:
+
+1. **Accept** `MaintenanceOrder` POSTs from any authorised consumer (e.g. the
+   [Nurse](../nurse/)). New orders are created in **CRTD** (created) status —
+   they do **not** auto-progress.
+2. **Show the work to a planner** via the `firefighting` web service. The
+   planner picks an order, adjusts the operations JSON, and submits. That
+   submission transitions the order to **REL** (released) and starts a
+   countdown to **TECO** (technically completed).
+3. **Notify the consumer** at TECO — the Sapper discovers the consumer's
+   `SignalMonitoring` endpoint via Arrowhead orchestration and POSTs a
+   completion event. No callback URL is configured anywhere.
+
+If a GraphDB triple store is configured, each lifecycle transition pushes a
+SPARQL update so the full audit trail
+(`CRTD → enrichment → REL → TECO`) is queryable.
 
 ## How it fits with the Nurse
 
-The **Nurse** system continuously monitors physical signals (e.g. pressure, temperature). When a signal repeatedly exceeds its threshold, the Nurse requests a maintenance order from the Sapper. Once the Sapper completes the lifecycle it discovers the Nurse's `SignalMonitoring` service via orchestration and POSTs a completion event, which causes the Nurse to restore that signal to operational status.
+The [Nurse](../nurse/) monitors physical signals against a range. When a
+signal stays out of range for five consecutive samples, the Nurse raises a
+maintenance request on the Sapper. The order sits in CRTD until a human
+planner opens the Sapper's firefighting page, enriches the operations payload,
+and clicks Submit. The Sapper then notifies the Nurse with the enrichment
+payload (so the Nurse log shows the planner's decision), runs its TECO
+countdown, and finally posts a completion event back to the Nurse.
 
 ```
-Emulator ──► Nurse ──► Sapper ──► (SAP / simulator)
-                 ◄──────────────
-               completion callback
-               (discovered via Arrowhead)
+Emulator ──► Nurse ──► Sapper ─┬──► CRTD (waits)
+                 ▲             │
+                 │             ▼  Planner opens /firefighting
+                 │         REL → TECO countdown
+                 │             │
+                 │             ▼
+                 └────── completion callback (TECO)
+                         + enrichment notification (REL)
 ```
 
 ## Sequence diagram
 
 ```mermaid
 sequenceDiagram
-    participant E  as Emulator
+    autonumber
     participant N  as Nurse
     participant OR as Orchestrator
     participant S  as Sapper
+    participant P  as Planner (browser)
+    participant G  as GraphDB
 
-    Note over E,N: Normal monitoring loop (every samplingPeriod seconds)
-    loop Signal polling
-        N->>E: GET /emulator/{signal}/access
-        E-->>N: SignalA_v1a {value, unit, timestamp}
-    end
+    Note over N: out-of-range for 5 consecutive samples
+    N->>OR: discover MaintenanceOrder
+    OR-->>N: Sapper URL
+    N->>S: POST /sapper/SAPSimulator/maintenanceorders
+    S->>G: INSERT (CRTD status, equipment, description)
+    S-->>N: 201 Created {orderId, status:"CRTD"}
+    N->>G: INSERT (bySensor, targetFLTag, reason)
 
-    Note over N: value > threshold for 5 consecutive readings
-    N->>N: mark signal non-operational
-    N->>S: POST /sapper/SAPSimulator/orders<br/>{equipmentId, plant, description, operations, ...}
-    S-->>N: 201 Created<br/>{maintenanceOrder, maintenanceNotification, status:"CRTD", createdAt}
-    N->>N: store pendingOrders[orderID] = signalName
+    Note over P,S: Order stays CRTD until a planner intervenes
+    P->>S: GET /sapper/SAPSimulator/firefighting
+    S-->>P: HTML page (CRTD list + textarea)
+    Note over P: pick order, edit operations JSON
+    P->>S: POST /sapper/SAPSimulator/firefighting<br/>{orderId, enrichment JSON}
+    S->>G: INSERT (REL status, releasedAt)
+    S->>OR: discover EnrichmentNotification
+    OR-->>S: Nurse URL
+    S->>N: POST /nurse/HealthTracker/enrichment<br/>{orderId, status:"REL", releasedAt, enrichment}
+    S-->>P: 303 See Other → GET firefighting (flash banner)
 
-    Note over S: Order lifecycle (completionDelay seconds)
-    S->>S: status → REL  (at ½ completionDelay)
-    S->>S: status → TECO (at completionDelay)
-
-    Note over S: Discover callback endpoint at runtime
-    S->>OR: POST /orchestrator/orchestration/squest<br/>{serviceDefinition:"SignalMonitoring"}
-    OR-->>S: ServicePoint_v1 {url: http://nurse-host/nurse/HealthTracker/monitor}
-
-    S->>N: POST /nurse/HealthTracker/monitor<br/>{orderId, status:"TECO", completedAt, actualWorkHours}
-    N->>N: look up pendingOrders[orderId] → signalName
-    N->>N: restore signal: Operational=true, WorkRequested=false, TOverCount=0
-    N-->>S: 200 OK
+    Note over S: TECO countdown (completionDelay seconds)
+    S->>G: INSERT (TECO status, completedAt, actualWorkHours)
+    S->>OR: discover SignalMonitoring
+    OR-->>S: Nurse URL
+    S->>N: POST /nurse/HealthTracker/monitor<br/>{orderId, status:"TECO", completedAt}
+    N->>N: restore signal to operational
 ```
 
 ## Services
@@ -64,16 +99,22 @@ sequenceDiagram
 
 | Service definition | Subpath | Methods | Description |
 |--------------------|---------|---------|-------------|
-| `MaintenanceOrder` | `orders` | `POST` | Create a maintenance order; returns order ID and notification ID |
-| `MaintenanceOrder` | `orders` | `GET ?id=<orderID>` | Query the current status of a known order |
+| `MaintenanceOrder` | `maintenanceorders` | `POST` | Create a new CRTD maintenance order |
+| `MaintenanceOrder` | `maintenanceorders` | `GET ?id=<orderID>` | Query the current state of a known order |
+| `firefighting` | `firefighting` | `GET` | Planner UI: live-refreshed list of CRTD orders + editable enrichment textarea |
+| `firefighting` | `firefighting` | `POST` | Submit handler: attaches enrichment, transitions to REL, redirects (303) to the GET view |
 
-### Consumed
+### Consumed (via Arrowhead orchestration)
 
-| Service definition | Purpose |
-|--------------------|---------|
-| `SignalMonitoring` | Callback endpoint discovered at runtime to report order completion |
+| Service definition | Used for |
+|--------------------|----------|
+| `SignalMonitoring` | TECO completion event — POSTed to the consumer that originally raised the order |
+| `EnrichmentNotification` | REL release event — POSTed to the same consumer when the planner clicks Submit |
 
-## Configuration (`systemconfig.json`)
+Both consumed endpoints are discovered fresh at the moment of need; the Sapper
+holds no configured URLs for them.
+
+## Configuration
 
 ```json
 {
@@ -81,33 +122,34 @@ sequenceDiagram
     "unit_assets": [
         {
             "name": "SAPSimulator",
-            "details": {
-                "Plant": ["1000"]
-            },
+            "details": { "Plant": ["1000"] },
             "services": [
                 {
                     "definition": "MaintenanceOrder",
-                    "subpath": "orders",
+                    "subpath": "maintenanceorders",
                     "details": { "Forms": ["application/json"] },
+                    "registrationPeriod": 30
+                },
+                {
+                    "definition": "firefighting",
+                    "subpath": "firefighting",
+                    "details": { "Forms": ["text/html"] },
                     "registrationPeriod": 30
                 }
             ],
             "traits": [
                 {
-                    "completionDelay": 30
+                    "completionDelay": 30,
+                    "graphDbUrl": "http://<graphdb-host>:7200/repositories/<repo>"
                 }
             ]
         }
     ],
-    "protocolsNports": {
-        "coap": 0,
-        "http": 20191,
-        "https": 0
-    },
+    "protocolsNports": { "coap": 0, "http": 20191, "https": 0 },
     "coreSystems": [
-        { "coreSystem": "serviceregistrar", "url": "http://192.168.1.109:20102/serviceregistrar/registry" },
-        { "coreSystem": "orchestrator",     "url": "http://192.168.1.109:20103/orchestrator/orchestration" },
-        { "coreSystem": "ca",               "url": "http://192.168.1.109:20100/ca/certification" },
+        { "coreSystem": "serviceregistrar", "url": "http://<host>:20102/serviceregistrar/registry" },
+        { "coreSystem": "orchestrator",     "url": "http://<host>:20103/orchestrator/orchestration" },
+        { "coreSystem": "ca",               "url": "http://<host>:20100/ca/certification" },
         { "coreSystem": "maitreD",          "url": "http://localhost:20101/maitreD/maitreD" }
     ]
 }
@@ -117,32 +159,65 @@ sequenceDiagram
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `completionDelay` | integer (seconds) | `30` | Time from order creation to `TECO`. Set to `5` for fast demos, `3600` for realistic 1-hour jobs. |
+| `completionDelay` | integer (seconds) | `30` | Time from REL (planner submit) to TECO. Set `5` for fast demos, `3600` for realistic 1-hour jobs |
+| `graphDbUrl`      | string            | `""` | Base URL of a GraphDB repository (no `/statements` suffix). Empty disables all SPARQL pushes; lifecycle still works in-memory |
 
-### Wiring the Nurse
+## The firefighting UI
 
-Point the Nurse's `sap_url` at the sapper's `orders` endpoint:
+`GET /sapper/SAPSimulator/firefighting` renders an HTML page with two halves:
 
-```json
-"sap_url": "http://<sapper-host>:20191/sapper/SAPSimulator/orders"
+- **Top half** — a table of work orders currently in CRTD status, refreshed
+  every 3 seconds via background `fetch` so new orders appear (and released
+  ones disappear) without the planner reloading the page.
+- **Bottom half** — a textarea for the operations JSON, empty on initial load.
+  When the planner selects an order, the textarea is populated with that
+  order's *suggested enrichment* (a per-order field on `Order`, currently
+  defaulted to a seals/gaskets repair template). The planner edits in place
+  and clicks **Submit**.
+
+Submission uses **Post/Redirect/Get** (HTTP 303) so browser reload after a
+submit re-issues a GET, not a re-POST. A flash banner above the table
+confirms success or reports a validation failure.
+
+## Order ID continuity (graph-primed counter)
+
+Order IDs follow the SAP convention `4XXXXXXXX` — zero-padded with a leading
+`4`. The Sapper's in-memory counter normally starts at `0` and increments per
+order, so a fresh process would produce `400000001`, `400000002`, etc. — and
+would **collide** with historical IDs if the workorders graph already has
+those subjects.
+
+To prevent this, the Sapper queries GraphDB on the **first** order creation
+(once per process, behind `sync.Once`):
+
+```sparql
+SELECT (MAX(?id) AS ?max) WHERE {
+    ?wo a step:WorkOrder ;
+        workorder:Id ?idNode .
+    FILTER(STRSTARTS(STR(?wo), "https://sinetiq.se/sap/"))
+    ?idNode identifier:Id ?id .
+}
 ```
 
-The sapper discovers the Nurse's callback endpoint automatically via Arrowhead orchestration — no further configuration is needed on the Nurse side.
+The returned literal (e.g. `"400000017"`) primes the counter so the next
+order becomes `400000018`. The peek is failure-tolerant: if GraphDB is
+unconfigured, unreachable, empty, or returns garbage, the counter stays at
+`0` and the Sapper produces `400000001` (the previous behaviour).
 
 ## Order payload
 
-### Request (POST `/orders`)
+### Request (POST `/maintenanceorders`)
 
 ```json
 {
-    "equipmentId":          "10000045",
-    "functionalLocation":   "FL100-200-300",
+    "equipmentId":          "827PD2708",
+    "functionalLocation":   "827-PV2708-200",
     "plant":                "1000",
-    "description":          "Signal pressure exceeded threshold 75.00",
+    "description":          "Signal pressure out of range [10.00, 25.00]",
     "priority":             "3",
     "maintenanceOrderType": "PM01",
-    "plannedStartTime":     "2026-03-27T14:00:00+01:00",
-    "plannedEndTime":       "2026-03-27T22:00:00+01:00",
+    "plannedStartTime":     "2026-05-30T06:00:00Z",
+    "plannedEndTime":       "2026-05-30T14:00:00Z",
     "operations": [
         {
             "text":         "Inspect and service equipment for signal pressure",
@@ -158,43 +233,74 @@ The sapper discovers the Nurse's callback endpoint automatically via Arrowhead o
 
 ```json
 {
-    "maintenanceOrder":        "400000001",
-    "maintenanceNotification": "200000001",
+    "maintenanceOrder":        "400000018",
+    "maintenanceNotification": "200000018",
     "status":                  "CRTD",
     "message":                 "Maintenance order created successfully",
-    "createdAt":               "2026-03-27T13:58:21Z"
+    "createdAt":               "2026-05-30T13:58:21Z"
 }
 ```
 
-### Completion callback (POST to consumer's monitor)
+### Enrichment notification (POST to consumer's `/enrichment`)
+
+Sent right after the planner clicks Submit, before the TECO countdown:
 
 ```json
 {
-    "orderId":         "400000001",
+    "orderId":    "400000018",
+    "status":     "REL",
+    "releasedAt": "2026-05-30T14:00:01Z",
+    "enrichment": { "operations": [ /* the planner's submitted JSON */ ] }
+}
+```
+
+### Completion callback (POST to consumer's `/monitor`)
+
+Sent when TECO fires:
+
+```json
+{
+    "orderId":         "400000018",
     "status":          "TECO",
-    "completedAt":     "2026-03-27T14:28:21Z",
+    "completedAt":     "2026-05-30T14:00:31Z",
     "actualWorkHours": 0.0083,
     "notes":           "Completed by SAP simulator"
 }
 ```
 
+## GraphDB triples (when `graphDbUrl` is set)
+
+All three lifecycle transitions land in the named graph
+`<https://arrowheadweb.org/graph/sap/workorders>`, keyed by the same Order
+IRI `<https://sinetiq.se/sap/MaintenanceOrder/{id}>`:
+
+- **CRTD** — full STEP/WorkOrder block: `step:WorkOrder`, `step:WorkRequest`,
+  `step:WorkRequestAssignment`, `dcterms:created`, `ex:status "CRTD"`.
+- **REL** — `ex:status "REL"`, `ex:releasedAt`.
+- **TECO** — `ex:status "TECO"`, `ex:completedAt`, `ex:actualWorkHours`.
+
+A consumer (the Nurse) adds sensor-side context to the same order subject —
+`ex:bySensor`, `ex:targetFLTag`, `ex:reason` — so querying any order URI
+returns the full lifecycle in a single result set.
+
 ## Building and running
 
 ```bash
-# Run in place (for development)
+# Run from source (development)
 go run .
 
-# Build for the current machine
-go build -o sapper_local
+# Build a binary for the current machine (with a host-specific suffix so it's gitignored)
+go build -o sapper_amac .
 
-# Cross-compile for Raspberry Pi 64-bit
-GOOS=linux GOARCH=arm64 go build -o sapper_rpi64
+# Cross-compile for a 64-bit Raspberry Pi
+GOOS=linux GOARCH=arm64 go build -o sapper_rpi64 .
 
-# Copy to a Raspberry Pi
-scp sapper_rpi64 user@192.168.1.10:mbaigo/sapper/
+# Deploy
+scp sapper_rpi64 jan@<pi-host>:oslo/sapper/
 ```
 
-Run the binary from **inside its own directory** so it can find (or create) `systemconfig.json`.
+Run the binary from **inside its own directory** so it can find (or
+auto-generate) `systemconfig.json`.
 
 ## Startup order
 
@@ -202,7 +308,11 @@ Run the binary from **inside its own directory** so it can find (or create) `sys
 Arrowhead core systems  →  Sapper  →  Nurse (or any other consumer)
 ```
 
-The Sapper must be registered before the Nurse starts monitoring, so the Orchestrator can resolve the `MaintenanceOrder` service. The completion callback works in the opposite direction — the Nurse must be registered before any order reaches `TECO`.
+The Sapper must be registered before any consumer attempts to raise a
+maintenance order, so the Orchestrator can resolve `MaintenanceOrder`. The
+two callback paths work in the opposite direction — the consumer must be
+registered before the Sapper transitions to REL (for the enrichment
+notification) or TECO (for the completion callback).
 
 ## Development with a local mbaigo clone
 

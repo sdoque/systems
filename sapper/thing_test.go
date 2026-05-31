@@ -31,13 +31,17 @@ import (
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 // newTestTraits builds a minimal Traits suitable for unit tests.
-// CompletionDelay is set to 0 so runLifecycle is never used in handler tests.
+// CompletionDelay is set to 0 so the TECO countdown is never used in handler tests.
 func newTestTraits() *Traits {
 	return &Traits{
 		CompletionDelay: 0,
 		orders:          make(map[string]*Order),
 		monitor: &components.Cervice{
 			Definition: "SignalMonitoring",
+			Nodes:      make(map[string][]components.NodeInfo),
+		},
+		enrichment: &components.Cervice{
+			Definition: "EnrichmentNotification",
 			Nodes:      make(map[string][]components.NodeInfo),
 		},
 	}
@@ -50,6 +54,14 @@ func withDiscoverMonitor(t *testing.T, fn func(*components.Cervice, *components.
 	orig := discoverMonitor
 	discoverMonitor = fn
 	t.Cleanup(func() { discoverMonitor = orig })
+}
+
+// withDiscoverEnrichment is the equivalent shim for the nurse's enrichment endpoint.
+func withDiscoverEnrichment(t *testing.T, fn func(*components.Cervice, *components.System) error) {
+	t.Helper()
+	orig := discoverEnrichment
+	discoverEnrichment = fn
+	t.Cleanup(func() { discoverEnrichment = orig })
 }
 
 // validOrderBody returns a JSON-encoded minimal valid OrderRequest.
@@ -72,8 +84,8 @@ func TestInitTemplate(t *testing.T) {
 	if ua.GetName() != "SAPSimulator" {
 		t.Errorf("name = %q, want %q", ua.GetName(), "SAPSimulator")
 	}
-	if _, ok := ua.GetServices()["orders"]; !ok {
-		t.Error("expected 'orders' service in ServicesMap")
+	if _, ok := ua.GetServices()["maintenanceorders"]; !ok {
+		t.Error("expected 'maintenanceorders' service in ServicesMap")
 	}
 	tr, ok := ua.GetTraits().(*Traits)
 	if !ok {
@@ -125,7 +137,7 @@ func TestNewResource(t *testing.T) {
 	cfgAsset := usecases.ConfigurableAsset{
 		Name:     "SAPSimulator",
 		Traits:   []json.RawMessage{traitJSON},
-		Services: []components.Service{{Definition: "MaintenanceOrder", SubPath: "orders"}},
+		Services: []components.Service{{Definition: "MaintenanceOrder", SubPath: "maintenanceorders"}},
 	}
 
 	ua, cleanup := newResource(cfgAsset, &sys)
@@ -137,8 +149,8 @@ func TestNewResource(t *testing.T) {
 	if ua.ServingFunc == nil {
 		t.Error("ServingFunc must be set")
 	}
-	if _, ok := ua.GetServices()["orders"]; !ok {
-		t.Error("expected 'orders' service")
+	if _, ok := ua.GetServices()["maintenanceorders"]; !ok {
+		t.Error("expected 'maintenanceorders' service")
 	}
 	if ua.CervicesMap["monitor"] == nil {
 		t.Error("expected 'monitor' cervice")
@@ -206,10 +218,13 @@ func TestCreateOrder(t *testing.T) {
 	}
 }
 
-// ── runLifecycle ──────────────────────────────────────────────────────────────
+// ── enrichAndRelease + runTECOCountdown ──────────────────────────────────────
+//
+// The lifecycle is now split: the order sits in CRTD until a planner calls
+// enrichAndRelease, which flips status to REL and starts the TECO countdown.
+// This test drives that flow against fake monitor + enrichment endpoints.
 
-func TestRunLifecycle(t *testing.T) {
-	// Set up a fake monitor endpoint that records whether a callback arrived.
+func TestEnrichAndRelease(t *testing.T) {
 	callbackReceived := make(chan struct{}, 1)
 	monitor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callbackReceived <- struct{}{}
@@ -217,14 +232,24 @@ func TestRunLifecycle(t *testing.T) {
 	}))
 	defer monitor.Close()
 
-	// Swap discovery so it returns the fake monitor URL instead of contacting Arrowhead.
+	enrichmentReceived := make(chan struct{}, 1)
+	enrichmentSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		enrichmentReceived <- struct{}{}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer enrichmentSrv.Close()
+
 	withDiscoverMonitor(t, func(c *components.Cervice, _ *components.System) error {
 		c.Nodes = map[string][]components.NodeInfo{"testNode": {{URL: monitor.URL}}}
 		return nil
 	})
+	withDiscoverEnrichment(t, func(c *components.Cervice, _ *components.System) error {
+		c.Nodes = map[string][]components.NodeInfo{"testNode": {{URL: enrichmentSrv.URL}}}
+		return nil
+	})
 
 	tr := newTestTraits()
-	tr.CompletionDelay = 1 // 1 × time.Second = 1 s total lifecycle
+	tr.CompletionDelay = 1 // 1 s TECO countdown after release
 
 	o := &Order{
 		ID:           "400000001",
@@ -237,30 +262,50 @@ func TestRunLifecycle(t *testing.T) {
 	tr.orders[o.ID] = o
 	tr.mu.Unlock()
 
-	go tr.runLifecycle(o)
-
-	// After ~0.6 s the order should be REL.
-	time.Sleep(600 * time.Millisecond)
-	tr.mu.Lock()
-	statusMid := o.Status
-	tr.mu.Unlock()
-	if statusMid != "REL" {
-		t.Errorf("status after half delay = %q, want REL", statusMid)
+	released, err := tr.enrichAndRelease(o.ID, json.RawMessage(`{"operations":[]}`))
+	if err != nil {
+		t.Fatalf("enrichAndRelease: unexpected error: %v", err)
+	}
+	if released.Status != "REL" {
+		t.Errorf("status after release = %q, want REL", released.Status)
+	}
+	if released.ReleasedAt.IsZero() {
+		t.Error("ReleasedAt must be set after enrichAndRelease")
 	}
 
-	// After ~1.1 s the order should be TECO and the callback sent.
-	time.Sleep(600 * time.Millisecond)
+	// Enrichment should arrive at the nurse essentially immediately.
+	select {
+	case <-enrichmentReceived:
+	case <-time.After(500 * time.Millisecond):
+		t.Error("expected enrichment to be received by nurse server")
+	}
+
+	// After ~1.2 s the TECO countdown should have fired and the monitor callback delivered.
+	time.Sleep(1200 * time.Millisecond)
 	tr.mu.Lock()
 	statusFinal := o.Status
 	tr.mu.Unlock()
 	if statusFinal != "TECO" {
-		t.Errorf("final status = %q, want TECO", statusFinal)
+		t.Errorf("status after TECO countdown = %q, want TECO", statusFinal)
 	}
 	select {
 	case <-callbackReceived:
-		// good
 	default:
-		t.Error("expected callback to be received by monitor server")
+		t.Error("expected TECO callback to be received by monitor server")
+	}
+}
+
+// TestEnrichAndRelease_RejectsNonCRTD verifies the release path refuses to act
+// on orders that aren't waiting.
+func TestEnrichAndRelease_RejectsNonCRTD(t *testing.T) {
+	tr := newTestTraits()
+	o := &Order{ID: "400000002", Status: "TECO", CreatedAt: time.Now()}
+	tr.mu.Lock()
+	tr.orders[o.ID] = o
+	tr.mu.Unlock()
+
+	if _, err := tr.enrichAndRelease(o.ID, json.RawMessage(`{}`)); err == nil {
+		t.Error("expected error releasing a non-CRTD order, got nil")
 	}
 }
 
@@ -405,28 +450,28 @@ func TestQueryOrderHandler(t *testing.T) {
 func TestServing(t *testing.T) {
 	tr := newTestTraits()
 
-	t.Run("POST to orders creates order", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/sapper/SAPSimulator/orders", validOrderBody(t))
+	t.Run("POST to maintenanceorders creates order", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/sapper/SAPSimulator/maintenanceorders", validOrderBody(t))
 		w := httptest.NewRecorder()
-		serving(tr, w, req, "orders")
+		serving(tr, w, req, "maintenanceorders")
 		if w.Code != http.StatusCreated {
 			t.Errorf("status = %d, want 201", w.Code)
 		}
 	})
 
-	t.Run("GET to orders without id returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/sapper/SAPSimulator/orders", nil)
+	t.Run("GET to maintenanceorders without id returns 400", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/sapper/SAPSimulator/maintenanceorders", nil)
 		w := httptest.NewRecorder()
-		serving(tr, w, req, "orders")
+		serving(tr, w, req, "maintenanceorders")
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("status = %d, want 400", w.Code)
 		}
 	})
 
 	t.Run("unsupported method returns 405", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodDelete, "/sapper/SAPSimulator/orders", nil)
+		req := httptest.NewRequest(http.MethodDelete, "/sapper/SAPSimulator/maintenanceorders", nil)
 		w := httptest.NewRecorder()
-		serving(tr, w, req, "orders")
+		serving(tr, w, req, "maintenanceorders")
 		if w.Code != http.StatusMethodNotAllowed {
 			t.Errorf("status = %d, want 405", w.Code)
 		}

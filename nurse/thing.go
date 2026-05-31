@@ -19,12 +19,10 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -55,10 +53,10 @@ type SignalT struct {
 
 // Traits holds the configurable parameters for the nurse unit asset.
 type Traits struct {
-	SAP_URL       string            `json:"sap_url"`
-	GraphDB_URL   string            `json:"graphdb_url"`
-	Signals       []SignalT         `json:"signals"`
-	pendingOrders map[string]string // orderID → signalName; not serialized
+	GraphDB_URL   string              `json:"graphdb_url"`
+	Signals       []SignalT           `json:"signals"`
+	pendingOrders map[string]string   // orderID → signalName; not serialized
+	sapper        *components.Cervice // discovers the Sapper's MaintenanceOrder service
 	owner         *components.System
 	ua            *components.UnitAsset
 }
@@ -74,15 +72,22 @@ func initTemplate() *components.UnitAsset {
 		RegPeriod:   22,
 		Description: "monitors the value of the consumed service signal (GET)",
 	}
+	enrichmentService := components.Service{
+		Definition:  "EnrichmentNotification",
+		SubPath:     "enrichment",
+		Details:     map[string][]string{"Forms": {"application/json"}},
+		RegPeriod:   22,
+		Description: "receives planner enrichment + release notifications (POST)",
+	}
 
 	return &components.UnitAsset{
 		Name:    "HealthTracker",
 		Details: map[string][]string{},
 		ServicesMap: components.Services{
-			monitorService.SubPath: &monitorService,
+			monitorService.SubPath:    &monitorService,
+			enrichmentService.SubPath: &enrichmentService,
 		},
 		Traits: &Traits{
-			SAP_URL:     "http://192.168.1.108:20191/sapper/SAPSimulator/orders",
 			GraphDB_URL: "http://13.79.36.131:7200/repositories/arrowhead-skoghall-v2",
 			Signals: []SignalT{
 				{
@@ -122,18 +127,10 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		t.Signals[i].UnresolvableNodes = make(map[string]bool)
 	}
 
-	// Derive the health endpoint from the SAP URL (replace the API path with /health)
-	sapHealthURL := t.SAP_URL
-	if u, err := url.Parse(t.SAP_URL); err == nil {
-		u.Path = "/health"
-		sapHealthURL = u.String()
-	}
-	r := CheckServerUp(sapHealthURL, 2*time.Second)
-	if r.Up {
-		fmt.Printf("SAP server is up (status=%d, in %s)\n", r.StatusCode, r.Duration)
-	} else {
-		fmt.Printf("SAP server is down (%v, in %s)\n", r.Err, r.Duration)
-	}
+	// The Sapper is discovered via Arrowhead at order-creation time — no
+	// startup healthcheck. If the Sapper isn't yet registered when an order
+	// needs to be raised, requestMaintenanceOrder logs the failure and the
+	// signal stays in WorkRequested until the next process restart.
 
 	// GraphDB is load-bearing: without it the nurse cannot resolve a sensor
 	// to its associated asset and any maintenance order it raised would be
@@ -158,6 +155,15 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		}
 		cervices[cSignal.Definition] = &cSignal
 	}
+	// Cervice used to discover the Sapper's MaintenanceOrder service at
+	// runtime, replacing the previous hardcoded sap_url.
+	t.sapper = &components.Cervice{
+		Definition: "MaintenanceOrder",
+		Protos:     sProtocols,
+		Nodes:      make(map[string][]components.NodeInfo),
+		Mode:       "set",
+	}
+	cervices[t.sapper.Definition] = t.sapper
 
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
@@ -296,6 +302,9 @@ func (t *Traits) sigMon(name string, period time.Duration) error {
 							if orderID != "" {
 								t.pendingOrders[orderID] = name
 								log.Printf("Maintenance order %s created for signal %s/%s\n", orderID, name, node)
+								reason := fmt.Sprintf("Signal %s out of range [%.2f, %.2f]",
+									sig.Name, sig.LowerThreshold, sig.UpperThreshold)
+								go t.pushOrderContext(orderID, equipmentID, location, reason)
 							} else {
 								log.Printf("SAP order failed for signal %s/%s; monitoring paused until system restart\n", name, node)
 							}
@@ -333,6 +342,29 @@ func (t *Traits) state(w http.ResponseWriter) {
 			signal.Name, signal.LowerThreshold, signal.UpperThreshold, counts, signal.Operational, pending)
 	}
 	w.Write([]byte(text))
+}
+
+// enrichment receives the planner's release-and-enrichment notification from
+// the Sapper. For now the Nurse simply logs the payload to the terminal so
+// the demo audience can see the planner's decision arriving downstream of the
+// originating signal. Future work could attach it to the signal's state for
+// the /monitor GET view.
+func (t *Traits) enrichment(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	var pretty bytes.Buffer
+	if json.Indent(&pretty, body, "", "  ") == nil {
+		log.Printf("← enrichment from %s\n%s\n", r.RemoteAddr, pretty.String())
+	} else {
+		log.Printf("← enrichment from %s\n%s\n", r.RemoteAddr, string(body))
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // update handles an incoming completion notification and restores the signal to operational.
@@ -399,58 +431,39 @@ func (t *Traits) update(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(ttl))
 }
 
-// //-------------------------------------SAP server interaction functions
 
-type CheckResult struct {
-	Up         bool
-	StatusCode int
-	Err        error
-	Duration   time.Duration
-}
+// pushOrderContext POSTs a SPARQL INSERT linking the Sapper-issued Order IRI
+// to the sensor-side facts only the Nurse knows: which sensor raised the
+// order, which actuator FL tag it diagnoses, and the threshold-breach reason.
+// The Order IRI shape matches the Sapper's, so the three sets of triples —
+// Sapper CRTD, Nurse context, Sapper TECO — merge on the same subject in the
+// graph. Graph publication is a side effect; failures are logged but do not
+// block the maintenance loop.
+func (t *Traits) pushOrderContext(orderID, sensorName, valveTag, reason string) {
+	if t.GraphDB_URL == "" {
+		return
+	}
+	orderURI := "https://sinetiq.se/sap/MaintenanceOrder/" + orderID
+	sparql := fmt.Sprintf(`PREFIX ex: <https://sinetiq.se/sap/>
+INSERT DATA {
+    GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+        <%s> ex:bySensor %q ;
+            ex:targetFLTag %q ;
+            ex:reason %q .
+    }
+}`, orderURI, sensorName, valveTag, reason)
 
-func CheckServerUp(rawURL string, timeout time.Duration) CheckResult {
-	start := time.Now()
+	log.Printf("→ GraphDB INSERT (context) order=%s\n%s\n", orderID, sparql)
 
-	parsed, err := url.Parse(rawURL)
+	endpoint := strings.TrimRight(t.GraphDB_URL, "/") + "/statements"
+	resp, err := http.Post(endpoint, "application/sparql-update", strings.NewReader(sparql))
 	if err != nil {
-		return CheckResult{Up: false, Err: fmt.Errorf("invalid url: %w", err), Duration: time.Since(start)}
-	}
-
-	dialer := &net.Dialer{
-		Timeout:   timeout,
-		KeepAlive: 30 * time.Second,
-	}
-
-	tr := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return dialer.DialContext(ctx, network, addr)
-		},
-		TLSHandshakeTimeout:   timeout,
-		ResponseHeaderTimeout: timeout,
-		IdleConnTimeout:       30 * time.Second,
-		TLSClientConfig: &tls.Config{
-			MinVersion: tls.VersionTLS12,
-		},
-	}
-
-	client := &http.Client{
-		Timeout:   timeout,
-		Transport: tr,
-	}
-
-	req, err := http.NewRequest(http.MethodGet, parsed.String(), nil)
-	if err != nil {
-		return CheckResult{Up: false, Err: fmt.Errorf("build request: %w", err), Duration: time.Since(start)}
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return CheckResult{Up: false, Err: err, Duration: time.Since(start)}
+		log.Printf("pushOrderContext: POST failed: %v\n", err)
+		return
 	}
 	defer resp.Body.Close()
-
-	return CheckResult{Up: true, StatusCode: resp.StatusCode, Duration: time.Since(start)}
+	msg, _ := io.ReadAll(resp.Body)
+	log.Printf("← GraphDB %s  body=%s\n", resp.Status, string(msg))
 }
 
 // resolveActuators looks up the actuator (e.g. valve) functional-location tag
@@ -506,7 +519,13 @@ func (t *Traits) resolveActuators(sig *SignalT, nodes map[string][]components.No
 // diagnosesActuator triple, has more than one match (ambiguous), or the
 // endpoint is unreachable.
 func resolveActuatorTag(endpoint, sensorName string, timeout time.Duration) (string, error) {
-	query := fmt.Sprintf(`PREFIX afo: <https://arrowheadweb.org/ont/afo#>
+	// afo: is the producer's namespace — the same URI the kgrapher emits and
+	// the same URI under which the sensor's triples live in the remote graph.
+	// arrowhead: is the upstream (Skoghall) namespace under which the valve's
+	// functional-location object is published. The mixed prefixes are
+	// intentional: each side keeps its own vocabulary; alignment ontologies
+	// bridge them at reasoning time.
+	query := fmt.Sprintf(`PREFIX afo: <http://www.synecdoque.com/2025/afo#>
 PREFIX arrowhead: <https://arrowheadweb.org/ont/arrowhead#>
 SELECT ?valveTag WHERE {
   ?sensor afo:hasName %q .
@@ -570,7 +589,10 @@ func CheckGraphDBUp(endpoint string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	const probe = `SELECT (1 AS ?ok) WHERE {}`
+	// ASK with a trivial triple pattern is the most universally-accepted probe:
+	// no projection expressions (some GraphDB versions misparse `(N AS ?v)`),
+	// no aggregation, just a yes/no.
+	const probe = `ASK { ?s ?p ?o }`
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(probe))
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
@@ -637,12 +659,34 @@ func (t *Traits) requestMaintenanceOrder(sig *SignalT, equipmentID string, locat
 		return ""
 	}
 
-	log.Printf("→ SAP POST %s\n%s\n", t.SAP_URL, string(bodyBytes))
+	// Discover the Sapper's MaintenanceOrder service via Arrowhead. The
+	// previous design hardcoded a sap_url; orchestration removes that
+	// topology dependency from the config.
+	if len(t.sapper.Nodes) == 0 {
+		if err := usecases.Search4Services(t.sapper, t.owner); err != nil {
+			log.Printf("requestMaintenanceOrder: discovery failed: %v\n", err)
+			return ""
+		}
+	}
+	var sapURL string
+	for _, nodes := range t.sapper.Nodes {
+		if len(nodes) > 0 {
+			sapURL = nodes[0].URL
+			break
+		}
+	}
+	if sapURL == "" {
+		log.Printf("requestMaintenanceOrder: no MaintenanceOrder provider found\n")
+		t.sapper.Nodes = make(map[string][]components.NodeInfo) // force re-discovery next time
+		return ""
+	}
+
+	log.Printf("→ SAP POST %s\n%s\n", sapURL, string(bodyBytes))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.SAP_URL, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, sapURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		log.Printf("requestMaintenanceOrder: new request: %v\n", err)
 		return ""

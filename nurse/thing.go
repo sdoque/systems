@@ -143,6 +143,17 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 	log.Printf("GraphDB reachable at %s", t.GraphDB_URL)
 
+	// GraphDB is load-bearing: without it the nurse cannot resolve a sensor
+	// to its associated asset and any maintenance order it raised would be
+	// misdirected. Refuse to start rather than emit confused work orders.
+	if t.GraphDB_URL == "" {
+		log.Fatalf("nurse: graphdb_url is required in configuration")
+	}
+	if err := CheckGraphDBUp(t.GraphDB_URL, 5*time.Second); err != nil {
+		log.Fatalf("nurse: GraphDB unreachable at %s: %v", t.GraphDB_URL, err)
+	}
+	log.Printf("GraphDB reachable at %s", t.GraphDB_URL)
+
 	sProtocols := components.SProtocols(sys.Husk.ProtoPort)
 	cervices := make(components.Cervices)
 	for _, signal := range t.Signals {
@@ -593,6 +604,144 @@ func CheckGraphDBUp(endpoint string, timeout time.Duration) error {
 	// no projection expressions (some GraphDB versions misparse `(N AS ?v)`),
 	// no aggregation, just a yes/no.
 	const probe = `ASK { ?s ?p ?o }`
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(probe))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/sparql-query")
+	req.Header.Set("Accept", "application/sparql-results+json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("status %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
+// resolveActuators looks up the actuator (e.g. valve) functional-location tag
+// for every newly-discovered node in nodes. The result is cached on the signal
+// so each sensor pays the lookup cost at most once. A sensor with no
+// diagnosesActuator relationship, with multiple candidates, or whose lookup
+// fails for any reason is marked unresolvable and skipped in future polls —
+// emitting a maintenance order against a misidentified asset is a worse
+// failure mode than emitting nothing.
+//
+// The expected graph shape is:
+//
+//	<sensor-iri>  afo:hasName            "<sensor-tag>" .
+//	<sensor-iri>  afo:diagnosesActuator  <valve-fl-iri> .
+//	<valve-fl-iri> arrowhead:functionalLocation "<valve-tag>" .
+//
+// The third triple is already in the Skoghall store for modelled equipment;
+// the first two must be added by INSERT when the sensor's knowledge graph
+// is published to GraphDB.
+func (t *Traits) resolveActuators(sig *SignalT, nodes map[string][]components.NodeInfo) {
+	for node, nodeInfos := range nodes {
+		if _, ok := sig.ValveTagByNode[node]; ok {
+			continue
+		}
+		if sig.UnresolvableNodes[node] {
+			continue
+		}
+		if len(nodeInfos) == 0 {
+			continue
+		}
+		sensorName := assetNameFromURL(nodeInfos[0].URL)
+		if sensorName == "" {
+			log.Printf("nurse: cannot extract sensor name from %s; marking node %s unresolvable",
+				nodeInfos[0].URL, node)
+			sig.UnresolvableNodes[node] = true
+			continue
+		}
+		tag, err := resolveActuatorTag(t.GraphDB_URL, sensorName, 5*time.Second)
+		if err != nil {
+			log.Printf("nurse: cannot resolve actuator for sensor %s on node %s: %v",
+				sensorName, node, err)
+			sig.UnresolvableNodes[node] = true
+			continue
+		}
+		log.Printf("nurse: sensor %s on node %s diagnoses actuator at %s",
+			sensorName, node, tag)
+		sig.ValveTagByNode[node] = tag
+	}
+}
+
+// resolveActuatorTag asks GraphDB for the FL tag of the actuator a sensor
+// diagnoses. Returns the tag on success, or an error if the sensor has no
+// diagnosesActuator triple, has more than one match (ambiguous), or the
+// endpoint is unreachable.
+func resolveActuatorTag(endpoint, sensorName string, timeout time.Duration) (string, error) {
+	query := fmt.Sprintf(`PREFIX afo: <https://arrowheadweb.org/ont/afo#>
+PREFIX arrowhead: <https://arrowheadweb.org/ont/arrowhead#>
+SELECT ?valveTag WHERE {
+  ?sensor afo:hasName %q .
+  ?sensor afo:diagnosesActuator ?valveFL .
+  ?valveFL arrowhead:functionalLocation ?valveTag .
+}`, sensorName)
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(query))
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/sparql-query")
+	req.Header.Set("Accept", "application/sparql-results+json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("HTTP %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	var result struct {
+		Results struct {
+			Bindings []map[string]struct {
+				Value string `json:"value"`
+			} `json:"bindings"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode response: %w", err)
+	}
+
+	bs := result.Results.Bindings
+	switch len(bs) {
+	case 0:
+		return "", fmt.Errorf("no diagnosesActuator relationship for sensor %q", sensorName)
+	case 1:
+		tag := bs[0]["valveTag"].Value
+		if tag == "" {
+			return "", fmt.Errorf("empty valveTag binding for sensor %q", sensorName)
+		}
+		return tag, nil
+	default:
+		return "", fmt.Errorf("ambiguous diagnosesActuator for sensor %q (%d matches)",
+			sensorName, len(bs))
+	}
+}
+
+// CheckGraphDBUp probes the GraphDB SPARQL endpoint with a trivial query.
+// It verifies both reachability and that the repository accepts SPARQL —
+// a simple TCP/HTTP check would not catch a wrong repository name. Returns
+// nil on success, an error explaining the failure otherwise.
+func CheckGraphDBUp(endpoint string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	const probe = `SELECT (1 AS ?ok) WHERE {}`
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(probe))
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)

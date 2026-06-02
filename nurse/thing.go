@@ -45,7 +45,8 @@ type SignalT struct {
 	TOverCount        map[string]int      `json:"-"` // consecutive out-of-range count per source node
 	WorkRequested     map[string]bool     `json:"-"` // pending maintenance order per source node
 	Operational       bool                `json:"-"` // false when any node has a pending order
-	ValveTagByNode    map[string]string   `json:"-"` // node → actuator FL tag resolved from GraphDB
+	ValveTagByNode    map[string]string   `json:"-"` // node → actuator FL tag resolved from GraphDB (human-readable)
+	ValveIRIByNode    map[string]string   `json:"-"` // node → actuator FL IRI (used to link the work request in the STEP graph)
 	UnresolvableNodes map[string]bool     `json:"-"` // nodes whose actuator could not be resolved; skipped
 }
 
@@ -124,6 +125,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		t.Signals[i].TOverCount = make(map[string]int)
 		t.Signals[i].WorkRequested = make(map[string]bool)
 		t.Signals[i].ValveTagByNode = make(map[string]string)
+		t.Signals[i].ValveIRIByNode = make(map[string]string)
 		t.Signals[i].UnresolvableNodes = make(map[string]bool)
 	}
 
@@ -295,16 +297,18 @@ func (t *Traits) sigMon(name string, period time.Duration) error {
 							sig.WorkRequested[node] = true
 							log.Printf("Signal %s/%s non-operational, requesting maintenance\n", name, node)
 							equipmentID := assetNameFromURL(ni.URL)
-							// The actuator FL tag resolved from GraphDB is the SAP
-							// dispatch target — the sensor only diagnoses the fault.
-							location := sig.ValveTagByNode[node]
-							orderID := t.requestMaintenanceOrder(sig, equipmentID, location)
+							// The actuator FL tag (human label) and IRI (graph linkage)
+							// both come from the GraphDB resolution. The sensor only
+							// diagnoses the fault; the work order targets the valve.
+							locationTag := sig.ValveTagByNode[node]
+							locationIRI := sig.ValveIRIByNode[node]
+							orderID := t.requestMaintenanceOrder(sig, equipmentID, locationTag, locationIRI)
 							if orderID != "" {
 								t.pendingOrders[orderID] = name
 								log.Printf("Maintenance order %s created for signal %s/%s\n", orderID, name, node)
 								reason := fmt.Sprintf("Signal %s out of range [%.2f, %.2f]",
 									sig.Name, sig.LowerThreshold, sig.UpperThreshold)
-								go t.pushOrderContext(orderID, equipmentID, location, reason)
+								go t.pushOrderContext(orderID, equipmentID, locationTag, reason)
 							} else {
 								log.Printf("SAP order failed for signal %s/%s; monitoring paused until system restart\n", name, node)
 							}
@@ -500,24 +504,27 @@ func (t *Traits) resolveActuators(sig *SignalT, nodes map[string][]components.No
 			sig.UnresolvableNodes[node] = true
 			continue
 		}
-		tag, err := resolveActuatorTag(t.GraphDB_URL, sensorName, 5*time.Second)
+		tag, iri, err := resolveActuator(t.GraphDB_URL, sensorName, 5*time.Second)
 		if err != nil {
 			log.Printf("nurse: cannot resolve actuator for sensor %s on node %s: %v",
 				sensorName, node, err)
 			sig.UnresolvableNodes[node] = true
 			continue
 		}
-		log.Printf("nurse: sensor %s on node %s diagnoses actuator at %s",
-			sensorName, node, tag)
+		log.Printf("nurse: sensor %s on node %s diagnoses actuator %s (FL IRI %s)",
+			sensorName, node, tag, iri)
 		sig.ValveTagByNode[node] = tag
+		sig.ValveIRIByNode[node] = iri
 	}
 }
 
-// resolveActuatorTag asks GraphDB for the FL tag of the actuator a sensor
-// diagnoses. Returns the tag on success, or an error if the sensor has no
+// resolveActuator asks GraphDB for the actuator a sensor diagnoses and
+// returns both its functional-location tag (human-readable, e.g.
+// "827-PV2708-200") and the FL's IRI (used to link the work order to the
+// physical asset in the STEP graph). Returns an error if the sensor has no
 // diagnosesActuator triple, has more than one match (ambiguous), or the
 // endpoint is unreachable.
-func resolveActuatorTag(endpoint, sensorName string, timeout time.Duration) (string, error) {
+func resolveActuator(endpoint, sensorName string, timeout time.Duration) (tag, iri string, err error) {
 	// afo: is the producer's namespace — the same URI the kgrapher emits and
 	// the same URI under which the sensor's triples live in the remote graph.
 	// arrowhead: is the upstream (Skoghall) namespace under which the valve's
@@ -526,7 +533,7 @@ func resolveActuatorTag(endpoint, sensorName string, timeout time.Duration) (str
 	// bridge them at reasoning time.
 	query := fmt.Sprintf(`PREFIX afo: <http://www.synecdoque.com/2025/afo#>
 PREFIX arrowhead: <https://arrowheadweb.org/ont/arrowhead#>
-SELECT ?valveTag WHERE {
+SELECT ?valveFL ?valveTag WHERE {
   ?sensor afo:hasName %q .
   ?sensor afo:diagnosesActuator ?valveFL .
   ?valveFL arrowhead:functionalLocation ?valveTag .
@@ -535,22 +542,22 @@ SELECT ?valveTag WHERE {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(query))
-	if err != nil {
-		return "", fmt.Errorf("build request: %w", err)
+	req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(query))
+	if reqErr != nil {
+		return "", "", fmt.Errorf("build request: %w", reqErr)
 	}
 	req.Header.Set("Content-Type", "application/sparql-query")
 	req.Header.Set("Accept", "application/sparql-results+json")
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
+	resp, doErr := http.DefaultClient.Do(req)
+	if doErr != nil {
+		return "", "", doErr
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("HTTP %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return "", "", fmt.Errorf("HTTP %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 
 	var result struct {
@@ -560,22 +567,26 @@ SELECT ?valveTag WHERE {
 			} `json:"bindings"`
 		} `json:"results"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decode response: %w", err)
+	if decErr := json.NewDecoder(resp.Body).Decode(&result); decErr != nil {
+		return "", "", fmt.Errorf("decode response: %w", decErr)
 	}
 
 	bs := result.Results.Bindings
 	switch len(bs) {
 	case 0:
-		return "", fmt.Errorf("no diagnosesActuator relationship for sensor %q", sensorName)
+		return "", "", fmt.Errorf("no diagnosesActuator relationship for sensor %q", sensorName)
 	case 1:
-		tag := bs[0]["valveTag"].Value
+		tag = bs[0]["valveTag"].Value
+		iri = bs[0]["valveFL"].Value
 		if tag == "" {
-			return "", fmt.Errorf("empty valveTag binding for sensor %q", sensorName)
+			return "", "", fmt.Errorf("empty valveTag binding for sensor %q", sensorName)
 		}
-		return tag, nil
+		if iri == "" {
+			return "", "", fmt.Errorf("empty valveFL binding for sensor %q", sensorName)
+		}
+		return tag, iri, nil
 	default:
-		return "", fmt.Errorf("ambiguous diagnosesActuator for sensor %q (%d matches)",
+		return "", "", fmt.Errorf("ambiguous diagnosesActuator for sensor %q (%d matches)",
 			sensorName, len(bs))
 	}
 }
@@ -628,19 +639,23 @@ func assetNameFromURL(rawURL string) string {
 
 // requestMaintenanceOrder posts a maintenance order to the SAP system for the given signal
 // and returns the SAP order ID on success, or an empty string on failure.
-func (t *Traits) requestMaintenanceOrder(sig *SignalT, equipmentID string, location string) string {
+// locationTag is the human-readable FL tag (e.g. "827-PV2708-200"); locationIRI is
+// the FL's IRI in the STEP graph, used by the SAP side to link the work request to
+// the physical asset. The IRI may be empty for consumers that haven't resolved it.
+func (t *Traits) requestMaintenanceOrder(sig *SignalT, equipmentID, locationTag, locationIRI string) string {
 	start := time.Now().Add(24 * time.Hour)
 	end := start.Add(8 * time.Hour)
 
 	payload := MaintenanceOrderEvent{
-		EquipmentID:          equipmentID,
-		FunctionalLocation:   location,
-		Plant:                "1000",
-		Description:          fmt.Sprintf("Signal %s out of range [%.2f, %.2f]", sig.Name, sig.LowerThreshold, sig.UpperThreshold),
-		Priority:             "3",
-		MaintenanceOrderType: "PM01",
-		PlannedStartTime:     &start,
-		PlannedEndTime:       &end,
+		EquipmentID:           equipmentID,
+		FunctionalLocation:    locationTag,
+		FunctionalLocationIRI: locationIRI,
+		Plant:                 "1000",
+		Description:           fmt.Sprintf("Signal %s out of range [%.2f, %.2f]", sig.Name, sig.LowerThreshold, sig.UpperThreshold),
+		Priority:              "3",
+		MaintenanceOrderType:  "PM01",
+		PlannedStartTime:      &start,
+		PlannedEndTime:        &end,
 		Operations: []MaintenanceOperation{
 			{
 				OperationID:  "0010",

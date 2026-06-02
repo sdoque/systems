@@ -23,15 +23,16 @@ import (
 // OrderRequest is the body sent by the nurse (or any consumer) to create a maintenance order.
 // Field names match the nurse's MaintenanceOrderEvent JSON tags so no translation is needed.
 type OrderRequest struct {
-	EquipmentID          string           `json:"equipmentId"`
-	FunctionalLocation   string           `json:"functionalLocation,omitempty"`
-	Plant                string           `json:"plant"`
-	Description          string           `json:"description"`
-	Priority             string           `json:"priority,omitempty"`
-	MaintenanceOrderType string           `json:"maintenanceOrderType,omitempty"`
-	PlannedStartTime     *time.Time       `json:"plannedStartTime,omitempty"`
-	PlannedEndTime       *time.Time       `json:"plannedEndTime,omitempty"`
-	Operations           []OrderOperation `json:"operations,omitempty"`
+	EquipmentID           string           `json:"equipmentId"`
+	FunctionalLocation    string           `json:"functionalLocation,omitempty"`    // human-readable FL tag
+	FunctionalLocationIRI string           `json:"functionalLocationIri,omitempty"` // FL IRI used to link the work request to the FL in the STEP graph
+	Plant                 string           `json:"plant"`
+	Description           string           `json:"description"`
+	Priority              string           `json:"priority,omitempty"`
+	MaintenanceOrderType  string           `json:"maintenanceOrderType,omitempty"`
+	PlannedStartTime      *time.Time       `json:"plannedStartTime,omitempty"`
+	PlannedEndTime        *time.Time       `json:"plannedEndTime,omitempty"`
+	Operations            []OrderOperation `json:"operations,omitempty"`
 }
 
 // OrderOperation is a single work step within an order.

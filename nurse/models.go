@@ -7,15 +7,16 @@ import (
 
 // MaintenanceOrderEvent represents the input from Digital Twin
 type MaintenanceOrderEvent struct {
-	EquipmentID          string                 `json:"equipmentId" validate:"required"`
-	FunctionalLocation   string                 `json:"functionalLocation,omitempty"`
-	Plant                string                 `json:"plant" validate:"required"`
-	Description          string                 `json:"description" validate:"required"`
-	Priority             string                 `json:"priority,omitempty"`
-	MaintenanceOrderType string                 `json:"maintenanceOrderType,omitempty"`
-	PlannedStartTime     *time.Time             `json:"plannedStartTime,omitempty"`
-	PlannedEndTime       *time.Time             `json:"plannedEndTime,omitempty"`
-	Operations           []MaintenanceOperation `json:"operations,omitempty"`
+	EquipmentID           string                 `json:"equipmentId" validate:"required"`
+	FunctionalLocation    string                 `json:"functionalLocation,omitempty"`    // human-readable FL tag
+	FunctionalLocationIRI string                 `json:"functionalLocationIri,omitempty"` // FL IRI used by the SAP adaptor to link the work request in the STEP graph
+	Plant                 string                 `json:"plant" validate:"required"`
+	Description           string                 `json:"description" validate:"required"`
+	Priority              string                 `json:"priority,omitempty"`
+	MaintenanceOrderType  string                 `json:"maintenanceOrderType,omitempty"`
+	PlannedStartTime      *time.Time             `json:"plannedStartTime,omitempty"`
+	PlannedEndTime        *time.Time             `json:"plannedEndTime,omitempty"`
+	Operations            []MaintenanceOperation `json:"operations,omitempty"`
 }
 
 // MaintenanceOperation represents a single operation within a maintenance order

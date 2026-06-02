@@ -18,7 +18,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -364,8 +363,8 @@ func (t *Traits) primeCounterFromGraph() {
 // success, (0, true) when the graph is empty, (0, false) on any error.
 func (t *Traits) peekMaxOrderID() (int64, bool) {
 	const query = `PREFIX step: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/>
-PREFIX identifier: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/Identifier>
-PREFIX workorder: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkOrder>
+PREFIX identifier: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/Identifier#>
+PREFIX workorder: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkOrder#>
 SELECT (MAX(?id) AS ?max) WHERE {
     ?wo a step:WorkOrder ;
         workorder:Id ?idNode .
@@ -558,12 +557,25 @@ func (t *Traits) notifyConsumer(o *Order) {
 //-------------------------------------GraphDB SPARQL insert
 
 // buildSPARQL constructs the SPARQL UPDATE statement for a newly created order.
+// The WorkRequestAssignment block — which links the order to a functional
+// location in the STEP graph — is only emitted when the consumer supplied an
+// IRI. Orders raised by consumers that don't resolve an FL IRI still get a
+// WorkOrder and WorkRequest, just no graph-side asset linkage.
 func (t *Traits) buildSPARQL(o *Order) string {
 	orderURI := "https://sinetiq.se/sap/MaintenanceOrder/" + o.ID
 	notifURI := "https://sinetiq.se/sap/MaintenanceNotification/" + o.Notification
-	equipHash := fmt.Sprintf("%x", md5.Sum([]byte(o.Request.EquipmentID)))
 	createdAt := o.CreatedAt.UTC().Format(time.RFC3339Nano)
 	desc := strings.ReplaceAll(o.Request.Description, `"`, `\"`) // escape any quotes
+
+	wraBlock := ""
+	if o.Request.FunctionalLocationIRI != "" {
+		wraBlock = fmt.Sprintf(`
+        # step:WorkRequestAssignment
+        <%s-WRA> a step:WorkRequestAssignment ;
+            workrequestassignment:AssignedTo <%s> ;
+            workrequestassignment:AssignedWorkRequest <%s> .`,
+			notifURI, o.Request.FunctionalLocationIRI, notifURI)
+	}
 
 	return fmt.Sprintf(`PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX ex: <https://sinetiq.se/sap/>
@@ -571,10 +583,10 @@ PREFIX schema: <http://schema.org/>
 PREFIX dcterms: <http://purl.org/dc/terms/>
 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 PREFIX step: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/>
-PREFIX workorder: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkOrder>
-PREFIX workrequest: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkRequest>
-PREFIX workrequestassignment: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkRequestAssignment>
-PREFIX identifier: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/Identifier>
+PREFIX workorder: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkOrder#>
+PREFIX workrequest: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkRequest#>
+PREFIX workrequestassignment: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkRequestAssignment#>
+PREFIX identifier: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/Identifier#>
 INSERT
 {
     GRAPH<https://arrowheadweb.org/graph/sap/workorders>
@@ -603,12 +615,7 @@ INSERT
             identifier:Id "%s" .
 
         <%s-description> a step:LocalizedString ;
-            rdfs:label "%s"@en .
-
-        # step:WorkRequestAssignment
-        <%s-WRA> a step:WorkRequestAssignment ;
-            workrequestassignment:AssignedTo <https://arrowheadweb.org/data/%s> ;
-            workrequestassignment:AssignedWorkRequest <%s> .
+            rdfs:label "%s"@en .%s
     }
 }
 where
@@ -627,28 +634,34 @@ where
 		notifURI, o.Notification,
 		// WorkRequest-description
 		notifURI, desc,
-		// WorkRequestAssignment
-		notifURI, equipHash, notifURI,
+		// Optional WorkRequestAssignment
+		wraBlock,
 	)
 }
 
-// buildRELInsertSPARQL records the planner's release of an order: the new REL
-// status triple and the release timestamp. The enrichment JSON itself is not
-// stored as a literal in the graph — it ships to the nurse over the
-// EnrichmentNotification path and is captured in the nurse's log; embedding
-// it as a SPARQL string literal couples graph state to textarea encoding and
-// produces malformed queries on CRLF input.
+// buildRELInsertSPARQL records the planner's release of an order. The status
+// triple must replace (not append to) the previous CRTD status — the UI
+// shows the "current" status by reading a single ex:status triple, so an
+// additive update would leave the order looking still-CRTD even after release.
+// dcterms:modified is set so the UI can show a last-modified timestamp.
 func (t *Traits) buildRELInsertSPARQL(o *Order) string {
 	orderURI := "https://sinetiq.se/sap/MaintenanceOrder/" + o.ID
 	releasedAt := o.ReleasedAt.UTC().Format(time.RFC3339Nano)
 	return fmt.Sprintf(`PREFIX ex: <https://sinetiq.se/sap/>
 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-INSERT DATA {
-    GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
-        <%s> ex:status "REL" ;
-            ex:releasedAt "%s"^^xsd:dateTime .
-    }
-}`, orderURI, releasedAt)
+PREFIX dcterms: <http://purl.org/dc/terms/>
+
+DELETE { GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+    <%s> ex:status ?old .
+}} WHERE { GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+    <%s> ex:status ?old .
+}};
+
+INSERT DATA { GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+    <%s> ex:status "REL" ;
+        ex:releasedAt "%s"^^xsd:dateTime ;
+        dcterms:modified "%s"^^xsd:dateTime .
+}}`, orderURI, orderURI, orderURI, releasedAt, releasedAt)
 }
 
 // insertReleaseToGraphDB pushes the REL transition to GraphDB.
@@ -704,10 +717,11 @@ func (t *Traits) notifyEnrichment(o *Order) {
 	log.Printf("← enrichment %s  body=%s\n", resp.Status, string(msg))
 }
 
-// buildTECOInsertSPARQL constructs the SPARQL UPDATE statement that records an
-// order's transition to TECO. It appends new triples (status, completion time,
-// actual work hours) to the existing Order IRI created by buildSPARQL — the
-// graph retains both the CRTD and TECO status triples as an audit trail.
+// buildTECOInsertSPARQL records an order's transition to TECO. As with REL,
+// the status triple replaces the previous one (REL or CRTD, whichever the
+// order was sitting on) so the UI sees the current state. The completion
+// timestamp, modified timestamp, and actual work hours are additive — they
+// don't conflict with any prior triples on the order.
 func (t *Traits) buildTECOInsertSPARQL(o *Order) string {
 	orderURI := "https://sinetiq.se/sap/MaintenanceOrder/" + o.ID
 	completedAt := time.Now().UTC().Format(time.RFC3339Nano)
@@ -715,13 +729,20 @@ func (t *Traits) buildTECOInsertSPARQL(o *Order) string {
 
 	return fmt.Sprintf(`PREFIX ex: <https://sinetiq.se/sap/>
 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-INSERT DATA {
-    GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
-        <%s> ex:status "TECO" ;
-            ex:completedAt "%s"^^xsd:dateTime ;
-            ex:actualWorkHours "%g"^^xsd:decimal .
-    }
-}`, orderURI, completedAt, actualHours)
+PREFIX dcterms: <http://purl.org/dc/terms/>
+
+DELETE { GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+    <%s> ex:status ?old .
+}} WHERE { GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+    <%s> ex:status ?old .
+}};
+
+INSERT DATA { GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+    <%s> ex:status "TECO" ;
+        ex:completedAt "%s"^^xsd:dateTime ;
+        dcterms:modified "%s"^^xsd:dateTime ;
+        ex:actualWorkHours "%g"^^xsd:decimal .
+}}`, orderURI, orderURI, orderURI, completedAt, completedAt, actualHours)
 }
 
 // updateEndpoint returns the SPARQL update URL by appending /statements to the

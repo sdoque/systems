@@ -59,7 +59,7 @@ sequenceDiagram
 
     K->>K: dedupe prefixes, rewrite via localOntologies,<br/>prepend cloud IRI, concatenate
     opt graphDBurl configured
-        K->>G: SPARQL UPDATE<br/>CLEAR GRAPH urn:state:current;<br/>ADD GRAPH snapshot-IRI TO urn:state:current
+        K->>G: SPARQL UPDATE rotates urn:state:current<br/>to point at a new snapshot graph
     end
     K-->>User: merged TTL (text/turtle)
 ```

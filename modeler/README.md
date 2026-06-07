@@ -79,7 +79,7 @@ sequenceDiagram
     SR-->>M: SystemRecordList (list of base URLs)
 
     loop for each system
-        M->>S: GET /<system>/smodel
+        M->>S: GET /{sys}/smodel
         S-->>M: SysML v2 fragment (port defs, part defs, IBD part, behaviour defs)
     end
 

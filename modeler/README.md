@@ -83,8 +83,8 @@ sequenceDiagram
         S-->>M: SysML v2 fragment (port defs, part defs, IBD part, behaviour defs)
     end
 
-    M->>M: merge (dedupe port + abstract action defs,<br/>collect block defs, IBD parts, behaviour defs)
-    M-->>User: SysML v2 package 'localCloud' { … }
+    M->>M: merge — dedupe port and abstract action defs,<br/>collect block defs, IBD parts, behaviour defs
+    M-->>User: SysML v2 package localCloud (merged)
 ```
 
 Each system's `/smodel` endpoint (provided by the `mbaigo` framework)

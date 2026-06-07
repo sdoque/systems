@@ -1,124 +1,298 @@
 # mbaigo System: KGrapher
 
 ## Purpose
-This system offers as a service the semantic model of its local cloud.
-It obtains the list of systems from the Service Registrar and then asks each system for its model.
-It can then aggregate them to represent the complete local cloud, a distributed system of systems, each with the assets it has and the services that are provided and consumed.
 
-The asset of the system is GraphDB, a graph database that systematically collects data along with the relationships between the different data entities.
-Currently, when the KGrapher’s only service is invoked from a web browser, it generates the knowledge graph of the local cloud, pushes it to the database and provides a text version to the web browser.
+The *KGrapher* assembles a complete **OWL / RDF knowledge graph** of an
+Arrowhead local cloud — a distributed system of systems — by collecting
+the per-system RDF fragment from each registered system and merging them
+into a single, coherent Turtle (TTL) document. The result is what other
+systems and human consumers query when they want to reason about the cloud
+as a whole.
 
-Using the model in conjunction with the Arrowhead Framework Ontology (afo), a computer can infer new knowledge about the local cloud and reason about it.
+When a GraphDB triple store is configured, the KGrapher also **pushes**
+the assembled graph as a SPARQL update so the latest snapshot is queryable
+remotely. Locally it always serves the same TTL over HTTP for clients that
+prefer to pull.
 
-The KGrapher also serves (makes available) local ontologies and knowledge graphs.
-One can obtain these description through the *localOntologies* service.
+## Architecture
 
-## Compiling
-To compile the code, one needs initialize the *go.mod* file with ``` go mod init github.com/sdoque/systems/kgrapher``` before running *go mod tidy*.
+The KGrapher is an **aggregator system**, the OWL/RDF sibling of the
+[modeler](../modeler/) (which plays the same role for SysML v2). Both
+work the same way: discover every system via the Service Registrar, fetch
+each system's per-system meta-view, deduplicate and merge, hand back the
+combined result. Three responsibilities:
 
-To run the code, one just needs to type in ```go run .``` within a terminal or at a command prompt.
+1. **Collect.** Pull `/<system>/kgraph` from every registered system. Each
+   system already emits its own RDF block — the mbaigo framework's
+   `KGraphing` use case handles this. The KGrapher does no per-system
+   knowledge generation; it only orchestrates collection.
+2. **Merge.** Deduplicate `@prefix` declarations, rewrite prefixes against
+   the local ontology files, prepend a cloud-wide IRI to per-system subjects,
+   and concatenate the resulting blocks into one TTL.
+3. **Publish.** Return the merged TTL as the HTTP response. If
+   `graphDBurl` is set, also POST a SPARQL update that snapshots the graph
+   into GraphDB.
 
-It is **important** to start the program from within its own directory (and each system should have their own directory) because it looks for its configuration file there. If it does not find it there, it will generate one and shutdown to allow the configuration file to be updated.
+The KGrapher is **demand-driven** — there is no background timer. Each
+GET on `/cloudgraph` triggers a fresh collect + merge + push. Consumers
+that want a current view ask for one; nothing is cached.
 
-The configuration and operation of the system can be verified using the system's web server using a standard web browser, whose address is provided by the system at startup.
+## How it fits in the cloud
 
-To build the software for one's own machine,
-```go build -o modeler_imac```, where the ending is used to clarify for which platform the code is for.
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant K  as KGrapher
+    participant SR as ServiceRegistrar
+    participant S  as System
+    participant G  as GraphDB
 
+    User->>K: GET /kgrapher/assembler/cloudgraph
+    K->>SR: GET /serviceregistrar/registry/syslist
+    SR-->>K: SystemRecordList (list of base URLs)
 
-## Cross compiling/building
-The following commands enable one to build for different platforms:
+    loop for each system
+        K->>S: GET /<system>/kgraph
+        S-->>K: Turtle fragment (@prefix + alc:System / afo:UnitAsset / afo:Service / …)
+    end
 
-- Raspberry Pi 64: ```GOOS=linux GOARCH=arm64 go build -o kgrapher_rpi64```
-- Linux: GOOS=```GOARCH=amd64 go build -o kgrapher_amd64``` or ```GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o kgrapher_linux_amd64 .``` depending on the CPU (use ```uname -m``` to find out)
+    K->>K: dedupe prefixes, rewrite via localOntologies,<br/>prepend cloud IRI, concatenate
+    opt graphDBurl configured
+        K->>G: SPARQL UPDATE<br/>CLEAR GRAPH <urn:state:current>;<br/>ADD GRAPH <snapshot-IRI> TO <urn:state:current>;
+    end
+    K-->>User: merged TTL (text/turtle)
+```
 
-One can find a complete list of platform by typing *‌go tool dist list* at the command prompt
+The push pattern is significant: each snapshot lands in its own named graph
+keyed by IRI, and `<urn:state:current>` is rotated to always point at the
+latest snapshot. Consumers querying `<urn:state:current>` always see the
+current view; older snapshots persist in their own named graphs as a history
+trail.
 
-If one wants to secure copy it to a Raspberry pi,
-`scp kgrapher_rpi64 jan@192.168.1.195:demo/kgrapher/` where user is the *username* @ the *IP address* of the Raspberry Pi with a relative (to the user's home directory) target *demo/kgrapher/* directory.
+## Services
 
-## Deploying the asset
-An easy way to deploy Ontotext GraphDB is with the use go Docker.
+### Provided
 
-### 1. **Installing Docker**
+| Service definition | Subpath | Methods | Description |
+|--------------------|---------|---------|-------------|
+| `cloudgraph` | `cloudgraph` | `GET` | Assembles the cloud's RDF from every registered system, pushes it to GraphDB if configured, and returns the merged Turtle |
+| `localOntologies` | `localontologies` | `GET` | HTML index of the ontology files the KGrapher serves locally, with links to download each |
 
-#### Command:
+### Consumed (via Arrowhead orchestration)
+
+| Service definition | Used for |
+|--------------------|----------|
+| Pulled from every registered system via `/<system>/kgraph` | Per-system RDF fragments to merge |
+
+The KGrapher also POSTs to a configured **GraphDB SPARQL endpoint** — that
+URL is in the trait file rather than discovered via Arrowhead, since GraphDB
+isn't an mbaigo system.
+
+## Configuration
+
+```json
+{
+    "systemname": "kgrapher",
+    "unit_assets": [
+        {
+            "name": "assembler",
+            "details": { "Type": ["Interactive"] },
+            "services": [
+                {
+                    "definition": "cloudgraph",
+                    "subpath": "cloudgraph",
+                    "details": { "Format": ["Turtle"] },
+                    "registrationPeriod": 61
+                },
+                {
+                    "definition": "localOntologies",
+                    "subpath": "localontologies",
+                    "details": { "Location": ["Files"] },
+                    "registrationPeriod": 61
+                }
+            ],
+            "traits": [
+                {
+                    "graphDBurl": "http://<graphdb-host>:7200/repositories/<repo>/statements",
+                    "localOntologies": {
+                        "alc": "alc-ontology-local.ttl"
+                    }
+                }
+            ]
+        }
+    ],
+    "protocolsNports": { "coap": 0, "http": 20105, "https": 0 },
+    "coreSystems": [ /* serviceregistrar, orchestrator, ca, maitreD */ ]
+}
+```
+
+### Trait reference
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `graphDBurl` | string | SPARQL **update** endpoint (note the `/statements` suffix). Empty disables remote publication; local TTL serving still works |
+| `localOntologies` | `map[string]string` | Per-prefix file name. The KGrapher reads each file from its own directory, rewrites the corresponding `@prefix` in the assembled output, and serves the file content over HTTP so other systems can dereference it |
+
+## The push mechanism in detail
+
+When `graphDBurl` is set, each `/cloudgraph` GET ends with a two-statement
+SPARQL update:
+
+```sparql
+CLEAR GRAPH <urn:state:current>;
+ADD GRAPH <https://arrowheadweb.org/data/<snapshot-id>> TO <urn:state:current>;
+```
+
+- The snapshot IRI is generated at push time and never reused.
+- The first push to a given snapshot IRI also inserts the actual triples
+  into that snapshot graph; subsequent rotations of `<urn:state:current>`
+  only move the pointer.
+- Old snapshots stay in the store. They are not automatically pruned —
+  if you care about disk usage, drop old snapshot graphs explicitly with
+  a `DROP GRAPH` update.
+
+The advantage of this pattern over a flat *"replace all triples in graph X"*
+update is that **historical state stays queryable** under each
+timestamp-keyed graph IRI, while consumers who only care about "now" can
+query `<urn:state:current>` and ignore the history.
+
+## Predicate emission and the FunctionalLocation special-case
+
+Per-system RDF emitters in mbaigo's `usecases/kgraphing.go` apply one
+naming rule with one carve-out:
+
+- Most detail keys on a unit asset become `alc:has<Key>` triples — local
+  to the cloud's `alc:` namespace.
+- **`FunctionalLocation`** is emitted as `afo:hasFunctionalLocation` —
+  in the AFO (Arrowhead Framework Ontology) namespace — so AFO-IDO,
+  AFO-DEXPI, and AFO-STEP alignment ontologies can bridge it to their
+  upstream vocabularies (e.g., `ido:locatedAt`). A cloud-local predicate
+  wouldn't participate in those alignments; the AFO predicate does.
+
+If you add other detail keys that warrant cross-ontology alignment, the
+list lives in `mbaigo/usecases/kgraphing.go` and adding a new carve-out
+is a one-line change.
+
+## Building and running
+
+```bash
+# Run from source (development)
+go run .
+
+# Build a binary for the current machine
+go build -o kgrapher_amac .
+
+# Cross-compile for a 64-bit Raspberry Pi
+GOOS=linux GOARCH=arm64 go build -o kgrapher_rpi64 .
+
+# Deploy
+scp kgrapher_rpi64 jan@<pi-host>:oslo/kgrapher/
+```
+
+Run the binary from **inside its own directory** so it can find (or
+auto-generate) `systemconfig.json` and read the `localOntologies` files.
+
+## Startup order
+
+```
+Arrowhead core systems  →  KGrapher  →  any consumer
+```
+
+The KGrapher is **demand-driven and stateless** — it pulls from the
+registrar on each request, so application systems can join after it's
+already running. The first `/cloudgraph` request after a system joins
+will include that system's fragment automatically.
+
+If `graphDBurl` points at a triple store that isn't yet up, the SPARQL
+update will fail and the KGrapher will log the error but still return
+the assembled TTL to the HTTP caller. GraphDB outage degrades the push
+side without breaking the read side.
+
+## Development with a local mbaigo clone
+
+Add both modules to the workspace `go.work` at the repository root:
+
+```
+use ./mbaigo
+use ./systems/kgrapher
+```
+
+Or add a `replace` directive to `go.mod`:
+
+```
+require github.com/sdoque/mbaigo v0.x.x
+replace github.com/sdoque/mbaigo => ../../mbaigo
+```
+
+---
+
+## Appendix A — Deploying GraphDB on a Raspberry Pi
+
+The KGrapher's `graphDBurl` is a URL like any other — the triple store
+itself can run anywhere reachable. For a self-contained edge deployment
+the Pi is a workable host. The walkthrough below was originally part of
+the body of this README; it's preserved here as reference for new
+deployments.
+
+### 1. Install Docker
+
 ```bash
 curl -sSL https://get.docker.com | sh
 ```
-- **`curl -sSL`**: This command uses `curl`, a tool to transfer data from or to a server. Here, it fetches the installation script for Docker.
-  - `-s` means "silent mode," so it won't show progress bars.
-  - `-S` makes sure to show errors if they occur.
-  - `-L` follows any redirects the URL might have.
-  
-- **`https://get.docker.com`**: This is the URL of Docker’s official installation script, hosted by Docker.
-  
-- **`| sh`**: This takes the output of the `curl` command (the script downloaded from Docker's server) and immediately runs it using `sh` (the shell command interpreter).
-  
-In essence, this command fetches and runs Docker’s installation script, automatically installing Docker onto your Raspberry Pi. It ensures you're getting the most recent version of Docker.
 
-#### Security note:
-This command is convenient, but it's generally a good practice to inspect scripts you download from the internet before running them. You can review it by downloading the script first without piping it into `sh`:
+- `curl -sSL` fetches the install script silently and follows redirects.
+- `https://get.docker.com` is Docker's official install script.
+- `| sh` pipes the script straight into the shell.
+
+To inspect the script before running:
+
 ```bash
 curl -sSL https://get.docker.com -o get-docker.sh
-```
-Then inspect the file with:
-```bash
 cat get-docker.sh
-```
-And run it manually with:
-```bash
 sh get-docker.sh
 ```
 
-### 2. **Adding the User to the Docker Group**
+### 2. Add the user to the docker group
 
-#### Command:
 ```bash
 sudo usermod -aG docker pi
 ```
 
-- **`sudo`**: This command gives you superuser privileges, allowing you to execute actions that require administrative rights.
-  
-- **`usermod -aG docker pi`**:
-  - **`usermod`**: This modifies a user’s account settings.
-  - **`-aG docker`**: This option appends the user to a group. In this case, it's appending the user to the `docker` group.
-    - `-a`: Append (don’t remove the user from other groups).
-    - `-G`: Specifies the group to which the user will be added (in this case, the `docker` group).
-  - **`pi`**: This is the username of the Raspberry Pi user account (if your account is named something different, replace `pi` with your username).
+(Replace `pi` with your actual username if different.) Log out and back
+in for the new group to take effect, then `docker` commands no longer
+need `sudo`.
 
-By adding the user to the `docker` group, you're giving the `pi` user permission to run Docker commands **without needing to use `sudo`** every time. After this, you'll need to log out and log back in (or reboot) for the changes to take effect.
+### 3. Pull the GraphDB image
 
-### 3. **Pulling the GraphDB Docker Image**
-
-#### Command:
 ```bash
-docker pull ontotext/graphdb
+docker pull ontotext/graphdb:10.7.4
 ```
 
-- **`docker pull`**: This tells Docker to download (pull) an image from a Docker registry (by default, Docker Hub).
-  
-- **`ontotext/graphdb`**: This is the name of the Docker image you're pulling. It's hosted on Docker Hub under the `ontotext` organization, and the specific image is `graphdb`.
+Pin the version explicitly — `:latest` is convenient locally but unkind
+when a fleet of Pis pulls a new image at different times.
 
-This command downloads the `graphdb` Docker image to your Raspberry Pi, allowing you to run a container based on it. Docker images contain everything needed to run an application, including the application code, system libraries, and dependencies.
+### 4. Run the container
 
-### 4. **Running the GraphDB Docker Container**
+Bridged networking (recommended for most setups):
 
-#### Command:
 ```bash
-docker run -d -p 7200:7200 --name graphdb -t ontotext/graphdb:10.7.4
+docker run -d -p 7200:7200 --name graphdb ontotext/graphdb:10.7.4
+```
+
+Host networking (only if you need the container to bind on the host's
+IP directly — e.g., for some service-discovery setups):
+
+```bash
 docker run -d --network host --name graphdb ontotext/graphdb:10.7.4
 ```
 
-- **`docker run`**: This starts a new container from a Docker image.
-  
-- **`-d`**: This tells Docker to run the container in **detached mode**, meaning the container will run in the background and won't tie up your terminal session.
-  
-- **`-p 7200:7200`**: This option maps port 7200 on your Raspberry Pi (host) to port 7200 inside the Docker container. GraphDB uses port 7200 for its web interface, so this allows you to access GraphDB on your Raspberry Pi through `http://<your_raspberry_pi_ip>:7200`.
+Choose **one** of the two. The bridged form is the default; use the host
+form only when you have a specific reason.
 
-- **`--name graphdb`**: This gives the container a name (`graphdb`). This is useful for managing or referring to the container later (e.g., stopping it, viewing logs, etc.).
+### 5. Stop and remove
 
-- **`ontotext/graphdb`**: This specifies the image to use to create the container. Docker will use the image you pulled earlier.
-
-
-To shut the running instance, type ```docker stop graphdb``` and then ```docker rm graphdb``` .
+```bash
+docker stop graphdb
+docker rm graphdb
+```

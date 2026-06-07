@@ -1,0 +1,340 @@
+# Replacement of equipment connected to WorkOrder 400000134
+
+PREFIX : <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/Core#>
+PREFIX ex: <https://sinetiq.se/sap/>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX ido-ext: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/ido-ext#>
+
+PREFIX step: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/>
+
+PREFIX workorder: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkOrder#>
+PREFIX wra: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkRequestAssignment#>
+
+PREFIX dpa: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/DirectedPlannedActivity#>
+PREFIX ahr: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/ActivityHappeningRelationship#>
+PREFIX aa: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/ActivityAssignment#>
+PREFIX actualactivity: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/ActualActivity#>
+PREFIX eff: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/EffectivityAssignment#>
+PREFIX de: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/DatedEffectivity#>
+PREFIX ber: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/BreakdownElementRealization#>
+PREFIX pva: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/PartViewToIndividualPartViewAssociation#>
+PREFIX woa: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkOrderAssignment#>
+
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+DELETE {
+    GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+        ?workOrder ex:status ?oldStatus .
+        ?workOrder ex:technicalCompletionDate ?oldTechnicalCompletionDate .
+        ?workOrder dcterms:modified ?oldModified .
+    }
+}
+INSERT {
+    GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+        # Update WorkOrder status/completion metadata
+        ?workOrder
+            ex:status ?newStatus ;
+            ex:technicalCompletionDate ?technicalCompletionDateTime ;
+            dcterms:modified ?modifiedDateTime .
+
+        # Relationship between WorkOrder and ActualActivity
+        ?directedPlannedActivity
+            a step:DirectedPlannedActivity ;
+            dpa:Directive ?workOrder .
+
+        ?actualActivity
+            a step:ActualActivity ;
+            actualactivity:ActualStartDate [
+                a step:DateTimeString, step:String ;
+                :value ?activityStartDateTime
+            ] ;
+            actualactivity:ActualEndDate [
+                a step:DateTimeString, step:String ;
+                :value ?activityEndDateTime
+            ] .
+
+        ?activityHappeningRelationship
+            a step:ActivityHappeningRelationship ;
+            ahr:Relating ?directedPlannedActivity ;
+            ahr:Related ?actualActivity .
+
+        # Activity assignment: outgoing effectivity closed by this activity
+        ?activityAssignmentOutgoingEffectivity
+            a step:ActivityAssignment ;
+            aa:AssignedTo ?effOld ;
+            aa:AssignedActivity ?actualActivity .
+
+        # Activity assignment: incoming effectivity opened by this activity
+        ?activityAssignmentIncomingEffectivity
+            a step:ActivityAssignment ;
+            aa:AssignedTo ?effNew ;
+            aa:AssignedActivity ?actualActivity .
+
+        # Activity assignment: dated effectivity of the replacement work itself
+        ?activityAssignmentReplacementActivityEffectivity
+            a step:ActivityAssignment ;
+            aa:AssignedTo ?replacementActivityEffectivity ;
+            aa:AssignedActivity ?actualActivity .
+
+        # WorkOrderAssignment to the blueprint / breakdown item
+        ?workOrderAssignment
+            a step:WorkOrderAssignment ;
+            woa:AssignedTo ?breakdownItem ;
+            woa:AssignedWorkOrder ?workOrder .
+    }
+
+    GRAPH <https://arrowheadweb.org/graph/parts> {
+        # New IndividualPartView resource
+        ?newIndividualPart
+            a step:IndividualPartView,
+              ido-ext:IndividualPart .
+    }
+
+    GRAPH <https://arrowheadweb.org/graph/associations> {
+        # New blueprint/equipment-to-individual-part realization
+        ?newRealization
+            a :AssociationObject,
+              step:BreakdownElementRealization ;
+            ber:RealizedAs ?newIndividualPart ;
+            ber:BreakdownItem ?breakdownItem .
+
+        # Link new IndividualPartView to existing PartView definition
+        ?newPvIpvAssociation
+            a :AssociationObject,
+              step:PartViewToIndividualPartViewAssociation ;
+            pva:AssociatedIndividualPart ?newIndividualPart ;
+            pva:AssociatedPart ?part .
+    }
+
+    GRAPH <https://arrowheadweb.org/graph/effectivity> {
+        # Close old fitted-part effectivity
+        ?effOldEffectivity
+            de:EndDefinition ?oldEndDateTimeString .
+
+        ?oldEndDateTimeString
+            a step:DateTimeString,
+              step:String ;
+            :value ?activityEndDateTime .
+
+        # Create new fitted-part effectivity
+        # This intentionally only has StartDefinition.
+        # No EndDefinition here, because this is what makes the replacement part the current fitted part.
+        ?effNew
+            a step:EffectivityAssignment ;
+            eff:AssignedTo ?newRealization ;
+            eff:AssignedEffectivity ?newDatedEffectivity ;
+            eff:EffectivityIndication step:True .
+
+        ?newDatedEffectivity
+            a step:DatedEffectivity ;
+            de:StartDefinition ?newStartDateTimeString .
+
+        ?newStartDateTimeString
+            a step:DateTimeString,
+              step:String ;
+            :value ?activityEndDateTime .
+
+        # Dated effectivity for the replacement activity itself
+        # This uses the same activity start/end values as the ActualActivity.
+        ?replacementActivityEffectivity
+            a step:EffectivityAssignment ;
+            eff:AssignedTo ?actualActivity ;
+            eff:AssignedEffectivity ?replacementActivityDatedEffectivity ;
+            eff:EffectivityIndication step:True .
+
+        ?replacementActivityDatedEffectivity
+            a step:DatedEffectivity ;
+            de:StartDefinition ?replacementActivityStartDateTimeString ;
+            de:EndDefinition ?replacementActivityEndDateTimeString .
+
+        ?replacementActivityStartDateTimeString
+            a step:DateTimeString,
+              step:String ;
+            :value ?activityStartDateTime .
+
+        ?replacementActivityEndDateTimeString
+            a step:DateTimeString,
+              step:String ;
+            :value ?activityEndDateTime .
+    }
+
+    GRAPH <http://www.arrowhead.org/step-ido-alignments> {
+        # Implementation relation between FunctionalLocation / BreakdownElementView
+        # and the new currently fitted IndividualPart
+        ?newIndividualPart
+            ido-ext:implements ?breakdownItem .
+
+        # Implementation relation between Part and new IndividualPart
+        ?newIndividualPart
+            ido-ext:implements ?part .
+    }
+}
+WHERE {
+    # Parameters for this test
+    BIND(IRI("https://sinetiq.se/sap/MaintenanceOrder/400000134") AS ?workOrder)
+    BIND(IRI("https://sinetiq.se/sap/MaintenanceOrder/WorkOrderAssignment_400000134") AS ?workOrderAssignment)
+
+    # Existing currently-installed IndividualPartView to replace
+    BIND(IRI("https://arrowheadweb.org/data/SK_002285") AS ?individualPart) # The example SK_002285 is current part at functional location 827-PV2708-200
+
+    # New test IndividualPartView
+    BIND(IRI("https://arrowheadweb.org/data/SK_002288") AS ?newIndividualPart) # The example SK_002288 is the fitting replacement part for SK_002285
+
+    # WorkOrder metadata
+    BIND("TECO" AS ?newStatus)
+    BIND("2024-06-01T12:00:00"^^xsd:dateTime AS ?technicalCompletionDateTime)
+    BIND("2024-06-01T12:00:00"^^xsd:dateTime AS ?modifiedDateTime)
+
+    # Replacement activity interval
+    BIND("2024-06-01T08:00:00"^^xsd:dateTime AS ?activityStartDateTime)
+    BIND("2024-06-01T12:00:00"^^xsd:dateTime AS ?activityEndDateTime)
+
+    # Extract WorkOrder number for cleaner generated URIs
+    BIND(REPLACE(STR(?workOrder), "^.*/", "") AS ?workOrderId)
+
+    # Existing WorkOrder metadata to replace
+    OPTIONAL {
+        GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+            ?workOrder ex:status ?oldStatus .
+        }
+    }
+
+    OPTIONAL {
+        GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+            ?workOrder ex:technicalCompletionDate ?oldTechnicalCompletionDate .
+        }
+    }
+
+    OPTIONAL {
+        GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+            ?workOrder dcterms:modified ?oldModified .
+        }
+    }
+
+    # Old IndividualPartView must exist in graph/parts
+    GRAPH <https://arrowheadweb.org/graph/parts> {
+        ?individualPart a step:IndividualPartView .
+    }
+
+    # Existing association lookups
+    GRAPH <https://arrowheadweb.org/graph/associations> {
+        ?partRealization
+            pva:AssociatedIndividualPart ?individualPart ;
+            pva:AssociatedPart ?part .
+
+        ?breakdownRealization
+            ber:RealizedAs ?individualPart ;
+            ber:BreakdownItem ?breakdownItem .
+    }
+
+    # Validate that this WorkOrder's WorkRequest is assigned to the same breakdown item
+    GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+        ?workOrder
+            a step:WorkOrder ;
+            workorder:InResponseTo ?workRequest .
+
+        ?workRequestAssignment
+            a step:WorkRequestAssignment ;
+            wra:AssignedWorkRequest ?workRequest ;
+            wra:AssignedTo ?breakdownItem .
+    }
+
+    # Existing active/old effectivity lookup
+    GRAPH <https://arrowheadweb.org/graph/effectivity> {
+        ?effOld
+            eff:AssignedTo ?breakdownRealization ;
+            eff:AssignedEffectivity ?effOldEffectivity .
+
+        # Prevent adding another EndDefinition if this effectivity is already closed.
+        FILTER NOT EXISTS {
+            ?effOldEffectivity de:EndDefinition ?existingEndDefinition .
+        }
+    }
+
+    # URI generation: activity/work-order side
+    BIND(IRI(CONCAT(
+        "https://sinetiq.se/sap/MaintenanceOrder/DirectedPlannedActivity_",
+        ?workOrderId
+    )) AS ?directedPlannedActivity)
+
+    BIND(IRI(CONCAT(
+        "https://sinetiq.se/sap/MaintenanceOrder/ActivityHappeningRelationship_",
+        ?workOrderId
+    )) AS ?activityHappeningRelationship)
+
+    BIND(IRI(CONCAT(
+        "https://sinetiq.se/sap/MaintenanceOrder/ActualActivity_",
+        ?workOrderId
+    )) AS ?actualActivity)
+
+    BIND(IRI(CONCAT(
+        "https://sinetiq.se/sap/MaintenanceOrder/ActivityAssignment_",
+        ?workOrderId,
+        "_OutgoingEffectivity"
+    )) AS ?activityAssignmentOutgoingEffectivity)
+
+    BIND(IRI(CONCAT(
+        "https://sinetiq.se/sap/MaintenanceOrder/ActivityAssignment_",
+        ?workOrderId,
+        "_IncomingEffectivity"
+    )) AS ?activityAssignmentIncomingEffectivity)
+
+    BIND(IRI(CONCAT(
+        "https://sinetiq.se/sap/MaintenanceOrder/ActivityAssignment_",
+        ?workOrderId,
+        "_ReplacementActivityEffectivity"
+    )) AS ?activityAssignmentReplacementActivityEffectivity)
+
+    # URI generation: new associations
+    BIND(IRI(CONCAT(STR(?breakdownRealization), "-replacement")) AS ?newRealization)
+    BIND(IRI(CONCAT(STR(?partRealization), "-replacement")) AS ?newPvIpvAssociation)
+
+    # URI generation: effectivity naming based on realization IDs
+    BIND(REPLACE(STR(?breakdownRealization), "^.*[/#]", "") AS ?oldRealizationId)
+    BIND(REPLACE(STR(?newRealization), "^.*[/#]", "") AS ?newRealizationId)
+
+    BIND(IRI(CONCAT(
+        "https://arrowheadweb.org/data/DateTimeString_End_",
+        ENCODE_FOR_URI(?oldRealizationId)
+    )) AS ?oldEndDateTimeString)
+
+    BIND(IRI(CONCAT(
+        "https://arrowheadweb.org/data/EffectivityAssignment_",
+        ENCODE_FOR_URI(?newRealizationId)
+    )) AS ?effNew)
+
+    BIND(IRI(CONCAT(
+        "https://arrowheadweb.org/data/DatedEffectivity_",
+        ENCODE_FOR_URI(?newRealizationId)
+    )) AS ?newDatedEffectivity)
+
+    BIND(IRI(CONCAT(
+        "https://arrowheadweb.org/data/DateTimeString_",
+        ENCODE_FOR_URI(?newRealizationId)
+    )) AS ?newStartDateTimeString)
+
+    # URI generation: replacement activity effectivity
+    BIND(IRI(CONCAT(
+        "https://sinetiq.se/sap/MaintenanceOrder/EffectivityAssignment_",
+        ?workOrderId,
+        "_ReplacementActivity"
+    )) AS ?replacementActivityEffectivity)
+
+    BIND(IRI(CONCAT(
+        "https://sinetiq.se/sap/MaintenanceOrder/DatedEffectivity_",
+        ?workOrderId,
+        "_ReplacementActivity"
+    )) AS ?replacementActivityDatedEffectivity)
+
+    BIND(IRI(CONCAT(
+        "https://sinetiq.se/sap/MaintenanceOrder/DateTimeString_Start_",
+        ?workOrderId,
+        "_ReplacementActivity"
+    )) AS ?replacementActivityStartDateTimeString)
+
+    BIND(IRI(CONCAT(
+        "https://sinetiq.se/sap/MaintenanceOrder/DateTimeString_End_",
+        ?workOrderId,
+        "_ReplacementActivity"
+    )) AS ?replacementActivityEndDateTimeString)
+}

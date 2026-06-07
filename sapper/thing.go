@@ -144,9 +144,19 @@ const firefightingHTML = `<!DOCTYPE html>
 </html>
 `
 
-// defaultEnrichmentJSON pre-fills the textarea with Alex's seals/gaskets
-// example payload. Edit-in-place is the planner's main job.
-const defaultEnrichmentJSON = `{
+// defaultEnrichmentTemplate is the editable JSON the planner sees in the
+// textarea. The Sapper substitutes per-order context (currentPart IRI, date
+// window) before rendering; the planner edits decision/newPart in place and
+// submits. Decision "repair" leaves the same physical part fitted with
+// service work done on it; "replace" swaps in newPart and marks the old part
+// as no longer current. See Triona's WorkOrder_Repair_*.ttl and
+// WorkOrder_Replace_*.ttl for the underlying graph mutations.
+const defaultEnrichmentTemplate = `{
+  "decision":      "repair",
+  "currentPart":   "%s",
+  "newPart":       "%s",
+  "activityStart": "%s",
+  "activityEnd":   "%s",
   "operations": [
     {
       "operation": "0010",
@@ -166,7 +176,7 @@ const defaultEnrichmentJSON = `{
     },
     {
       "operation": "0030",
-      "description": "Replace gaskets and stem",
+      "description": "Replace gaskets and stem (repair) or swap in newPart (replace)",
       "plannedWorkQuantity": "1.0",
       "workQuantityUnit": "H",
       "workCenter": "VALVE-WC01",
@@ -179,14 +189,6 @@ const defaultEnrichmentJSON = `{
           "unit": "EA",
           "plant": "1000",
           "storageLocation": "0001"
-        },
-        {
-          "material": "VALVE-STEM-KIT",
-          "description": "Valve stem repair kit",
-          "requiredQuantity": "1.0",
-          "unit": "EA",
-          "plant": "1000",
-          "storageLocation": "0001"
         }
       ]
     },
@@ -196,21 +198,29 @@ const defaultEnrichmentJSON = `{
       "plannedWorkQuantity": "1.5",
       "workQuantityUnit": "H",
       "workCenter": "VALVE-WC01",
-      "plant": "1000",
-      "components": [
-        {
-          "material": "THREAD-SEALANT",
-          "description": "Thread sealant compound",
-          "requiredQuantity": "1.0",
-          "unit": "EA",
-          "plant": "1000",
-          "storageLocation": "0001"
-        }
-      ]
+      "plant": "1000"
     }
   ]
 }
 `
+
+// buildOrderEnrichmentTemplate fills the per-order placeholders in
+// defaultEnrichmentTemplate. Called when an order is created so the
+// firefighting UI shows context-appropriate JSON when the planner clicks the
+// row. The newPart default is order-specific so repeated demo runs don't
+// keep installing the same IRI at the same FL (which would make the
+// currently-fitted-part lookup ambiguous on the next run).
+func buildOrderEnrichmentTemplate(currentPartIRI, orderID string, when time.Time) string {
+	if currentPartIRI == "" {
+		// Sapper couldn't resolve the part; the planner has to fill it in.
+		currentPartIRI = "REPLACE-WITH-CURRENT-PART-IRI"
+	}
+	// Default activity window: a notional 4-hour shift today, in UTC.
+	start := when.UTC().Format("2006-01-02") + "T08:00:00Z"
+	end := when.UTC().Format("2006-01-02") + "T12:00:00Z"
+	newPart := "https://arrowheadweb.org/data/SK_NEW_" + orderID
+	return fmt.Sprintf(defaultEnrichmentTemplate, currentPartIRI, newPart, start, end)
+}
 
 var firefightingTemplate = template.Must(template.New("firefighting").Parse(firefightingHTML))
 
@@ -358,6 +368,78 @@ func (t *Traits) primeCounterFromGraph() {
 	}
 }
 
+// lookupCurrentPart asks GraphDB for the IndividualPartView currently fitted
+// at the given functional-location IRI. "Currently fitted" is defined the
+// same way Triona's TECO queries define it: a BreakdownElementRealization
+// whose breakdown item is the FL, whose RealizedAs IndividualPartView has an
+// EffectivityAssignment / DatedEffectivity with a StartDefinition but no
+// EndDefinition. Returns the IndividualPart IRI on success, or an error if
+// the FL isn't modelled, has no currently-fitted part, or has more than one
+// (ambiguous). Used to pre-fill the firefighting UI's enrichment template.
+func (t *Traits) lookupCurrentPart(flIRI string) (string, error) {
+	if t.GraphDBURL == "" {
+		return "", fmt.Errorf("graphDbUrl not configured")
+	}
+	query := fmt.Sprintf(`PREFIX step: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/>
+PREFIX ber: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/BreakdownElementRealization#>
+PREFIX eff: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/EffectivityAssignment#>
+PREFIX de:  <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/DatedEffectivity#>
+SELECT DISTINCT ?part WHERE {
+    GRAPH <https://arrowheadweb.org/graph/associations> {
+        ?br ber:RealizedAs ?part ;
+            ber:BreakdownItem <%s> .
+    }
+    GRAPH <https://arrowheadweb.org/graph/effectivity> {
+        ?ea eff:AssignedTo ?br ;
+            eff:AssignedEffectivity ?de .
+        FILTER NOT EXISTS { ?de de:EndDefinition ?_ }
+    }
+}`, flIRI)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.GraphDBURL, strings.NewReader(query))
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/sparql-query")
+	req.Header.Set("Accept", "application/sparql-results+json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("HTTP %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	var result struct {
+		Results struct {
+			Bindings []map[string]struct {
+				Value string `json:"value"`
+			} `json:"bindings"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode response: %w", err)
+	}
+	bs := result.Results.Bindings
+	switch len(bs) {
+	case 0:
+		return "", fmt.Errorf("no currently-fitted part for FL <%s>", flIRI)
+	case 1:
+		iri := bs[0]["part"].Value
+		if iri == "" {
+			return "", fmt.Errorf("empty part binding")
+		}
+		return iri, nil
+	default:
+		return "", fmt.Errorf("ambiguous currently-fitted part for FL <%s> (%d matches)", flIRI, len(bs))
+	}
+}
+
 // peekMaxOrderID queries GraphDB for the highest order number already
 // recorded as a step:WorkOrder under our IRI namespace. Returns (n, true) on
 // success, (0, true) when the graph is empty, (0, false) on any error.
@@ -435,13 +517,25 @@ func (t *Traits) nextNotifID() string {
 // lifecycle countdown — the order waits in CRTD until a planner enriches and
 // releases it through the firefighting UI.
 func (t *Traits) createOrder(req OrderRequest) *Order {
+	now := time.Now()
+	currentPart := ""
+	if req.FunctionalLocationIRI != "" {
+		if p, err := t.lookupCurrentPart(req.FunctionalLocationIRI); err != nil {
+			log.Printf("sapper: cannot resolve current part for FL %s: %v", req.FunctionalLocationIRI, err)
+		} else {
+			currentPart = p
+			log.Printf("sapper: FL %s currently has part %s fitted", req.FunctionalLocationIRI, currentPart)
+		}
+	}
+	orderID := t.nextOrderID()
 	o := &Order{
-		ID:                  t.nextOrderID(),
+		ID:                  orderID,
 		Notification:        t.nextNotifID(),
 		Status:              "CRTD",
-		CreatedAt:           time.Now(),
+		CreatedAt:           now,
 		Request:             req,
-		SuggestedEnrichment: defaultEnrichmentJSON,
+		CurrentPartIRI:      currentPart,
+		SuggestedEnrichment: buildOrderEnrichmentTemplate(currentPart, orderID, now),
 	}
 	t.mu.Lock()
 	t.orders[o.ID] = o
@@ -467,6 +561,15 @@ func (t *Traits) enrichAndRelease(orderID string, enrichment json.RawMessage) (*
 	o.Status = "REL"
 	o.ReleasedAt = time.Now()
 	o.Enrichment = enrichment
+	// Parse the structured fields. A parse failure isn't fatal — the TECO
+	// path falls back to the simpler status-only update when ParsedEnrichment
+	// is nil or doesn't carry the fields a Repair/Replace template needs.
+	var parsed Enrichment
+	if err := json.Unmarshal(enrichment, &parsed); err == nil {
+		o.ParsedEnrichment = &parsed
+	} else {
+		log.Printf("enrichAndRelease: order %s enrichment is not structured (%v); TECO will use fallback template", o.ID, err)
+	}
 	t.mu.Unlock()
 	log.Printf("order %s → REL (planner authorised)\n", o.ID)
 
@@ -557,13 +660,23 @@ func (t *Traits) notifyConsumer(o *Order) {
 //-------------------------------------GraphDB SPARQL insert
 
 // buildSPARQL constructs the SPARQL UPDATE statement for a newly created order.
-// The WorkRequestAssignment block — which links the order to a functional
-// location in the STEP graph — is only emitted when the consumer supplied an
-// IRI. Orders raised by consumers that don't resolve an FL IRI still get a
-// WorkOrder and WorkRequest, just no graph-side asset linkage.
+// URI shapes follow Triona's convention `<base>/<Type>_<ID>` so tools that
+// expect `WorkRequestAssignment_<notifID>`, `ID_<orderID>`, etc. find our
+// data through the same patterns. The WorkRequestAssignment block — which
+// links the order to a functional location in the STEP graph — is only
+// emitted when the consumer supplied an IRI; orders raised by consumers that
+// don't resolve an FL IRI still get a WorkOrder and WorkRequest, just no
+// graph-side asset linkage.
 func (t *Traits) buildSPARQL(o *Order) string {
-	orderURI := "https://sinetiq.se/sap/MaintenanceOrder/" + o.ID
-	notifURI := "https://sinetiq.se/sap/MaintenanceNotification/" + o.Notification
+	const woBase = "https://sinetiq.se/sap/MaintenanceOrder/"
+	const wrBase = "https://sinetiq.se/sap/MaintenanceNotification/"
+	orderURI := woBase + o.ID
+	orderIDURI := woBase + "ID_" + o.ID
+	orderDescURI := woBase + "Description_" + o.ID
+	notifURI := wrBase + o.Notification
+	notifIDURI := wrBase + "ID_" + o.Notification
+	notifDescURI := wrBase + "Description_" + o.Notification
+	wraURI := wrBase + "WorkRequestAssignment_" + o.Notification
 	createdAt := o.CreatedAt.UTC().Format(time.RFC3339Nano)
 	desc := strings.ReplaceAll(o.Request.Description, `"`, `\"`) // escape any quotes
 
@@ -571,10 +684,10 @@ func (t *Traits) buildSPARQL(o *Order) string {
 	if o.Request.FunctionalLocationIRI != "" {
 		wraBlock = fmt.Sprintf(`
         # step:WorkRequestAssignment
-        <%s-WRA> a step:WorkRequestAssignment ;
+        <%s> a step:WorkRequestAssignment ;
             workrequestassignment:AssignedTo <%s> ;
             workrequestassignment:AssignedWorkRequest <%s> .`,
-			notifURI, o.Request.FunctionalLocationIRI, notifURI)
+			wraURI, o.Request.FunctionalLocationIRI, notifURI)
 	}
 
 	return fmt.Sprintf(`PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -593,28 +706,28 @@ INSERT
     {
         # step:WorkOrder
         <%s> a step:WorkOrder ;
-            workorder:Id <%s-id> ;
-            workorder:Description <%s-description> ;
+            workorder:Id <%s> ;
+            workorder:Description <%s> ;
             ex:status "%s" ;
             dcterms:created "%s"^^xsd:dateTime ;
             workorder:InResponseTo <%s> .
 
-        <%s-id> a step:Identifier ;
+        <%s> a step:Identifier ;
             identifier:Id "%s" .
 
-        <%s-description> a step:LocalizedString ;
+        <%s> a step:LocalizedString ;
             rdfs:label "Maintenance order created successfully"@en .
 
         # step:WorkRequest
         <%s> a step:WorkRequest ;
-            workrequest:Id <%s-id> ;
-            workrequest:Description <%s-description> ;
+            workrequest:Id <%s> ;
+            workrequest:Description <%s> ;
             dcterms:isPartOf <%s> .
 
-        <%s-id> a step:Identifier ;
+        <%s> a step:Identifier ;
             identifier:Id "%s" .
 
-        <%s-description> a step:LocalizedString ;
+        <%s> a step:LocalizedString ;
             rdfs:label "%s"@en .%s
     }
 }
@@ -622,18 +735,18 @@ where
 {
 }`,
 		// WorkOrder
-		orderURI, orderURI, orderURI,
+		orderURI, orderIDURI, orderDescURI,
 		o.Status, createdAt, notifURI,
-		// WorkOrder-id
-		orderURI, o.ID,
-		// WorkOrder-description
-		orderURI,
+		// WorkOrder Identifier
+		orderIDURI, o.ID,
+		// WorkOrder Description
+		orderDescURI,
 		// WorkRequest
-		notifURI, notifURI, notifURI, orderURI,
-		// WorkRequest-id
-		notifURI, o.Notification,
-		// WorkRequest-description
-		notifURI, desc,
+		notifURI, notifIDURI, notifDescURI, orderURI,
+		// WorkRequest Identifier
+		notifIDURI, o.Notification,
+		// WorkRequest Description
+		notifDescURI, desc,
 		// Optional WorkRequestAssignment
 		wraBlock,
 	)
@@ -717,24 +830,28 @@ func (t *Traits) notifyEnrichment(o *Order) {
 	log.Printf("← enrichment %s  body=%s\n", resp.Status, string(msg))
 }
 
-// buildTECOInsertSPARQL records an order's transition to TECO. As with REL,
-// the status triple replaces the previous one (REL or CRTD, whichever the
-// order was sitting on) so the UI sees the current state. The completion
-// timestamp, modified timestamp, and actual work hours are additive — they
-// don't conflict with any prior triples on the order.
-func (t *Traits) buildTECOInsertSPARQL(o *Order) string {
+// buildTECOFallbackSPARQL writes the simplest possible TECO update: status
+// flip + completion timestamp + modified. Used when the planner's enrichment
+// didn't include the parts/dates needed to construct a Repair or Replace
+// update, or when the order's FunctionalLocationIRI couldn't be resolved.
+// Keeps the demo's loop intact even without Triona's part graphs being
+// populated for the FL we targeted.
+func (t *Traits) buildTECOFallbackSPARQL(o *Order) string {
 	orderURI := "https://sinetiq.se/sap/MaintenanceOrder/" + o.ID
+	descURI := "https://sinetiq.se/sap/MaintenanceOrder/Description_" + o.ID
 	completedAt := time.Now().UTC().Format(time.RFC3339Nano)
-	actualHours := float64(t.CompletionDelay) / 3600.0 // CompletionDelay is in seconds
-
+	actualHours := float64(t.CompletionDelay) / 3600.0
 	return fmt.Sprintf(`PREFIX ex: <https://sinetiq.se/sap/>
 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
 DELETE { GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
-    <%s> ex:status ?old .
+    <%s> ex:status ?oldStatus .
+    <%s> rdfs:label ?oldLabel .
 }} WHERE { GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
-    <%s> ex:status ?old .
+    OPTIONAL { <%s> ex:status ?oldStatus }
+    OPTIONAL { <%s> rdfs:label ?oldLabel }
 }};
 
 INSERT DATA { GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
@@ -742,7 +859,410 @@ INSERT DATA { GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
         ex:completedAt "%s"^^xsd:dateTime ;
         dcterms:modified "%s"^^xsd:dateTime ;
         ex:actualWorkHours "%g"^^xsd:decimal .
-}}`, orderURI, orderURI, orderURI, completedAt, completedAt, actualHours)
+    <%s> rdfs:label "Maintenance order completed"@en .
+}}`,
+		orderURI, descURI,
+		orderURI, descURI,
+		orderURI, completedAt, completedAt, actualHours, descURI)
+}
+
+// buildTECORepairSPARQL produces the Repair-variant TECO update — mirror of
+// Triona's WorkOrder_Repair_*.ttl. Same physical part stays fitted; the
+// graph gains an ActualActivity recording when the service work happened,
+// linked through DirectedPlannedActivity to the work order, plus a
+// repair-activity DatedEffectivity in the effectivity graph. The currently
+// fitted part's own effectivity is NOT modified.
+//
+// Inputs come from the planner's enrichment JSON: currentPart IRI plus
+// activity start/end timestamps. The WHERE clause validates that this part
+// is in fact currently fitted at the same breakdown item the work request
+// points at — a graph-side integrity check that the planner picked a
+// sensible part.
+func (t *Traits) buildTECORepairSPARQL(o *Order, e *Enrichment) string {
+	orderURI := "https://sinetiq.se/sap/MaintenanceOrder/" + o.ID
+	woAssignURI := "https://sinetiq.se/sap/MaintenanceOrder/WorkOrderAssignment_" + o.ID
+	completedAt := time.Now().UTC().Format(time.RFC3339Nano)
+
+	return fmt.Sprintf(`PREFIX : <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/Core#>
+PREFIX ex: <https://sinetiq.se/sap/>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX step: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/>
+PREFIX workorder: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkOrder#>
+PREFIX wra: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkRequestAssignment#>
+PREFIX dpa: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/DirectedPlannedActivity#>
+PREFIX ahr: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/ActivityHappeningRelationship#>
+PREFIX aa: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/ActivityAssignment#>
+PREFIX actualactivity: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/ActualActivity#>
+PREFIX eff: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/EffectivityAssignment#>
+PREFIX de: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/DatedEffectivity#>
+PREFIX ber: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/BreakdownElementRealization#>
+PREFIX pva: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/PartViewToIndividualPartViewAssociation#>
+PREFIX woa: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkOrderAssignment#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+DELETE {
+    GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+        ?workOrder ex:status ?oldStatus .
+        ?workOrder ex:technicalCompletionDate ?oldTechnicalCompletionDate .
+        ?workOrder dcterms:modified ?oldModified .
+        ?workOrderDescription rdfs:label ?oldDescriptionLabel .
+    }
+}
+INSERT {
+    GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+        ?workOrder
+            ex:status ?newStatus ;
+            ex:technicalCompletionDate ?technicalCompletionDateTime ;
+            dcterms:modified ?modifiedDateTime .
+
+        ?workOrderDescription rdfs:label "Maintenance order completed (repair)"@en .
+
+        ?directedPlannedActivity
+            a step:DirectedPlannedActivity ;
+            dpa:Directive ?workOrder .
+
+        ?actualActivity
+            a step:ActualActivity ;
+            actualactivity:ActualStartDate [
+                a step:DateTimeString, step:String ;
+                :value ?activityStartDateTime
+            ] ;
+            actualactivity:ActualEndDate [
+                a step:DateTimeString, step:String ;
+                :value ?activityEndDateTime
+            ] .
+
+        ?activityHappeningRelationship
+            a step:ActivityHappeningRelationship ;
+            ahr:Relating ?directedPlannedActivity ;
+            ahr:Related ?actualActivity .
+
+        ?activityAssignmentRepairedPart
+            a step:ActivityAssignment ;
+            aa:AssignedTo ?individualPart ;
+            aa:AssignedActivity ?actualActivity .
+
+        ?activityAssignmentRepairActivityEffectivity
+            a step:ActivityAssignment ;
+            aa:AssignedTo ?repairActivityEffectivity ;
+            aa:AssignedActivity ?actualActivity .
+
+        ?workOrderAssignment
+            a step:WorkOrderAssignment ;
+            woa:AssignedTo ?breakdownItem ;
+            woa:AssignedWorkOrder ?workOrder .
+    }
+
+    GRAPH <https://arrowheadweb.org/graph/effectivity> {
+        ?repairActivityEffectivity
+            a step:EffectivityAssignment ;
+            eff:AssignedTo ?actualActivity ;
+            eff:AssignedEffectivity ?repairActivityDatedEffectivity ;
+            eff:EffectivityIndication step:True .
+
+        ?repairActivityDatedEffectivity
+            a step:DatedEffectivity ;
+            de:StartDefinition ?repairActivityStartDateTimeString ;
+            de:EndDefinition ?repairActivityEndDateTimeString .
+
+        ?repairActivityStartDateTimeString
+            a step:DateTimeString, step:String ;
+            :value ?activityStartDateTime .
+
+        ?repairActivityEndDateTimeString
+            a step:DateTimeString, step:String ;
+            :value ?activityEndDateTime .
+    }
+}
+WHERE {
+    BIND(IRI("%s") AS ?workOrder)
+    BIND(IRI("%s") AS ?workOrderAssignment)
+    BIND(IRI("%s") AS ?individualPart)
+
+    BIND("TECO" AS ?newStatus)
+    BIND("%s"^^xsd:dateTime AS ?technicalCompletionDateTime)
+    BIND("%s"^^xsd:dateTime AS ?modifiedDateTime)
+    BIND("%s"^^xsd:dateTime AS ?activityStartDateTime)
+    BIND("%s"^^xsd:dateTime AS ?activityEndDateTime)
+
+    BIND(REPLACE(STR(?workOrder), "^.*/", "") AS ?workOrderId)
+    BIND(IRI(CONCAT("https://sinetiq.se/sap/MaintenanceOrder/Description_", ?workOrderId)) AS ?workOrderDescription)
+
+    OPTIONAL { GRAPH <https://arrowheadweb.org/graph/sap/workorders> { ?workOrder ex:status ?oldStatus } }
+    OPTIONAL { GRAPH <https://arrowheadweb.org/graph/sap/workorders> { ?workOrder ex:technicalCompletionDate ?oldTechnicalCompletionDate } }
+    OPTIONAL { GRAPH <https://arrowheadweb.org/graph/sap/workorders> { ?workOrder dcterms:modified ?oldModified } }
+    OPTIONAL { GRAPH <https://arrowheadweb.org/graph/sap/workorders> { ?workOrderDescription rdfs:label ?oldDescriptionLabel } }
+
+    GRAPH <https://arrowheadweb.org/graph/parts> {
+        ?individualPart a step:IndividualPartView .
+    }
+
+    GRAPH <https://arrowheadweb.org/graph/associations> {
+        ?partRealization
+            pva:AssociatedIndividualPart ?individualPart ;
+            pva:AssociatedPart ?part .
+        ?breakdownRealization
+            ber:RealizedAs ?individualPart ;
+            ber:BreakdownItem ?breakdownItem .
+    }
+
+    GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+        ?workOrder a step:WorkOrder ;
+            workorder:InResponseTo ?workRequest .
+        ?workRequestAssignment
+            a step:WorkRequestAssignment ;
+            wra:AssignedWorkRequest ?workRequest ;
+            wra:AssignedTo ?breakdownItem .
+    }
+
+    GRAPH <https://arrowheadweb.org/graph/effectivity> {
+        ?effCurrent
+            eff:AssignedTo ?breakdownRealization ;
+            eff:AssignedEffectivity ?currentDatedEffectivity .
+        FILTER NOT EXISTS { ?currentDatedEffectivity de:EndDefinition ?_existingEndDefinition }
+    }
+
+    BIND(IRI(CONCAT("https://sinetiq.se/sap/MaintenanceOrder/DirectedPlannedActivity_", ?workOrderId)) AS ?directedPlannedActivity)
+    BIND(IRI(CONCAT("https://sinetiq.se/sap/MaintenanceOrder/ActivityHappeningRelationship_", ?workOrderId)) AS ?activityHappeningRelationship)
+    BIND(IRI(CONCAT("https://sinetiq.se/sap/MaintenanceOrder/ActualActivity_", ?workOrderId)) AS ?actualActivity)
+    BIND(IRI(CONCAT("https://sinetiq.se/sap/MaintenanceOrder/ActivityAssignment_", ?workOrderId, "_RepairedPart")) AS ?activityAssignmentRepairedPart)
+    BIND(IRI(CONCAT("https://sinetiq.se/sap/MaintenanceOrder/ActivityAssignment_", ?workOrderId, "_RepairActivityEffectivity")) AS ?activityAssignmentRepairActivityEffectivity)
+    BIND(IRI(CONCAT("https://sinetiq.se/sap/MaintenanceOrder/EffectivityAssignment_", ?workOrderId, "_RepairActivity")) AS ?repairActivityEffectivity)
+    BIND(IRI(CONCAT("https://sinetiq.se/sap/MaintenanceOrder/DatedEffectivity_", ?workOrderId, "_RepairActivity")) AS ?repairActivityDatedEffectivity)
+    BIND(IRI(CONCAT("https://sinetiq.se/sap/MaintenanceOrder/DateTimeString_Start_", ?workOrderId, "_RepairActivity")) AS ?repairActivityStartDateTimeString)
+    BIND(IRI(CONCAT("https://sinetiq.se/sap/MaintenanceOrder/DateTimeString_End_", ?workOrderId, "_RepairActivity")) AS ?repairActivityEndDateTimeString)
+}`,
+		orderURI, woAssignURI, e.CurrentPart,
+		completedAt, completedAt,
+		e.ActivityStart, e.ActivityEnd)
+}
+
+// buildTECOReplaceSPARQL produces the Replace-variant TECO update — mirror
+// of Triona's WorkOrder_Replace_*.ttl. The old part's currently-active
+// effectivity gets an EndDefinition (no longer fitted); a new
+// IndividualPartView is created with start-only effectivity (now currently
+// fitted); ido-ext:implements alignment triples link the new part to its
+// breakdown item and PartView. Significant graph mutation; depends on
+// Triona's part/association/effectivity graphs being correctly populated for
+// the FL in question.
+func (t *Traits) buildTECOReplaceSPARQL(o *Order, e *Enrichment) string {
+	orderURI := "https://sinetiq.se/sap/MaintenanceOrder/" + o.ID
+	woAssignURI := "https://sinetiq.se/sap/MaintenanceOrder/WorkOrderAssignment_" + o.ID
+	completedAt := time.Now().UTC().Format(time.RFC3339Nano)
+
+	return fmt.Sprintf(`PREFIX : <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/Core#>
+PREFIX ex: <https://sinetiq.se/sap/>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX ido-ext: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/ido-ext#>
+PREFIX step: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/>
+PREFIX workorder: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkOrder#>
+PREFIX wra: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkRequestAssignment#>
+PREFIX dpa: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/DirectedPlannedActivity#>
+PREFIX ahr: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/ActivityHappeningRelationship#>
+PREFIX aa: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/ActivityAssignment#>
+PREFIX actualactivity: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/ActualActivity#>
+PREFIX eff: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/EffectivityAssignment#>
+PREFIX de: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/DatedEffectivity#>
+PREFIX ber: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/BreakdownElementRealization#>
+PREFIX pva: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/PartViewToIndividualPartViewAssociation#>
+PREFIX woa: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkOrderAssignment#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+DELETE {
+    GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+        ?workOrder ex:status ?oldStatus .
+        ?workOrder ex:technicalCompletionDate ?oldTechnicalCompletionDate .
+        ?workOrder dcterms:modified ?oldModified .
+        ?workOrderDescription rdfs:label ?oldDescriptionLabel .
+    }
+}
+INSERT {
+    GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+        ?workOrder
+            ex:status ?newStatus ;
+            ex:technicalCompletionDate ?technicalCompletionDateTime ;
+            dcterms:modified ?modifiedDateTime .
+
+        ?workOrderDescription rdfs:label "Maintenance order completed (replacement)"@en .
+
+        ?directedPlannedActivity
+            a step:DirectedPlannedActivity ;
+            dpa:Directive ?workOrder .
+
+        ?actualActivity
+            a step:ActualActivity ;
+            actualactivity:ActualStartDate [
+                a step:DateTimeString, step:String ;
+                :value ?activityStartDateTime
+            ] ;
+            actualactivity:ActualEndDate [
+                a step:DateTimeString, step:String ;
+                :value ?activityEndDateTime
+            ] .
+
+        ?activityHappeningRelationship
+            a step:ActivityHappeningRelationship ;
+            ahr:Relating ?directedPlannedActivity ;
+            ahr:Related ?actualActivity .
+
+        ?activityAssignmentOutgoingEffectivity
+            a step:ActivityAssignment ;
+            aa:AssignedTo ?effOld ;
+            aa:AssignedActivity ?actualActivity .
+
+        ?activityAssignmentIncomingEffectivity
+            a step:ActivityAssignment ;
+            aa:AssignedTo ?effNew ;
+            aa:AssignedActivity ?actualActivity .
+
+        ?activityAssignmentReplacementActivityEffectivity
+            a step:ActivityAssignment ;
+            aa:AssignedTo ?replacementActivityEffectivity ;
+            aa:AssignedActivity ?actualActivity .
+
+        ?workOrderAssignment
+            a step:WorkOrderAssignment ;
+            woa:AssignedTo ?breakdownItem ;
+            woa:AssignedWorkOrder ?workOrder .
+    }
+
+    GRAPH <https://arrowheadweb.org/graph/parts> {
+        ?newIndividualPart a step:IndividualPartView, ido-ext:IndividualPart .
+    }
+
+    GRAPH <https://arrowheadweb.org/graph/associations> {
+        ?newRealization
+            a :AssociationObject, step:BreakdownElementRealization ;
+            ber:RealizedAs ?newIndividualPart ;
+            ber:BreakdownItem ?breakdownItem .
+        ?newPvIpvAssociation
+            a :AssociationObject, step:PartViewToIndividualPartViewAssociation ;
+            pva:AssociatedIndividualPart ?newIndividualPart ;
+            pva:AssociatedPart ?part .
+    }
+
+    GRAPH <https://arrowheadweb.org/graph/effectivity> {
+        ?effOldEffectivity de:EndDefinition ?oldEndDateTimeString .
+        ?oldEndDateTimeString
+            a step:DateTimeString, step:String ;
+            :value ?activityEndDateTime .
+
+        ?effNew
+            a step:EffectivityAssignment ;
+            eff:AssignedTo ?newRealization ;
+            eff:AssignedEffectivity ?newDatedEffectivity ;
+            eff:EffectivityIndication step:True .
+
+        ?newDatedEffectivity
+            a step:DatedEffectivity ;
+            de:StartDefinition ?newStartDateTimeString .
+
+        ?newStartDateTimeString
+            a step:DateTimeString, step:String ;
+            :value ?activityEndDateTime .
+
+        ?replacementActivityEffectivity
+            a step:EffectivityAssignment ;
+            eff:AssignedTo ?actualActivity ;
+            eff:AssignedEffectivity ?replacementActivityDatedEffectivity ;
+            eff:EffectivityIndication step:True .
+
+        ?replacementActivityDatedEffectivity
+            a step:DatedEffectivity ;
+            de:StartDefinition ?replacementActivityStartDateTimeString ;
+            de:EndDefinition ?replacementActivityEndDateTimeString .
+
+        ?replacementActivityStartDateTimeString
+            a step:DateTimeString, step:String ;
+            :value ?activityStartDateTime .
+
+        ?replacementActivityEndDateTimeString
+            a step:DateTimeString, step:String ;
+            :value ?activityEndDateTime .
+    }
+
+    GRAPH <http://www.arrowhead.org/step-ido-alignments> {
+        ?newIndividualPart ido-ext:implements ?breakdownItem .
+        ?newIndividualPart ido-ext:implements ?part .
+    }
+}
+WHERE {
+    BIND(IRI("%s") AS ?workOrder)
+    BIND(IRI("%s") AS ?workOrderAssignment)
+    BIND(IRI("%s") AS ?individualPart)
+    BIND(IRI("%s") AS ?newIndividualPart)
+
+    BIND("TECO" AS ?newStatus)
+    BIND("%s"^^xsd:dateTime AS ?technicalCompletionDateTime)
+    BIND("%s"^^xsd:dateTime AS ?modifiedDateTime)
+    BIND("%s"^^xsd:dateTime AS ?activityStartDateTime)
+    BIND("%s"^^xsd:dateTime AS ?activityEndDateTime)
+
+    BIND(REPLACE(STR(?workOrder), "^.*/", "") AS ?workOrderId)
+    BIND(IRI(CONCAT("https://sinetiq.se/sap/MaintenanceOrder/Description_", ?workOrderId)) AS ?workOrderDescription)
+
+    OPTIONAL { GRAPH <https://arrowheadweb.org/graph/sap/workorders> { ?workOrder ex:status ?oldStatus } }
+    OPTIONAL { GRAPH <https://arrowheadweb.org/graph/sap/workorders> { ?workOrder ex:technicalCompletionDate ?oldTechnicalCompletionDate } }
+    OPTIONAL { GRAPH <https://arrowheadweb.org/graph/sap/workorders> { ?workOrder dcterms:modified ?oldModified } }
+    OPTIONAL { GRAPH <https://arrowheadweb.org/graph/sap/workorders> { ?workOrderDescription rdfs:label ?oldDescriptionLabel } }
+
+    GRAPH <https://arrowheadweb.org/graph/parts> {
+        ?individualPart a step:IndividualPartView .
+    }
+
+    GRAPH <https://arrowheadweb.org/graph/associations> {
+        ?partRealization
+            pva:AssociatedIndividualPart ?individualPart ;
+            pva:AssociatedPart ?part .
+        ?breakdownRealization
+            ber:RealizedAs ?individualPart ;
+            ber:BreakdownItem ?breakdownItem .
+    }
+
+    GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+        ?workOrder a step:WorkOrder ;
+            workorder:InResponseTo ?workRequest .
+        ?workRequestAssignment
+            a step:WorkRequestAssignment ;
+            wra:AssignedWorkRequest ?workRequest ;
+            wra:AssignedTo ?breakdownItem .
+    }
+
+    GRAPH <https://arrowheadweb.org/graph/effectivity> {
+        ?effOld
+            eff:AssignedTo ?breakdownRealization ;
+            eff:AssignedEffectivity ?effOldEffectivity .
+        FILTER NOT EXISTS { ?effOldEffectivity de:EndDefinition ?_existingEndDefinition }
+    }
+
+    BIND(IRI(CONCAT("https://sinetiq.se/sap/MaintenanceOrder/DirectedPlannedActivity_", ?workOrderId)) AS ?directedPlannedActivity)
+    BIND(IRI(CONCAT("https://sinetiq.se/sap/MaintenanceOrder/ActivityHappeningRelationship_", ?workOrderId)) AS ?activityHappeningRelationship)
+    BIND(IRI(CONCAT("https://sinetiq.se/sap/MaintenanceOrder/ActualActivity_", ?workOrderId)) AS ?actualActivity)
+    BIND(IRI(CONCAT("https://sinetiq.se/sap/MaintenanceOrder/ActivityAssignment_", ?workOrderId, "_OutgoingEffectivity")) AS ?activityAssignmentOutgoingEffectivity)
+    BIND(IRI(CONCAT("https://sinetiq.se/sap/MaintenanceOrder/ActivityAssignment_", ?workOrderId, "_IncomingEffectivity")) AS ?activityAssignmentIncomingEffectivity)
+    BIND(IRI(CONCAT("https://sinetiq.se/sap/MaintenanceOrder/ActivityAssignment_", ?workOrderId, "_ReplacementActivityEffectivity")) AS ?activityAssignmentReplacementActivityEffectivity)
+
+    BIND(IRI(CONCAT(STR(?breakdownRealization), "-replacement")) AS ?newRealization)
+    BIND(IRI(CONCAT(STR(?partRealization), "-replacement")) AS ?newPvIpvAssociation)
+
+    BIND(REPLACE(STR(?breakdownRealization), "^.*[/#]", "") AS ?oldRealizationId)
+    BIND(REPLACE(STR(?newRealization), "^.*[/#]", "") AS ?newRealizationId)
+
+    BIND(IRI(CONCAT("https://arrowheadweb.org/data/DateTimeString_End_", ENCODE_FOR_URI(?oldRealizationId))) AS ?oldEndDateTimeString)
+    BIND(IRI(CONCAT("https://arrowheadweb.org/data/EffectivityAssignment_", ENCODE_FOR_URI(?newRealizationId))) AS ?effNew)
+    BIND(IRI(CONCAT("https://arrowheadweb.org/data/DatedEffectivity_", ENCODE_FOR_URI(?newRealizationId))) AS ?newDatedEffectivity)
+    BIND(IRI(CONCAT("https://arrowheadweb.org/data/DateTimeString_", ENCODE_FOR_URI(?newRealizationId))) AS ?newStartDateTimeString)
+
+    BIND(IRI(CONCAT("https://sinetiq.se/sap/MaintenanceOrder/EffectivityAssignment_", ?workOrderId, "_ReplacementActivity")) AS ?replacementActivityEffectivity)
+    BIND(IRI(CONCAT("https://sinetiq.se/sap/MaintenanceOrder/DatedEffectivity_", ?workOrderId, "_ReplacementActivity")) AS ?replacementActivityDatedEffectivity)
+    BIND(IRI(CONCAT("https://sinetiq.se/sap/MaintenanceOrder/DateTimeString_Start_", ?workOrderId, "_ReplacementActivity")) AS ?replacementActivityStartDateTimeString)
+    BIND(IRI(CONCAT("https://sinetiq.se/sap/MaintenanceOrder/DateTimeString_End_", ?workOrderId, "_ReplacementActivity")) AS ?replacementActivityEndDateTimeString)
+}`,
+		orderURI, woAssignURI, e.CurrentPart, e.NewPart,
+		completedAt, completedAt,
+		e.ActivityStart, e.ActivityEnd)
 }
 
 // updateEndpoint returns the SPARQL update URL by appending /statements to the
@@ -761,9 +1281,45 @@ func (t *Traits) insertToGraphDB(o *Order) {
 }
 
 // insertCompletionToGraphDB records the order's TECO transition in the graph.
-// Called from runLifecycle once the in-memory status flips to TECO.
+// Called from runTECOCountdown once the in-memory status flips to TECO. The
+// SPARQL template chosen depends on what the planner specified in the
+// enrichment JSON:
+//
+//   - decision="replace" with both currentPart and newPart populated → Replace template
+//     (closes old part's effectivity, creates new IndividualPartView, etc.)
+//   - decision="repair"  with currentPart populated → Repair template
+//     (records ActualActivity against the same part; effectivity unchanged)
+//   - anything else (no parsed enrichment, missing parts, missing dates) → fallback
+//     template (status flip + completion timestamp only)
+//
+// Falling back is intentional: it keeps the demo loop alive even when
+// Triona-side data dependencies (parts / associations / effectivity graphs)
+// aren't yet in place for the target FL.
 func (t *Traits) insertCompletionToGraphDB(o *Order) {
-	t.postSPARQL("TECO", o.ID, t.buildTECOInsertSPARQL(o))
+	stage, sparql := t.chooseTECOTemplate(o)
+	t.postSPARQL(stage, o.ID, sparql)
+}
+
+// chooseTECOTemplate picks the most specific TECO SPARQL template the
+// available data supports, and returns it along with a tag for the log line.
+func (t *Traits) chooseTECOTemplate(o *Order) (stage, sparql string) {
+	e := o.ParsedEnrichment
+	if e == nil || e.CurrentPart == "" || e.ActivityStart == "" || e.ActivityEnd == "" {
+		return "TECO", t.buildTECOFallbackSPARQL(o)
+	}
+	switch strings.ToLower(e.Decision) {
+	case "replace":
+		if e.NewPart == "" {
+			log.Printf("sapper: order %s decision=replace but newPart is empty; using fallback TECO", o.ID)
+			return "TECO", t.buildTECOFallbackSPARQL(o)
+		}
+		return "TECO-replace", t.buildTECOReplaceSPARQL(o, e)
+	case "repair", "":
+		return "TECO-repair", t.buildTECORepairSPARQL(o, e)
+	default:
+		log.Printf("sapper: order %s unknown decision %q; using fallback TECO", o.ID, e.Decision)
+		return "TECO", t.buildTECOFallbackSPARQL(o)
+	}
 }
 
 // postSPARQL is the common path for both lifecycle pushes. Graph publication is

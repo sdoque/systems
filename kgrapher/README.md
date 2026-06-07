@@ -53,13 +53,13 @@ sequenceDiagram
     SR-->>K: SystemRecordList (list of base URLs)
 
     loop for each system
-        K->>S: GET /<system>/kgraph
+        K->>S: GET /{sys}/kgraph
         S-->>K: Turtle fragment (@prefix + alc:System / afo:UnitAsset / afo:Service / …)
     end
 
     K->>K: dedupe prefixes, rewrite via localOntologies,<br/>prepend cloud IRI, concatenate
     opt graphDBurl configured
-        K->>G: SPARQL UPDATE<br/>CLEAR GRAPH <urn:state:current>;<br/>ADD GRAPH <snapshot-IRI> TO <urn:state:current>;
+        K->>G: SPARQL UPDATE<br/>CLEAR GRAPH urn:state:current;<br/>ADD GRAPH snapshot-IRI TO urn:state:current
     end
     K-->>User: merged TTL (text/turtle)
 ```

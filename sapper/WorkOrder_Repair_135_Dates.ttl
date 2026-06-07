@@ -1,0 +1,235 @@
+# Repair of equipment connected to WorkOrder 400000135
+
+PREFIX : <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/Core#>
+PREFIX ex: <https://sinetiq.se/sap/>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+
+PREFIX step: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/>
+
+PREFIX workorder: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkOrder#>
+PREFIX wra: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkRequestAssignment#>
+
+PREFIX dpa: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/DirectedPlannedActivity#>
+PREFIX ahr: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/ActivityHappeningRelationship#>
+PREFIX aa: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/ActivityAssignment#>
+PREFIX actualactivity: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/ActualActivity#>
+PREFIX eff: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/EffectivityAssignment#>
+PREFIX de: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/DatedEffectivity#>
+PREFIX ber: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/BreakdownElementRealization#>
+PREFIX pva: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/PartViewToIndividualPartViewAssociation#>
+PREFIX woa: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/STEP_AP4K/WorkOrderAssignment#>
+
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+DELETE {
+    GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+        ?workOrder ex:status ?oldStatus .
+        ?workOrder ex:technicalCompletionDate ?oldTechnicalCompletionDate .
+        ?workOrder dcterms:modified ?oldModified .
+    }
+}
+INSERT {
+    GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+        # Update WorkOrder status/completion metadata
+        ?workOrder
+            ex:status ?newStatus ;
+            ex:technicalCompletionDate ?technicalCompletionDateTime ;
+            dcterms:modified ?modifiedDateTime .
+
+        # Relationship between WorkOrder and ActualActivity
+        ?directedPlannedActivity
+            a step:DirectedPlannedActivity ;
+            dpa:Directive ?workOrder .
+
+        ?actualActivity
+            a step:ActualActivity ;
+            actualactivity:ActualStartDate [
+                a step:DateTimeString, step:String ;
+                :value ?activityStartDateTime
+            ] ;
+            actualactivity:ActualEndDate [
+                a step:DateTimeString, step:String ;
+                :value ?activityEndDateTime
+            ] .
+
+        ?activityHappeningRelationship
+            a step:ActivityHappeningRelationship ;
+            ahr:Relating ?directedPlannedActivity ;
+            ahr:Related ?actualActivity .
+
+        # Activity assignment: repaired currently fitted part
+        ?activityAssignmentRepairedPart
+            a step:ActivityAssignment ;
+            aa:AssignedTo ?individualPart ;
+            aa:AssignedActivity ?actualActivity .
+
+        # Activity assignment: dated effectivity of the repair work itself
+        ?activityAssignmentRepairActivityEffectivity
+            a step:ActivityAssignment ;
+            aa:AssignedTo ?repairActivityEffectivity ;
+            aa:AssignedActivity ?actualActivity .
+
+        # WorkOrderAssignment to the blueprint / breakdown item
+        ?workOrderAssignment
+            a step:WorkOrderAssignment ;
+            woa:AssignedTo ?breakdownItem ;
+            woa:AssignedWorkOrder ?workOrder .
+    }
+
+    GRAPH <https://arrowheadweb.org/graph/effectivity> {
+        # Dated effectivity for the repair activity itself
+        # This uses the same activity start/end values as the ActualActivity.
+        ?repairActivityEffectivity
+            a step:EffectivityAssignment ;
+            eff:AssignedTo ?actualActivity ;
+            eff:AssignedEffectivity ?repairActivityDatedEffectivity ;
+            eff:EffectivityIndication step:True .
+
+        ?repairActivityDatedEffectivity
+            a step:DatedEffectivity ;
+            de:StartDefinition ?repairActivityStartDateTimeString ;
+            de:EndDefinition ?repairActivityEndDateTimeString .
+
+        ?repairActivityStartDateTimeString
+            a step:DateTimeString,
+              step:String ;
+            :value ?activityStartDateTime .
+
+        ?repairActivityEndDateTimeString
+            a step:DateTimeString,
+              step:String ;
+            :value ?activityEndDateTime .
+    }
+}
+WHERE {
+    # Parameters for this test
+    BIND(IRI("https://sinetiq.se/sap/MaintenanceOrder/400000135") AS ?workOrder)
+    BIND(IRI("https://sinetiq.se/sap/MaintenanceOrder/WorkOrderAssignment_400000135") AS ?workOrderAssignment)
+
+    # Existing currently-installed IndividualPartView that was repaired
+    BIND(IRI("https://arrowheadweb.org/data/SK_000012") AS ?individualPart)
+
+    # WorkOrder metadata
+    BIND("TECO" AS ?newStatus)
+    BIND("2024-06-01T12:00:00"^^xsd:dateTime AS ?technicalCompletionDateTime)
+    BIND("2024-06-01T12:00:00"^^xsd:dateTime AS ?modifiedDateTime)
+
+    # Repair activity interval
+    BIND("2024-06-01T08:00:00"^^xsd:dateTime AS ?activityStartDateTime)
+    BIND("2024-06-01T12:00:00"^^xsd:dateTime AS ?activityEndDateTime)
+
+    # Extract WorkOrder number for cleaner generated URIs
+    BIND(REPLACE(STR(?workOrder), "^.*/", "") AS ?workOrderId)
+
+    # Existing WorkOrder metadata to replace
+    OPTIONAL {
+        GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+            ?workOrder ex:status ?oldStatus .
+        }
+    }
+
+    OPTIONAL {
+        GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+            ?workOrder ex:technicalCompletionDate ?oldTechnicalCompletionDate .
+        }
+    }
+
+    OPTIONAL {
+        GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+            ?workOrder dcterms:modified ?oldModified .
+        }
+    }
+
+    # Repaired IndividualPartView must exist in graph/parts
+    GRAPH <https://arrowheadweb.org/graph/parts> {
+        ?individualPart a step:IndividualPartView .
+    }
+
+    # Existing association lookups
+    GRAPH <https://arrowheadweb.org/graph/associations> {
+        ?partRealization
+            pva:AssociatedIndividualPart ?individualPart ;
+            pva:AssociatedPart ?part .
+
+        ?breakdownRealization
+            ber:RealizedAs ?individualPart ;
+            ber:BreakdownItem ?breakdownItem .
+    }
+
+    # Validate that this WorkOrder's WorkRequest is assigned to the same breakdown item
+    GRAPH <https://arrowheadweb.org/graph/sap/workorders> {
+        ?workOrder
+            a step:WorkOrder ;
+            workorder:InResponseTo ?workRequest .
+
+        ?workRequestAssignment
+            a step:WorkRequestAssignment ;
+            wra:AssignedWorkRequest ?workRequest ;
+            wra:AssignedTo ?breakdownItem .
+    }
+
+    # Validate that the repaired IndividualPartView is the currently active fitted part
+    GRAPH <https://arrowheadweb.org/graph/effectivity> {
+        ?effCurrent
+            eff:AssignedTo ?breakdownRealization ;
+            eff:AssignedEffectivity ?currentDatedEffectivity .
+
+        # Current fitted part = has active effectivity, meaning no EndDefinition.
+        FILTER NOT EXISTS {
+            ?currentDatedEffectivity de:EndDefinition ?existingEndDefinition .
+        }
+    }
+
+    # URI generation: activity/work-order side
+    BIND(IRI(CONCAT(
+        "https://sinetiq.se/sap/MaintenanceOrder/DirectedPlannedActivity_",
+        ?workOrderId
+    )) AS ?directedPlannedActivity)
+
+    BIND(IRI(CONCAT(
+        "https://sinetiq.se/sap/MaintenanceOrder/ActivityHappeningRelationship_",
+        ?workOrderId
+    )) AS ?activityHappeningRelationship)
+
+    BIND(IRI(CONCAT(
+        "https://sinetiq.se/sap/MaintenanceOrder/ActualActivity_",
+        ?workOrderId
+    )) AS ?actualActivity)
+
+    BIND(IRI(CONCAT(
+        "https://sinetiq.se/sap/MaintenanceOrder/ActivityAssignment_",
+        ?workOrderId,
+        "_RepairedPart"
+    )) AS ?activityAssignmentRepairedPart)
+
+    BIND(IRI(CONCAT(
+        "https://sinetiq.se/sap/MaintenanceOrder/ActivityAssignment_",
+        ?workOrderId,
+        "_RepairActivityEffectivity"
+    )) AS ?activityAssignmentRepairActivityEffectivity)
+
+    # URI generation: repair activity effectivity
+    BIND(IRI(CONCAT(
+        "https://sinetiq.se/sap/MaintenanceOrder/EffectivityAssignment_",
+        ?workOrderId,
+        "_RepairActivity"
+    )) AS ?repairActivityEffectivity)
+
+    BIND(IRI(CONCAT(
+        "https://sinetiq.se/sap/MaintenanceOrder/DatedEffectivity_",
+        ?workOrderId,
+        "_RepairActivity"
+    )) AS ?repairActivityDatedEffectivity)
+
+    BIND(IRI(CONCAT(
+        "https://sinetiq.se/sap/MaintenanceOrder/DateTimeString_Start_",
+        ?workOrderId,
+        "_RepairActivity"
+    )) AS ?repairActivityStartDateTimeString)
+
+    BIND(IRI(CONCAT(
+        "https://sinetiq.se/sap/MaintenanceOrder/DateTimeString_End_",
+        ?workOrderId,
+        "_RepairActivity"
+    )) AS ?repairActivityEndDateTimeString)
+}

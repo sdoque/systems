@@ -76,8 +76,22 @@ type Order struct {
 	CreatedAt           time.Time
 	ReleasedAt          time.Time // zero until enrichAndRelease is called
 	Request             OrderRequest
-	SuggestedEnrichment string          // template the firefighting UI prefills when this order is selected; defaults to the seals/gaskets example
+	CurrentPartIRI      string          // IRI of the part currently fitted at the FL, resolved from GraphDB at order-create time; empty if unresolved
+	SuggestedEnrichment string          // template the firefighting UI prefills when this order is selected
 	Enrichment          json.RawMessage // planner's actual submission; nil until released
+	ParsedEnrichment    *Enrichment     // structured view of Enrichment; nil if parse failed or not yet released
+}
+
+// Enrichment is the structured form of the planner's firefighting submission.
+// The planner's textarea contains JSON with this shape; the Sapper parses it on
+// release and uses it to drive which TECO SPARQL template runs (Repair vs Replace).
+type Enrichment struct {
+	Decision      string           `json:"decision"`             // "repair" or "replace"
+	CurrentPart   string           `json:"currentPart"`          // IRI of the currently fitted part (pre-filled, planner can override)
+	NewPart       string           `json:"newPart,omitempty"`    // IRI of the replacement part (required when decision="replace")
+	ActivityStart string           `json:"activityStart"`        // ISO 8601 dateTime, when the field work began
+	ActivityEnd   string           `json:"activityEnd"`          // ISO 8601 dateTime, when the field work ended
+	Operations    []OrderOperation `json:"operations,omitempty"` // unchanged; passed through to the nurse for awareness
 }
 
 // CompletionEvent is POSTed to the consumer's monitor endpoint when an order reaches TECO.

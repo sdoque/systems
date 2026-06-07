@@ -1,6 +1,6 @@
 module github.com/sdoque/systems/telegrapher
 
-go 1.26.3
+go 1.26.4
 
 require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1

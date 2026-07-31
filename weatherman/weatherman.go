@@ -45,7 +45,7 @@ func main() {
 		Description: "exposes a Davis Vantage Pro2 weather station as Arrowhead services via USB serial",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20184, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30184, "http": 20184, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/weatherman",
 		DName: pkix.Name{
 			CommonName:         sys.Name,

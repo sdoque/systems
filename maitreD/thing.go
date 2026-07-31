@@ -69,6 +69,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:        "maitreD",
+		Mission:     components.MissionCore,
 		Details:     map[string][]string{"Role": {"host-attestation"}},
 		ServicesMap: map[string]*components.Service{attest.SubPath: &attest},
 		Traits:      &Traits{},

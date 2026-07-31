@@ -68,7 +68,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "ComfortController",
-		Mission: "flatten_peak_demand",
+		Mission: components.MissionControl,
 		Details: map[string][]string{"FunctionalLocation": {"Kitchen"}},
 		ServicesMap: components.Services{
 			setpointSvc.SubPath: &setpointSvc,

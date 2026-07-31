@@ -93,6 +93,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "registry",
+		Mission: components.MissionCore,
 		Details: map[string][]string{"Type": {"ephemeral"}},
 		ServicesMap: components.Services{
 			registerService.SubPath:   &registerService,
@@ -232,7 +233,7 @@ func (t *Traits) serviceRegistryHandler() {
 				request.Error <- fmt.Errorf("invalid record type")
 				continue
 			}
-			request.Result <- t.FilterByServiceDefinitionAndDetails(qform.ServiceDefinition, qform.Details)
+			request.Result <- t.FilterRecords(*qform)
 
 		case "delete":
 			t.mu.Lock()
@@ -257,14 +258,32 @@ func compareDetails(reqDetails []string, availDetails []string) bool {
 	return false
 }
 
-// FilterByServiceDefinitionAndDetails returns services matching the given definition and details.
-func (t *Traits) FilterByServiceDefinitionAndDetails(desiredDefinition string, requiredDetails map[string][]string) []forms.ServiceRecord_v1 {
+// FilterRecords returns the registered services a quest matches on: its service
+// definition, its provider, and its details. Every criterion the quest states
+// must hold; criteria it leaves empty do not narrow anything.
+//
+// An empty ServiceDefinition matches any definition, which is what lets the
+// authorizer ask for everything one system provides in order to read that
+// system's own attributes. A quest that states *neither* a definition nor a
+// provider returns nothing rather than the whole registry: a request that
+// narrows nothing is a malformed one, and answering it with the entire cloud
+// would turn a typo into a disclosure.
+func (t *Traits) FilterRecords(quest forms.ServiceQuest_v1) []forms.ServiceRecord_v1 {
+	if quest.ServiceDefinition == "" && quest.ProviderName == "" {
+		return nil
+	}
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	requiredDetails := quest.Details
+
 	var matchingRecords []forms.ServiceRecord_v1
 	for _, record := range t.serviceRegistry {
-		if record.ServiceDefinition != desiredDefinition {
+		if quest.ServiceDefinition != "" && record.ServiceDefinition != quest.ServiceDefinition {
+			continue
+		}
+		if quest.ProviderName != "" && record.SystemName != quest.ProviderName {
 			continue
 		}
 		matchesAllDetails := true

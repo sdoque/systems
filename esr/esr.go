@@ -50,7 +50,7 @@ func main() {
 		Description: "is an Arrowhead mandatory core system that keeps track of the currently available services.",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}, "LocalCloud": {"AlphaCloud"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20102, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30102, "http": 20102, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/esr",
 		DName: pkix.Name{
 			CommonName:         sys.Name,

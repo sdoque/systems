@@ -44,7 +44,7 @@ func main() {
 		Description: "exposes ZigBee devices paired to a RaspBee II / deCONZ gateway as Arrowhead services",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20185, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30185, "http": 20185, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/beekeeper",
 		DName: pkix.Name{
 			CommonName:         sys.Name,

@@ -44,7 +44,7 @@ func main() {
 		Description: " is a system that monitors an asset's measurements and reports to a SAP system in case of anomalies.",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20181, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30181, "http": 20181, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/nurse",
 		DName: pkix.Name{
 			CommonName:         sys.Name,

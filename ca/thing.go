@@ -107,6 +107,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "certification",
+		Mission: components.MissionCore,
 		Details: map[string][]string{"PKI": {"X.509"}, "Location": {"LocalCloud"}},
 		ServicesMap: map[string]*components.Service{
 			certify.SubPath:   &certify,

@@ -57,9 +57,14 @@ type Traits struct {
 
 // initTemplate initializes a UnitAsset with default values.
 func initTemplate() *components.UnitAsset {
+	// The mission is declared per service, not on the unit asset: the telegrapher
+	// is a bridge to an MQTT broker rather than a thing, and a topic path
+	// discloses nothing about whether what sits behind it is observed or driven.
+	// Only whoever configures the topic knows, so only they can say.
 	access := components.Service{
 		Definition:  "temperature",
 		SubPath:     "access",
+		Mission:     components.MissionMeasurement,
 		Details:     map[string][]string{"forms": {"payload"}},
 		RegPeriod:   30,
 		Description: "Read the current topic message (GET) or publish to it (PUT)",
@@ -67,7 +72,6 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "Kitchen/temperature",
-		Mission: "passon_message",
 		Details: map[string][]string{"mqtt": {"home"}},
 		ServicesMap: components.Services{
 			access.SubPath: &access,

@@ -68,9 +68,15 @@ func initTemplate() *components.UnitAsset {
 		Description: "reads the input (GET) or changes the output (POST) of the channel",
 	}
 
+	// Each configured unit asset is one RevPi process-image channel, so the
+	// mission is declared per asset rather than derived: unlike a Modbus
+	// register's rights or an OPC UA node's access level, the process image name
+	// passed to piTest states nothing about direction, and the same address is
+	// used for both reading and writing here. A channel wired to an output
+	// declares "actuation".
 	return &components.UnitAsset{
 		Name:    "LevelSensor_1",
-		Mission: "measure_level",
+		Mission: components.MissionMeasurement,
 		Details: map[string][]string{"Unit": {"Percent"}, "FunctionalLocation": {"UpperTank"}, "Description": {"level"}},
 		ServicesMap: components.Services{
 			access.SubPath: &access,

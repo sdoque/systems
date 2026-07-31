@@ -261,6 +261,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "SAPSimulator",
+		Mission: components.MissionTransaction,
 		Details: map[string][]string{"Plant": {"1000"}},
 		ServicesMap: components.Services{
 			ordersService.SubPath:       &ordersService,

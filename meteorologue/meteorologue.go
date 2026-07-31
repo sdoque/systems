@@ -45,7 +45,7 @@ func main() {
 		Description: "exposes Netatmo weather station modules as Arrowhead services",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20183, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30183, "http": 20183, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/meteorologue",
 		DName: pkix.Name{
 			CommonName:         sys.Name,

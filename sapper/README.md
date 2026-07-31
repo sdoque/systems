@@ -122,6 +122,7 @@ holds no configured URLs for them.
     "unit_assets": [
         {
             "name": "SAPSimulator",
+            "mission": "transaction",
             "details": { "Plant": ["1000"] },
             "services": [
                 {
@@ -145,7 +146,7 @@ holds no configured URLs for them.
             ]
         }
     ],
-    "protocolsNports": { "coap": 0, "http": 20191, "https": 0 },
+    "protocolsNports": { "coap": 0, "http": 20391, "https": 30391 },
     "coreSystems": [
         { "coreSystem": "serviceregistrar", "url": "http://<host>:20102/serviceregistrar/registry" },
         { "coreSystem": "orchestrator",     "url": "http://<host>:20103/orchestrator/orchestration" },

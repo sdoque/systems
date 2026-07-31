@@ -113,7 +113,7 @@ func initTemplate() *components.UnitAsset {
 	}
 	return &components.UnitAsset{
 		Name:    "Vessel",
-		Mission: "monitor_vessel",
+		Mission: components.MissionMeasurement,
 		Details: map[string][]string{"FunctionalLocation": {"Boat"}},
 		ServicesMap: components.Services{
 			access.SubPath: &access,

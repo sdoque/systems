@@ -83,6 +83,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "HealthTracker",
+		Mission: components.MissionAggregation,
 		Details: map[string][]string{},
 		ServicesMap: components.Services{
 			monitorService.SubPath:    &monitorService,

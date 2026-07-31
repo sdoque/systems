@@ -37,8 +37,8 @@ func TestInitTemplate(t *testing.T) {
 	if ua.Name != "YOLOv8" {
 		t.Errorf("Name: got %q, want %q", ua.Name, "YOLOv8")
 	}
-	if ua.Mission != "object_detection" {
-		t.Errorf("Mission: got %q, want %q", ua.Mission, "object_detection")
+	if ua.Mission != "aggregation" {
+		t.Errorf("Mission: got %q, want %q", ua.Mission, "aggregation")
 	}
 	if _, ok := ua.ServicesMap["recognize"]; !ok {
 		t.Error("ServicesMap should contain a 'recognize' service")

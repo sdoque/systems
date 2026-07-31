@@ -51,8 +51,8 @@ func TestInitTemplate(t *testing.T) {
 	if ua.Name != "VantagePro2" {
 		t.Errorf("Name: got %q, want %q", ua.Name, "VantagePro2")
 	}
-	if ua.Mission != "provide_weather_data" {
-		t.Errorf("Mission: got %q, want %q", ua.Mission, "provide_weather_data")
+	if ua.Mission != "measurement" {
+		t.Errorf("Mission: got %q, want %q", ua.Mission, "measurement")
 	}
 	cfg, ok := ua.Traits.(*StationConfig)
 	if !ok {

@@ -136,6 +136,7 @@ in the same assembly pass.
     "unit_assets": [
         {
             "name": "assembler",
+            "mission": "aggregation",
             "details": { "Type": ["Interactive"] },
             "services": [
                 {
@@ -150,7 +151,7 @@ in the same assembly pass.
             ]
         }
     ],
-    "protocolsNports": { "coap": 0, "http": 20106, "https": 0 },
+    "protocolsNports": { "coap": 0, "http": 20106, "https": 30106 },
     "coreSystems": [ /* serviceregistrar, orchestrator, ca, maitreD */ ]
 }
 ```

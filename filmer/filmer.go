@@ -45,7 +45,7 @@ func main() {
 		Description: "streams live MJPEG video from a Raspberry Pi camera",
 		Details:     map[string][]string{"Developer": {"Arrowhead"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20162, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30162, "http": 20162, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/mbaigo/tree/master/filmer",
 		DName: pkix.Name{
 			CommonName:         sys.Name,

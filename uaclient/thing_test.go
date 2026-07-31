@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"github.com/gopcua/opcua/ua"
+	"github.com/sdoque/mbaigo/components"
+	"github.com/sdoque/mbaigo/usecases"
 )
 
 // ------------------------------------- join
@@ -113,4 +115,59 @@ func TestServing_InvalidPath(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
 	}
+}
+
+// A node's mission follows the access level the OPC UA server reports, so the
+// classification cannot disagree with what the server will actually permit.
+func TestMissionForAccess(t *testing.T) {
+	if got := missionForAccess(true); got != "actuation" {
+		t.Errorf("missionForAccess(true) = %q; want %q", got, "actuation")
+	}
+	if got := missionForAccess(false); got != "measurement" {
+		t.Errorf("missionForAccess(false) = %q; want %q", got, "measurement")
+	}
+}
+
+// Browsing only enumerates the address space, so it stays measurement even on a
+// writable node. Were it to inherit the node's mission, a policy granting writes
+// to actuation would also grant enumeration of everything behind that node.
+func TestApplyNodeMissionsLeavesBrowseReadOnly(t *testing.T) {
+	ua := initTemplate()
+	services := usecases.MakeServiceMap(getServicesList(*ua))
+	applyNodeMissions(services)
+
+	browseServ, ok := services["browse"]
+	if !ok {
+		t.Fatal("template has no browse service")
+	}
+	if browseServ.Mission != "measurement" {
+		t.Errorf("browse mission = %q; want %q", browseServ.Mission, "measurement")
+	}
+
+	// access carries no mission of its own: it inherits the node asset's, which
+	// is what missionForAccess decided.
+	accessServ, ok := services["access"]
+	if !ok {
+		t.Fatal("template has no access service")
+	}
+	if accessServ.Mission != "" {
+		t.Errorf("access mission = %q; want it to inherit the asset's", accessServ.Mission)
+	}
+
+	writable := &components.UnitAsset{Mission: missionForAccess(true), ServicesMap: services}
+	if got := components.EffectiveMission(writable, accessServ); got != "actuation" {
+		t.Errorf("access effective mission on a writable node = %q; want %q", got, "actuation")
+	}
+	if got := components.EffectiveMission(writable, browseServ); got != "measurement" {
+		t.Errorf("browse effective mission on a writable node = %q; want %q", got, "measurement")
+	}
+}
+
+// getServicesList mirrors the framework's own template-to-config conversion.
+func getServicesList(ua components.UnitAsset) []components.Service {
+	var list []components.Service
+	for _, s := range ua.GetServices() {
+		list = append(list, *s)
+	}
+	return list
 }

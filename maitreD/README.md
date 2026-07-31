@@ -74,6 +74,7 @@ On first run the maitreD generates a `systemconfig.json` and exits so you can re
   "unit_assets": [
     {
       "name": "maitreD",
+      "mission": "core",
       "details": {
         "Role": ["host-attestation"]
       }
@@ -81,7 +82,7 @@ On first run the maitreD generates a `systemconfig.json` and exits so you can re
   ],
   "protocolsNports": {
     "http":  20101,
-    "https": 20101,
+    "https": 30101,
     "coap":  0
   },
   "coreSystems": [

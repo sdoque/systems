@@ -44,7 +44,7 @@ func main() {
 		Description: " provides a rotation service using a standard servo motor driven with PWM",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20151, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30151, "http": 20151, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/parallax",
 		DName: pkix.Name{
 			CommonName:         sys.Name,

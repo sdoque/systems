@@ -92,7 +92,7 @@ func TestGetServiceURL(t *testing.T) {
 			newMockTransport(createMultiHTTPResponse(2, testCase.writeError, testCase.inputBody),
 				testCase.mockTransportErr, testCase.errHTTP)
 		}
-		servLoc, err := mua.getServiceURL(testCase.inputForm)
+		servLoc, err := mua.getServiceURL(testCase.inputForm, "testconsumer")
 		if string(servLoc) != testCase.expectedOutput || (err == nil && testCase.expectedErr == true) ||
 			(err != nil && testCase.expectedErr == false) {
 			t.Errorf("In test case: %s: Expected %s and error %t, got: %s and %v",
@@ -123,6 +123,83 @@ func TestSelectService(t *testing.T) {
 
 	if string(expectedService) != string(receivedService) {
 		t.Errorf("Expected: %v, got: %v", expectedService, receivedService)
+	}
+}
+
+// testRecord builds a registration record for a single provider, as the service
+// registrar would return it.
+func testRecord(protoPort map[string]int) forms.ServiceRecordList_v1 {
+	var rec forms.ServiceRecord_v1
+	rec.NewForm()
+	rec.SystemName = "ds18b20"
+	rec.ServiceDefinition = "temperature"
+	rec.SubPath = "temperature"
+	rec.ServiceNode = "kitchen-pi"
+	rec.IPAddresses = []string{"123.456.789"}
+	rec.ProtoPort = protoPort
+	rec.Details = map[string][]string{"FunctionalLocation": {"Kitchen"}}
+
+	var list forms.ServiceRecordList_v1
+	list.NewForm()
+	list.List = []forms.ServiceRecord_v1{rec}
+	return list
+}
+
+// A provider that has bound HTTPS must be handed out over HTTPS. The URL decides
+// whether the consumer's request carries its client certificate, and therefore
+// whether the provider can identify the caller at all — an orchestrator that
+// answers with a plain-HTTP URL strips the identity of every consumer it serves,
+// however well enrolled both ends are.
+func TestSelectServiceProtocolPreference(t *testing.T) {
+	tests := []struct {
+		name      string
+		protoPort map[string]int
+		wantURL   string
+	}{
+		{
+			name:      "https bound is preferred over http",
+			protoPort: map[string]int{"http": 20152, "https": 30150},
+			wantURL:   "https://123.456.789:30150/ds18b20/temperature",
+		},
+		{
+			// The common case across the cloud today: https is present in the
+			// configuration but set to 0, so no TLS listener is ever bound.
+			name:      "https configured but not bound falls back to http",
+			protoPort: map[string]int{"http": 20152, "https": 0},
+			wantURL:   "http://123.456.789:20152/ds18b20/temperature",
+		},
+		{
+			name:      "http only",
+			protoPort: map[string]int{"http": 20152},
+			wantURL:   "http://123.456.789:20152/ds18b20/temperature",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := selectService(testRecord(tc.protoPort)).ServLocation; got != tc.wantURL {
+				t.Errorf("ServLocation = %q; want %q", got, tc.wantURL)
+			}
+		})
+	}
+}
+
+// The record's identity and metadata must survive the conversion: the authorizer
+// keys on these once policy filtering is wired in.
+func TestSelectServiceCarriesRecordFields(t *testing.T) {
+	sp := selectService(testRecord(map[string]int{"https": 30150}))
+
+	if sp.ProviderName != "ds18b20" {
+		t.Errorf("ProviderName = %q; want %q", sp.ProviderName, "ds18b20")
+	}
+	if sp.ServiceDefinition != "temperature" {
+		t.Errorf("ServiceDefinition = %q; want %q", sp.ServiceDefinition, "temperature")
+	}
+	if sp.ServNode != "kitchen-pi" {
+		t.Errorf("ServNode = %q; want %q", sp.ServNode, "kitchen-pi")
+	}
+	if got := sp.Details["FunctionalLocation"]; len(got) != 1 || got[0] != "Kitchen" {
+		t.Errorf("Details[FunctionalLocation] = %v; want [Kitchen]", got)
 	}
 }
 
@@ -237,5 +314,137 @@ func TestGetServicesURL(t *testing.T) {
 			t.Errorf("In test case: %s: Expected %s and error %t, got: %s and %v",
 				testCase.testName, testCase.expectedOutput, testCase.expectedErr, string(servLoc), err)
 		}
+	}
+}
+
+// candidates builds a two-provider registrar answer.
+func candidates() forms.ServiceRecordList_v1 {
+	var kitchen, bathroom forms.ServiceRecord_v1
+	kitchen.NewForm()
+	kitchen.SystemName = "ds18b20"
+	kitchen.ServiceNode = "pi_ds18b20_sensor_Id_temperature"
+	kitchen.ServiceDefinition = "temperature"
+	kitchen.Mission = "measurement"
+	bathroom.NewForm()
+	bathroom.SystemName = "telegrapher"
+	bathroom.ServiceNode = "pi_telegrapher_Bathroom_temperature"
+	bathroom.ServiceDefinition = "temperature"
+	bathroom.Mission = "measurement"
+
+	var list forms.ServiceRecordList_v1
+	list.NewForm()
+	list.List = []forms.ServiceRecord_v1{kitchen, bathroom}
+	return list
+}
+
+func grantListResponse(t *testing.T, permitted forms.ServiceRecord_v1) func() *http.Response {
+	t.Helper()
+	var answer forms.AuthorizationGrantList_v1
+	answer.NewForm()
+	answer.Grants = []forms.AuthorizationGrant_v1{{Record: permitted, Token: "claims.signature", TTL: "5m", Reason: "policy 0 permits read"}}
+	answer.Refusals = []forms.AuthorizationRefusal_v1{{
+		ProviderName: "telegrapher",
+		ServiceNode:  "pi_telegrapher_Bathroom_temperature",
+		Reason:       "locations do not match",
+	}}
+	body, err := json.Marshal(&answer)
+	if err != nil {
+		t.Fatalf("marshalling the grant list: %v", err)
+	}
+	return func() *http.Response {
+		return &http.Response{
+			Status:     "200 OK",
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(bytes.NewReader(body)),
+		}
+	}
+}
+
+// A cloud that has not adopted authorization must keep orchestrating. Making the
+// authorizer a hard dependency of every deployment would break clouds that
+// predate it.
+func TestAuthorizedPassesThroughWithoutAnAuthorizer(t *testing.T) {
+	mua := createUnitAsset()
+	all := candidates()
+
+	got, _, err := mua.authorized("thermostat", "read", all)
+	if err != nil {
+		t.Fatalf("authorized: %v", err)
+	}
+	if len(got.List) != len(all.List) {
+		t.Errorf("filtered %d of %d candidates with no authorizer configured", len(all.List)-len(got.List), len(all.List))
+	}
+}
+
+// With an authorizer, only the granted candidates survive.
+func TestAuthorizedKeepsOnlyGrantedCandidates(t *testing.T) {
+	mua := createUnitAsset()
+	mua.leadingAuthorizer = "http://localhost:20104/authorizer/authorization"
+	all := candidates()
+	newMockTransport(grantListResponse(t, all.List[0]), 0, nil)
+
+	got, tokens, err := mua.authorized("thermostat", "read", all)
+	if err != nil {
+		t.Fatalf("authorized: %v", err)
+	}
+	if len(got.List) != 1 {
+		t.Fatalf("kept %d candidates; want 1", len(got.List))
+	}
+	if got.List[0].SystemName != "ds18b20" {
+		t.Errorf("kept %q; want ds18b20", got.List[0].SystemName)
+	}
+	// The token must come back keyed by service node, so the one attached to the
+	// answer belongs to the provider actually chosen.
+	if tokens[got.List[0].ServiceNode] == "" {
+		t.Errorf("no token for the granted provider: %v", tokens)
+	}
+}
+
+// Having named the gate, running without it is a fault rather than a fallback:
+// an unreachable authorizer must not silently restore unfiltered orchestration.
+func TestAuthorizedFailsClosedWhenTheAuthorizerIsUnreachable(t *testing.T) {
+	mua := createUnitAsset()
+	mua.leadingAuthorizer = "http://localhost:20104/authorizer/authorization"
+	newMockTransport(func() *http.Response { return nil }, 1, errHTTP)
+
+	got, _, err := mua.authorized("thermostat", "read", candidates())
+	if err == nil {
+		t.Fatal("an unreachable authorizer was treated as permission")
+	}
+	if len(got.List) != 0 {
+		t.Errorf("returned %d candidates despite the failure", len(got.List))
+	}
+	if mua.leadingAuthorizer != "" {
+		t.Error("the cached authorizer URL survived a failure; it must be looked up again")
+	}
+}
+
+// An authorizer that permits nothing is a complete answer, not an error, but the
+// consumer must be told rather than handed a provider it may not use.
+func TestAuthorizedReturnsNothingWhenAllAreRefused(t *testing.T) {
+	mua := createUnitAsset()
+	mua.leadingAuthorizer = "http://localhost:20104/authorizer/authorization"
+
+	var empty forms.AuthorizationGrantList_v1
+	empty.NewForm()
+	body, err := json.Marshal(&empty)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	newMockTransport(func() *http.Response {
+		return &http.Response{
+			Status: "200 OK", StatusCode: 200,
+			Header: http.Header{"Content-Type": []string{"application/json"}},
+			Body:   io.NopCloser(bytes.NewReader(body)),
+		}
+	}, 0, nil)
+
+	got, _, err := mua.authorized("thermostat", "read", candidates())
+	if err != nil {
+		t.Fatalf("an empty grant list was treated as an error: %v", err)
+	}
+	if len(got.List) != 0 {
+		t.Errorf("kept %d candidates; want none", len(got.List))
 	}
 }

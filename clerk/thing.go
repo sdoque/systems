@@ -83,7 +83,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "product",
-		Mission: "take_orders",
+		Mission: components.MissionTransaction,
 		Details: map[string][]string{"Collection": {"PenHolder"}},
 		ServicesMap: components.Services{
 			ordersService.SubPath: &ordersService,

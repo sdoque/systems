@@ -54,7 +54,7 @@ func main() {
 		Description: "skeleton system for learning the mbaigo architecture",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20192, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30192, "http": 20192, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/Drafter",
 		DName: pkix.Name{
 			CommonName:         sys.Name,

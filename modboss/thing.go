@@ -69,25 +69,29 @@ func initTemplate() *components.UnitAsset {
 		},
 		Traits: &Traits{
 			ServerAddress: "192.168.1.6:502",
+			// Entries are "address,name,rights,dataType" with an optional fifth
+			// field naming the device's own functional location. Without it the
+			// register inherits the PLC's, which is right for anything inside
+			// the cabinet and wrong for anything out in the plant.
 			RegisterMap: map[string][]string{
 				"coil": {
-					"00001,ConveyorStart,rw,Boolean",
-					"00002,ConveyorStop,rw,Boolean",
+					"00001,ConveyorStart,rw,Boolean,FeedStation",
+					"00002,ConveyorStop,rw,Boolean,FeedStation",
 					"00003,EmergencyStop,ro,Boolean",
 				},
 				"discreteInput": {
-					"00001,MotorRunning,ro,Boolean",
-					"00002,LimitSwitchReached,ro,Boolean",
+					"00001,MotorRunning,ro,Boolean,FeedStation",
+					"00002,LimitSwitchReached,ro,Boolean,FeedStation",
 					"00003,OverloadDetected,ro,Boolean",
 				},
 				"holdingRegister": {
-					"00001,TargetSpeed,rw,16-bit INT",
-					"00002,CurrentSpeed,ro,16-bit INT",
+					"00001,TargetSpeed,rw,16-bit INT,FeedStation",
+					"00002,CurrentSpeed,ro,16-bit INT,FeedStation",
 					"00003,BatchCounter,rw,16-bit INT",
 				},
 				"inputRegister": {
-					"00002,TemperatureSensor2,ro,16-bit INT",
-					"00003,VibrationSensor,ro,16-bit INT",
+					"00002,TemperatureSensor2,ro,16-bit INT,DryingOven",
+					"00003,VibrationSensor,ro,16-bit INT,DryingOven",
 				},
 			},
 		},
@@ -129,6 +133,11 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			if len(parts) < 4 {
 				log.Fatalf("Bad configuration of %s\n", ioKind)
 			}
+			mission, err := missionForRights(parts[2])
+			if err != nil {
+				log.Fatalf("Bad configuration of %s register %q: %v\n", ioKind, parts[1], err)
+			}
+
 			t := &Traits{
 				conn:     &slave,
 				IOtype:   ioKind,
@@ -142,6 +151,16 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			for k, v := range configuredAsset.Details {
 				newDetails[k] = v
 			}
+			// An optional fifth field gives the register its own functional
+			// location, replacing the one inherited from the PLC. The PLC is a
+			// cabinet; the devices wired to it are spread across the plant, and
+			// a failed photo sensor has to be locatable from its registration
+			// alone. It is also what the authorizer's pairing rule matches on,
+			// so a register left without one is treated as being wherever its
+			// PLC is, which is the honest default.
+			if location := registerLocation(parts); location != "" {
+				newDetails["FunctionalLocation"] = []string{location}
+			}
 			if kind == "coil" || kind == "discreteInput" {
 				newDetails["Forms"] = []string{"SignalB_v1a"}
 			} else {
@@ -150,6 +169,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 
 			ua := &components.UnitAsset{
 				Name:        parts[1],
+				Mission:     mission,
 				Owner:       sys,
 				Details:     newDetails,
 				ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
@@ -226,6 +246,41 @@ const (
 	InputRegister
 	numberOfIOtype //to be use as arithmetic counter (IOType + 1) % numberOfIOtype
 )
+
+// registerLocation returns the functional location declared for a register, or
+// the empty string when the entry does not carry one.
+//
+// A register map entry is "address,name,rights,dataType" with an optional fifth
+// field for the location: the four-field form remains valid and means the device
+// is wherever its PLC is.
+func registerLocation(parts []string) string {
+	if len(parts) < 5 {
+		return ""
+	}
+	return strings.TrimSpace(parts[4])
+}
+
+// missionForRights derives a register's mission from its access mode.
+//
+// The PLC is an interface, not a thing: what is wired to each register is the
+// asset. A register that can only be read observes the process, and one that can
+// be written acts on it. Modbus already states which in the register map — the
+// third field of each entry — so the mission needs no separate configuration and
+// cannot drift away from what the register actually permits.
+//
+// A register whose semantics are really configuration rather than actuation (a
+// batch counter, say, rather than a motor command) is not distinguishable from
+// the access mode alone. If that distinction is ever needed, the register map
+// entry can carry an explicit mission as a sixth field, after the location.
+func missionForRights(rights string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(rights)) {
+	case "ro":
+		return components.MissionMeasurement, nil
+	case "rw", "wo":
+		return components.MissionActuation, nil
+	}
+	return "", fmt.Errorf("unknown access mode %q: expected ro, rw or wo", rights)
+}
 
 func typeOfIO(nameIO string) ioType {
 	var ioMap = map[string]ioType{

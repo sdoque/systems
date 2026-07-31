@@ -57,7 +57,7 @@ type SwitchInfo struct {
 func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:    "BeehiveDashboard",
-		Mission: "web_dashboard",
+		Mission: components.MissionAggregation,
 		Details: map[string][]string{},
 		ServicesMap: components.Services{
 			"dashboard": &components.Service{

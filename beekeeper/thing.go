@@ -302,9 +302,14 @@ func newDeviceAsset(assetName, displayName string, services []string, lightID st
 		if !ok {
 			continue
 		}
+		mission, err := missionForService(svc)
+		if err != nil {
+			log.Fatalf("beekeeper: asset %q: %v\n", assetName, err)
+		}
 		s := &components.Service{
 			Definition:  spec.definition,
 			SubPath:     svc,
+			Mission:     mission,
 			Details:     map[string][]string{"Unit": {spec.unit}, "Forms": {"SignalA_v1a"}},
 			RegPeriod:   30,
 			Description: spec.description,
@@ -312,9 +317,18 @@ func newDeviceAsset(assetName, displayName string, services []string, lightID st
 		svcMap[svc] = s
 	}
 
+	// The asset's own mission is the fallback for any service that declares
+	// none; a device that can be driven at all is an actuator, and everything
+	// else observes. Every service above declares one, so this is documentation
+	// rather than a decision.
+	assetMission := components.MissionMeasurement
+	if lightID != "" {
+		assetMission = components.MissionActuation
+	}
+
 	ua := &components.UnitAsset{
 		Name:    assetName,
-		Mission: "expose_zigbee_device",
+		Mission: assetMission,
 		Owner:   sys,
 		Details: map[string][]string{
 			"DisplayName": {displayName},

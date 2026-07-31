@@ -65,7 +65,7 @@ eThermostat registers its `setpoint` services with the Arrowhead service mesh. [
   "unit_assets": [
     {
       "name": "KitchenHeater",
-      "mission": "electric_heating",
+      "mission": "control",
       "details": { "FunctionalLocation": ["Kitchen"] },
       "traits": [
         { "setPoint": 20.0, "samplingPeriod": 10, "kp": 5.0 }
@@ -77,7 +77,7 @@ eThermostat registers its `setpoint` services with the Arrowhead service mesh. [
       ]
     }
   ],
-  "protocolsNports": { "coap": 0, "http": 20196, "https": 0 },
+  "protocolsNports": { "coap": 0, "http": 20196, "https": 30196 },
   "coreSystems": [
     { "coreSystem": "serviceregistrar", "url": "http://127.0.0.1:20102/serviceregistrar/registry" },
     { "coreSystem": "orchestrator",     "url": "http://127.0.0.1:20103/orchestrator/orchestration" },

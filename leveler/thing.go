@@ -53,6 +53,7 @@ func initTemplate() *components.UnitAsset {
 	setPointService := components.Service{
 		Definition:  "setPoint",
 		SubPath:     "setpoint",
+		Mission:     components.MissionState,
 		Details:     map[string][]string{"Unit": {"Percent"}, "Forms": {"SignalA_v1a"}},
 		RegPeriod:   100,
 		CUnit:       "Eur/h",
@@ -61,6 +62,7 @@ func initTemplate() *components.UnitAsset {
 	levelErrorService := components.Service{
 		Definition:  "levelError",
 		SubPath:     "levelerror",
+		Mission:     components.MissionMeasurement,
 		Details:     map[string][]string{"Unit": {"Percent"}, "Forms": {"SignalA_v1a"}},
 		RegPeriod:   30,
 		Description: "provides the current difference between the set point and the temperature (GET)",
@@ -68,6 +70,7 @@ func initTemplate() *components.UnitAsset {
 	jitterService := components.Service{
 		Definition:  "jitter",
 		SubPath:     "jitter",
+		Mission:     components.MissionMeasurement,
 		Details:     map[string][]string{"Unit": {"millisecond"}, "Forms": {"SignalA_v1a"}},
 		RegPeriod:   120,
 		Description: "provides the current jitter or control algorithm execution calculated every period (GET)",
@@ -75,7 +78,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "Leveler_1",
-		Mission: "control_level",
+		Mission: components.MissionControl,
 		Details: map[string][]string{"FunctionalLocation": {"UpperTank"}},
 		ServicesMap: components.Services{
 			setPointService.SubPath:   &setPointService,

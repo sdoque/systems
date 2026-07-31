@@ -1,4 +1,4 @@
-module github.com/sdoque/systems/sapper
+module github.com/sdoque/systems/authorizer
 
 go 1.26.5
 

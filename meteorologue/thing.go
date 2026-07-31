@@ -359,7 +359,7 @@ type Traits struct {
 func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:        "MeteoStation",
-		Mission:     "provide_weather_data",
+		Mission:     components.MissionMeasurement,
 		Details:     map[string][]string{},
 		ServicesMap: components.Services{},
 		Traits: &Credentials{

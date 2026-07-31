@@ -41,7 +41,7 @@ func main() {
 		Description: "browser-based order entry form for pen holder orders",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20190, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30190, "http": 20190, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/clerk",
 		DName: pkix.Name{
 			CommonName:         sys.Name,

@@ -67,7 +67,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:        "assembler",
-		Mission:     "handle_sysml",
+		Mission:     components.MissionAggregation,
 		Details:     map[string][]string{"Type": {"Interactive"}},
 		ServicesMap: map[string]*components.Service{cloudmodel.SubPath: &cloudmodel},
 		Traits:      &Traits{CloudName: "localCloud"},

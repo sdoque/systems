@@ -32,8 +32,8 @@ func TestInitTemplate(t *testing.T) {
 	if ua.Name != "MeteoStation" {
 		t.Errorf("expected Name %q, got %q", "MeteoStation", ua.Name)
 	}
-	if ua.Mission != "provide_weather_data" {
-		t.Errorf("expected Mission %q, got %q", "provide_weather_data", ua.Mission)
+	if ua.Mission != "measurement" {
+		t.Errorf("expected Mission %q, got %q", "measurement", ua.Mission)
 	}
 
 	creds, ok := ua.Traits.(*Credentials)

@@ -41,7 +41,7 @@ func main() {
 		Description: "controls electrical heating plugs based on temperature readings from meteorologue",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20196, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30196, "http": 20196, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/ethermostat",
 		DName: pkix.Name{
 			CommonName:         sys.Name,

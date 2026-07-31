@@ -122,6 +122,7 @@ isn't part of the Arrowhead orchestration.
     "unit_assets": [
         {
             "name": "HealthTracker",
+            "mission": "aggregation",
             "services": [
                 { "definition": "SignalMonitoring",       "subpath": "monitor",    "registrationPeriod": 22 },
                 { "definition": "EnrichmentNotification", "subpath": "enrichment", "registrationPeriod": 22,
@@ -144,7 +145,7 @@ isn't part of the Arrowhead orchestration.
             ]
         }
     ],
-    "protocolsNports": { "coap": 0, "http": 20181, "https": 0 },
+    "protocolsNports": { "coap": 0, "http": 20181, "https": 30181 },
     "coreSystems": [ /* serviceregistrar, orchestrator, ca, maitreD */ ]
 }
 ```

@@ -101,6 +101,7 @@ On first run the CA generates a `systemconfig.json` and then exits so you can re
   "unit_assets": [
     {
       "name": "certification",
+      "mission": "core",
       "details": {
         "Location": ["LocalCloud"],
         "PKI": ["X.509"]
@@ -112,7 +113,7 @@ On first run the CA generates a `systemconfig.json` and then exits so you can re
   ],
   "protocolsNports": {
     "http":  20100,
-    "https": 0,
+    "https": 30100,
     "coap":  0
   },
   "coreSystems": [
@@ -126,10 +127,11 @@ On first run the CA generates a `systemconfig.json` and then exits so you can re
 
 ### Enabling mTLS
 
-Set `"https"` to a non-zero port (it can be the same value as `"http"`):
+Set `"https"` to a non-zero port. The convention across the systems is the
+HTTP port with its leading 2 replaced by a 3:
 
 ```json
-"protocolsNports": { "http": 20100, "https": 20100, "coap": 0 }
+"protocolsNports": { "http": 20100, "https": 30100, "coap": 0 }
 ```
 
 All systems that also have a non-zero https port will use mTLS for their outbound calls.

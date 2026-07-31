@@ -104,7 +104,7 @@ Example:
     "unit_assets": [
         {
             "name": "BeehiveDashboard",
-            "mission": "web_dashboard",
+            "mission": "aggregation",
             "details": {},
             "services": [
                 {
@@ -118,7 +118,7 @@ Example:
             "traits": [{ "period": 10 }]
         }
     ],
-    "protocolsNports": { "coap": 0, "http": 20186, "https": 0 },
+    "protocolsNports": { "coap": 0, "http": 20186, "https": 30186 },
     "coreSystems": [
         { "coreSystem": "serviceregistrar", "url": "http://192.168.1.108:20102/serviceregistrar/registry" },
         { "coreSystem": "orchestrator",     "url": "http://192.168.1.108:20103/orchestrator/orchestration" },

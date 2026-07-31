@@ -44,7 +44,7 @@ func main() {
 		Description: "reads the temperature from 1-wire sensors",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20150, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30150, "http": 20150, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/ds18b20",
 		DName: pkix.Name{
 			CommonName:         sys.Name,

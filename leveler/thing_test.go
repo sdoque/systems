@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sdoque/mbaigo/components"
 	"github.com/sdoque/mbaigo/forms"
 )
 
@@ -162,5 +163,35 @@ func TestVariations(t *testing.T) {
 	tr.variations(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("variations DELETE status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
+// The mission the authorizer evaluates is the service's, not the asset's. A
+// controller is one asset whose services differ in kind: writing the setpoint
+// reconfigures the loop, while the error and jitter readings only observe it.
+// Collapsing them onto the asset's "control" would mean any policy letting a
+// consumer move a setpoint also let it write everything else here.
+func TestInitTemplateServiceMissions(t *testing.T) {
+	ua := initTemplate()
+
+	if ua.Mission != "control" {
+		t.Errorf("asset mission = %q; want %q", ua.Mission, "control")
+	}
+
+	want := map[string]string{
+		"setpoint":   "state",
+		"levelerror": "measurement",
+		"jitter":     "measurement",
+	}
+
+	for subPath, mission := range want {
+		serv, ok := ua.ServicesMap[subPath]
+		if !ok {
+			t.Errorf("service %q missing from the template", subPath)
+			continue
+		}
+		if got := components.EffectiveMission(ua, serv); got != mission {
+			t.Errorf("service %q effective mission = %q; want %q", subPath, got, mission)
+		}
 	}
 }

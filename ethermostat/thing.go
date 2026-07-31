@@ -50,6 +50,7 @@ func initTemplate() *components.UnitAsset {
 	setPointService := components.Service{
 		Definition:  "setpoint",
 		SubPath:     "setpoint",
+		Mission:     components.MissionState,
 		Details:     map[string][]string{"Unit": {"Celsius"}, "Forms": {"SignalA_v1a"}},
 		RegPeriod:   120,
 		CUnit:       "Eur/h",
@@ -58,6 +59,7 @@ func initTemplate() *components.UnitAsset {
 	thermalErrorService := components.Service{
 		Definition:  "thermalerror",
 		SubPath:     "thermalerror",
+		Mission:     components.MissionMeasurement,
 		Details:     map[string][]string{"Unit": {"Celsius"}, "Forms": {"SignalA_v1a"}},
 		RegPeriod:   120,
 		Description: "provides the current difference between the setpoint and the temperature (GET)",
@@ -65,6 +67,7 @@ func initTemplate() *components.UnitAsset {
 	jitterService := components.Service{
 		Definition:  "jitter",
 		SubPath:     "jitter",
+		Mission:     components.MissionMeasurement,
 		Details:     map[string][]string{"Unit": {"millisecond"}, "Forms": {"SignalA_v1a"}},
 		RegPeriod:   120,
 		Description: "provides the control loop execution jitter in milliseconds (GET)",
@@ -72,7 +75,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "KitchenHeater",
-		Mission: "electric_heating",
+		Mission: components.MissionControl,
 		Details: map[string][]string{"FunctionalLocation": {"Kitchen"}},
 		ServicesMap: components.Services{
 			setPointService.SubPath:     &setPointService,

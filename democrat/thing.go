@@ -116,7 +116,7 @@ func initTemplate() *components.UnitAsset {
 	}
 	return &components.UnitAsset{
 		Name:    "assembler",
-		Mission: "sync_aas",
+		Mission: components.MissionAggregation,
 		Details: map[string][]string{"Type": {"AAS Bridge"}},
 		ServicesMap: components.Services{
 			syncSvc.SubPath:   &syncSvc,

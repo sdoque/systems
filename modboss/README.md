@@ -18,6 +18,52 @@ It is **important** to start the program from within it own directory (and each 
 
 The configuration and operation of the system can be verified using the system's web server using a standard web browser, whose address is provided by the system at startup.
 
+## The register map
+
+The PLC is an interface, not a thing: what is wired to each register is the
+asset. Modboss therefore creates **one unit asset per register**, not one for the
+PLC, and the single `unit_assets` entry in `systemconfig.json` describes the
+connection while its `register_map` describes the devices behind it.
+
+Each entry is a comma-separated string:
+
+```
+address,name,rights,dataType[,functionalLocation]
+```
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `address` | yes | Modbus address within its register kind, e.g. `00001` |
+| `name` | yes | Becomes the unit asset's name and its service definition |
+| `rights` | yes | `ro`, `rw` or `wo` — see below |
+| `dataType` | yes | `Boolean`, `16-bit INT`, … |
+| `functionalLocation` | no | Where the device is; defaults to the PLC's |
+
+```json
+"register_map": {
+    "coil": [
+        "00001,Slider1_Motor_Forward,rw,Boolean,LoadingStation"
+    ],
+    "discreteInput": [
+        "00005,Slider1_PhotoSensor,ro,Boolean,LoadingStation",
+        "00003,EmergencyStop,ro,Boolean"
+    ]
+}
+```
+
+**`rights` decides the mission.** A register that can only be read observes the
+process and becomes `measurement`; one that can be written acts on it and becomes
+`actuation`. Nothing declares this separately, so the classification the
+authorizer evaluates cannot drift away from what the register actually permits.
+An unrecognised value stops the system at startup rather than producing an asset
+with no mission.
+
+**`functionalLocation` is per device.** The PLC sits in a cabinet while the
+devices wired to it are spread across the plant, so a photo sensor that stops
+working has to be locatable from its registration alone. A four-field entry
+remains valid and means the device is wherever its PLC is, which is right for
+anything inside the cabinet and wrong for anything outside it.
+
 To build the software for one's own machine,
 ```go build -o modboss_imac```, where the ending is used to clarify for which platform the code is for.
 

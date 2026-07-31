@@ -118,7 +118,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "DraftAsset",
-		Mission: "demonstrate_mbaigo_patterns",
+		Mission: components.MissionMeasurement,
 		Details: map[string][]string{"FunctionalLocation": {"Lab"}},
 		ServicesMap: components.Services{
 			helloSvc.SubPath:  &helloSvc,

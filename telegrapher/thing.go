@@ -80,7 +80,7 @@ func initTemplate() *components.UnitAsset {
 			Broker:   "tcp://localhost:1883",
 			Username: "user",
 			Password: "password",
-			Pattern:  []string{"Room"},
+			Pattern:  []string{"FunctionalLocation"},
 			Period:   -1,
 		},
 	}
@@ -116,16 +116,11 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		log.Fatal("Error: UnitAsset must have at least one pattern defined in Traits")
 	}
 
-	// Fill Details from pattern and topic
-	metaDetails := strings.Split(asset, "/")
-	topicDetrails := make(map[string][]string)
-	for i := 0; i < len(t.Pattern) && i < len(metaDetails); i++ {
-		topicDetrails[t.Pattern[i]] = append(configuredAsset.Details[t.Pattern[i]], metaDetails[i])
-	}
 	if configuredAsset.Details == nil {
 		configuredAsset.Details = make(map[string][]string)
 	}
-	configuredAsset.Details = components.MergeDetails(configuredAsset.Details, topicDetrails)
+	topicDetails := detailsFromTopic(t.Pattern, asset)
+	configuredAsset.Details = components.MergeDetails(configuredAsset.Details, topicDetails)
 
 	ua := &components.UnitAsset{
 		Name:    assetName,
@@ -155,7 +150,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			Nodes:      make(map[string][]components.NodeInfo),
 			Mode:       "get",
 		}
-		newCervice.Details = topicDetrails
+		newCervice.Details = topicDetails
 		cervMap := components.Cervices{newCervice.Definition: newCervice}
 		t.cervices = cervMap
 		ua.CervicesMap = cervMap
@@ -347,4 +342,25 @@ func (t *Traits) publishRaw(data []byte) error {
 	}()
 
 	return nil
+}
+
+// detailsFromTopic maps the segments of a topic onto the detail keys the pattern
+// names, so that "Bathroom/temperature" under a pattern of FunctionalLocation
+// registers the room rather than leaving it in the asset's name.
+//
+// The key matters more than it looks. The authorizer's pairing rule and the
+// knowledge graph both look up the literal string FunctionalLocation, so a topic
+// filed under any other key is an asset with no location at all — and an asset
+// with no location is universally reachable, which is the permissive answer
+// arrived at silently.
+func detailsFromTopic(pattern []string, asset string) map[string][]string {
+	segments := strings.Split(asset, "/")
+	details := make(map[string][]string)
+	for i := 0; i < len(pattern) && i < len(segments); i++ {
+		if pattern[i] == "" || segments[i] == "" {
+			continue
+		}
+		details[pattern[i]] = append(details[pattern[i]], segments[i])
+	}
+	return details
 }

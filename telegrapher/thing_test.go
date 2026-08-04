@@ -158,3 +158,74 @@ func TestAccess_Default(t *testing.T) {
 		t.Error("expected non-200 for DELETE /access")
 	}
 }
+
+// The room is in the topic, and the topic is the asset's name. Filing it under
+// the key the authorizer reads is what turns a naming convention into an
+// attribute — and an asset with no FunctionalLocation is not merely unpaired,
+// it is universally reachable, so the wrong key is the permissive answer.
+func TestDetailsFromTopic(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern []string
+		asset   string
+		want    map[string][]string
+	}{
+		{
+			name:    "the room becomes the functional location",
+			pattern: []string{"FunctionalLocation"},
+			asset:   "Bathroom/temperature",
+			want:    map[string][]string{"FunctionalLocation": {"Bathroom"}},
+		},
+		{
+			name:    "a deeper topic fills as many keys as the pattern names",
+			pattern: []string{"FunctionalLocation", "Quantity"},
+			asset:   "Kitchen/temperature",
+			want:    map[string][]string{"FunctionalLocation": {"Kitchen"}, "Quantity": {"temperature"}},
+		},
+		{
+			name:    "a pattern longer than the topic takes what there is",
+			pattern: []string{"FunctionalLocation", "Quantity", "Extra"},
+			asset:   "Kitchen/temperature",
+			want:    map[string][]string{"FunctionalLocation": {"Kitchen"}, "Quantity": {"temperature"}},
+		},
+		{
+			name:    "a topic longer than the pattern leaves the rest alone",
+			pattern: []string{"FunctionalLocation"},
+			asset:   "Kitchen/temperature/outer",
+			want:    map[string][]string{"FunctionalLocation": {"Kitchen"}},
+		},
+		{
+			name:    "no pattern, no details",
+			pattern: nil,
+			asset:   "Kitchen/temperature",
+			want:    map[string][]string{},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := detailsFromTopic(tc.pattern, tc.asset)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v; want %v", got, tc.want)
+			}
+			for key, values := range tc.want {
+				if len(got[key]) != len(values) || (len(values) > 0 && got[key][0] != values[0]) {
+					t.Errorf("%s = %v; want %v", key, got[key], values)
+				}
+			}
+		})
+	}
+}
+
+// The shipped template must name the key the authorizer reads, since it seeds
+// the configuration a fresh deployment starts from.
+func TestTemplatePatternNamesTheFunctionalLocation(t *testing.T) {
+	ua := initTemplate()
+	traits, ok := ua.GetTraits().(*Traits)
+	if !ok {
+		t.Fatalf("template traits are %T; want *Traits", ua.GetTraits())
+	}
+	if len(traits.Pattern) == 0 || traits.Pattern[0] != "FunctionalLocation" {
+		t.Errorf("pattern = %v; the pairing rule and the knowledge graph both read FunctionalLocation", traits.Pattern)
+	}
+}

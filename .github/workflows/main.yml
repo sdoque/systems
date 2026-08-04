@@ -11,7 +11,7 @@
 #   1. lint       — gofmt + go vet, every system  (every push/PR)
 #   2. test       — `go test .`, every system     (every push/PR)
 #   3. spellcheck — typos in code, comments, docs (every push/PR)
-#   4. build-rpi  — cross-compile all 36 systems for Raspberry Pi 4/5 arm64
+#   4. build-rpi  — cross-compile all 37 systems for Raspberry Pi 4/5 arm64
 #                   (tag pushes only — too heavy to run on every commit)
 # =============================================================================
 
@@ -109,7 +109,7 @@ jobs:
         uses: crate-ci/typos@v1.29.7
 
   # ---------------------------------------------------------------------------
-  # Job 4: build-rpi — cross-compile all 36 systems for Raspberry Pi arm64
+  # Job 4: build-rpi — cross-compile all 37 systems for Raspberry Pi arm64
   # ---------------------------------------------------------------------------
   # Gated to tag pushes so we do not pay ~1–2 min of cross-compile time on
   # every commit. A failure here means a system no longer builds for the

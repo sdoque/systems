@@ -12,9 +12,10 @@ PKG        := github.com/sdoque/mbaigo/components
 
 SYSTEMS := authorizer beehive beekeeper busdriver ca clerk collector democrat \
            drafter ds18b20 ds18b20F emulator esr ethermostat filmer flattener \
-           kgrapher leveler maitreD messenger meteorologue modboss modeler \
-           nurse orchestrator parallax photographer recognizer revolutionary \
-           sailor sapper telegrapher thermostat tracker uaclient weatherman
+           hobbyist kgrapher leveler maitreD messenger meteorologue modboss \
+           modeler nurse orchestrator parallax photographer recognizer \
+           revolutionary sailor sapper telegrapher thermostat tracker \
+           uaclient weatherman
 
 .PHONY: all ci release rpi test lint clean whitelist $(SYSTEMS)
 

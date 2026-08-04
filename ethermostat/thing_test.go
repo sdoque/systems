@@ -250,10 +250,10 @@ func TestSetpt_InvalidMethod(t *testing.T) {
 	}
 }
 
-// TestDiff_GET verifies the thermalerror handler returns 200 for GET.
+// TestDiff_GET verifies the deviation handler returns 200 for GET.
 func TestDiff_GET(t *testing.T) {
 	tr := &Traits{deviation: 1.0}
-	req := httptest.NewRequest(http.MethodGet, "/thermalerror", nil)
+	req := httptest.NewRequest(http.MethodGet, "/deviation", nil)
 	w := httptest.NewRecorder()
 	tr.diff(w, req)
 	if w.Result().StatusCode != http.StatusOK {
@@ -261,10 +261,10 @@ func TestDiff_GET(t *testing.T) {
 	}
 }
 
-// TestDiff_InvalidMethod verifies the thermalerror handler returns 405 for POST.
+// TestDiff_InvalidMethod verifies the deviation handler returns 405 for POST.
 func TestDiff_InvalidMethod(t *testing.T) {
 	tr := &Traits{}
-	req := httptest.NewRequest(http.MethodPost, "/thermalerror", nil)
+	req := httptest.NewRequest(http.MethodPost, "/deviation", nil)
 	w := httptest.NewRecorder()
 	tr.diff(w, req)
 	if w.Result().StatusCode != http.StatusMethodNotAllowed {
@@ -318,9 +318,9 @@ func TestInitTemplateServiceMissions(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"setpoint":     "state",
-		"thermalerror": "measurement",
-		"jitter":       "measurement",
+		"setpoint":  "state",
+		"deviation": "measurement",
+		"jitter":    "measurement",
 	}
 
 	for subPath, mission := range want {

@@ -63,10 +63,10 @@ func initTemplate() *components.UnitAsset {
 		CUnit:       "Eur/h",
 		Description: "provides the current thermal setpoint (GET) or sets it (PUT)",
 	}
-	thermalErrorService := components.Service{
+	deviationService := components.Service{
 		Mission:    components.MissionMeasurement,
-		Definition: "thermalerror",
-		SubPath:    "thermalerror",
+		Definition: "deviation",
+		SubPath:    "deviation",
 		// No Unit here on purpose: an error is the difference between the setpoint
 		// and the measurement, so it is in whatever unit the setpoint is in.
 		// newResource copies it, and the two cannot drift apart.
@@ -88,9 +88,9 @@ func initTemplate() *components.UnitAsset {
 		Mission: components.MissionControl,
 		Details: map[string][]string{"FunctionalLocation": {"Kitchen"}},
 		ServicesMap: components.Services{
-			setPointService.SubPath:     &setPointService,
-			thermalErrorService.SubPath: &thermalErrorService,
-			jitterService.SubPath:       &jitterService,
+			setPointService.SubPath:  &setPointService,
+			deviationService.SubPath: &deviationService,
+			jitterService.SubPath:    &jitterService,
 		},
 		Traits: &Traits{
 			SetPt:  20,
@@ -328,7 +328,7 @@ func (t *Traits) updateValvePosition(position float64) {
 // "Celsius" keeps working; a QUDT one gets an IRI a consumer can convert from.
 func (t *Traits) adoptUnits(services components.Services) {
 	setpoint := findService(services, "setpoint")
-	thermalError := findService(services, "thermalerror")
+	deviation := findService(services, "deviation")
 	jitter := findService(services, "jitter")
 
 	if setpoint != nil {
@@ -339,14 +339,14 @@ func (t *Traits) adoptUnits(services components.Services) {
 	}
 
 	t.errorUnit = t.setpointUnit
-	if thermalError != nil {
+	if deviation != nil {
 		// Advertise it too: a consumer converts using the unit in the service
 		// record, so leaving that blank would leave the reading unusable.
-		if thermalError.Details == nil {
-			thermalError.Details = make(map[string][]string)
+		if deviation.Details == nil {
+			deviation.Details = make(map[string][]string)
 		}
 		if t.errorUnit != "" {
-			thermalError.Details["Unit"] = []string{t.errorUnit}
+			deviation.Details["Unit"] = []string{t.errorUnit}
 		}
 	}
 }

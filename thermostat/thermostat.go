@@ -99,7 +99,7 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 	switch servicePath {
 	case "setpoint":
 		t.setpt(w, r)
-	case "thermalerror":
+	case "deviation":
 		t.diff(w, r)
 	case "jitter":
 		t.variations(w, r)

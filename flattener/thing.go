@@ -51,11 +51,16 @@ type Traits struct {
 // initTemplate returns a UnitAsset with default values used by the configuration step.
 func initTemplate() *components.UnitAsset {
 	setpointSvc := components.Service{
-		Definition:  "setPoint",
-		SubPath:     "setpoint",
+		Definition: "recommendedSetpoint",
+		SubPath:    "recommendedsetpoint",
+		// Advice about a setpoint, not a setpoint. The thermostat's is that
+		// controller's own target — authoritative and writable; this is a value
+		// derived from the spot price, which is why the service is an
+		// aggregation rather than the state of anything.
+		Mission:     components.MissionAggregation,
 		Details:     map[string][]string{"Unit": {"Celsius"}, "Forms": {"SignalA_v1a"}},
 		RegPeriod:   30,
-		Description: "provides the currently calculated temperature setpoint (GET)",
+		Description: "provides the setpoint this system recommends from the current electricity price (GET)",
 	}
 
 	priceSvc := components.Service{

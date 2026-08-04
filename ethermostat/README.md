@@ -25,7 +25,7 @@ One unit asset (and one feedback loop goroutine) is created per matched heater p
 | Service        | Sub-path       | Methods   | Description                                      |
 |----------------|----------------|-----------|--------------------------------------------------|
 | `setpoint`     | `setpoint`     | GET, PUT  | Read or update the thermal setpoint (°C)         |
-| `thermalerror` | `thermalerror` | GET       | Current difference between setpoint and temperature |
+| `deviation` | `deviation` | GET       | Current difference between setpoint and temperature |
 | `jitter`       | `jitter`       | GET       | Control loop execution jitter (ms)               |
 
 ## Heater and temperature matching
@@ -72,7 +72,7 @@ eThermostat registers its `setpoint` services with the Arrowhead service mesh. [
       ],
       "services": [
         { "definition": "setpoint",     "subpath": "setpoint",     "registrationPeriod": 120 },
-        { "definition": "thermalerror", "subpath": "thermalerror", "registrationPeriod": 120 },
+        { "definition": "deviation", "subpath": "deviation", "registrationPeriod": 120 },
         { "definition": "jitter",       "subpath": "jitter",       "registrationPeriod": 120 }
       ]
     }
@@ -105,7 +105,7 @@ curl -s -X PUT http://localhost:20196/ethermostat/KitchenHeater/setpoint \
 
 **Read the current thermal error:**
 ```bash
-curl -s http://localhost:20196/ethermostat/KitchenHeater/thermalerror
+curl -s http://localhost:20196/ethermostat/KitchenHeater/deviation
 ```
 
 **Read the control loop jitter:**

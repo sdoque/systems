@@ -67,7 +67,7 @@ What each of them registers:
 |--------|-------|---------|---------|----------|
 | `ds18b20` | `sensor_Id` | `measurement` | `temperature` | Kitchen |
 | `parallax` | `Servo_1` | `actuation` | `rotation` | Kitchen |
-| `thermostat` | `controller_1` | `control` | `setpoint` (`state`), `thermalerror`, `jitter` (`measurement`) | Kitchen |
+| `thermostat` | `controller_1` | `control` | `setpoint` (`state`), `deviation`, `jitter` (`measurement`) | Kitchen |
 | `collector` | `demo` | `logging` | `mquery` | — |
 | `kgrapher` | `assembler` | `aggregation` | `cloudgraph`, `localOntologies` | — |
 | `modeler` | `assembler` | `aggregation` | `cloudmodel` | — |

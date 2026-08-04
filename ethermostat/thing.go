@@ -56,9 +56,9 @@ func initTemplate() *components.UnitAsset {
 		CUnit:       "Eur/h",
 		Description: "provides the current thermal setpoint (GET) or sets it (PUT)",
 	}
-	thermalErrorService := components.Service{
-		Definition:  "thermalerror",
-		SubPath:     "thermalerror",
+	deviationService := components.Service{
+		Definition:  "deviation",
+		SubPath:     "deviation",
 		Mission:     components.MissionMeasurement,
 		Details:     map[string][]string{"Unit": {"Celsius"}, "Forms": {"SignalA_v1a"}},
 		RegPeriod:   120,
@@ -78,9 +78,9 @@ func initTemplate() *components.UnitAsset {
 		Mission: components.MissionControl,
 		Details: map[string][]string{"FunctionalLocation": {"Kitchen"}},
 		ServicesMap: components.Services{
-			setPointService.SubPath:     &setPointService,
-			thermalErrorService.SubPath: &thermalErrorService,
-			jitterService.SubPath:       &jitterService,
+			setPointService.SubPath:  &setPointService,
+			deviationService.SubPath: &deviationService,
+			jitterService.SubPath:    &jitterService,
 		},
 		Traits: &Traits{
 			SetPt:  20,

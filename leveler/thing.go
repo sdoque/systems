@@ -51,7 +51,7 @@ type Traits struct {
 // initTemplate initializes a UnitAsset with default values.
 func initTemplate() *components.UnitAsset {
 	setPointService := components.Service{
-		Definition:  "setPoint",
+		Definition:  "setpoint",
 		SubPath:     "setpoint",
 		Mission:     components.MissionState,
 		Details:     map[string][]string{"Unit": {"Percent"}, "Forms": {"SignalA_v1a"}},
@@ -59,9 +59,9 @@ func initTemplate() *components.UnitAsset {
 		CUnit:       "Eur/h",
 		Description: "provides the current thermal setpoint (GET) or sets it (PUT)",
 	}
-	levelErrorService := components.Service{
-		Definition:  "levelError",
-		SubPath:     "levelerror",
+	deviationService := components.Service{
+		Definition:  "deviation",
+		SubPath:     "deviation",
 		Mission:     components.MissionMeasurement,
 		Details:     map[string][]string{"Unit": {"Percent"}, "Forms": {"SignalA_v1a"}},
 		RegPeriod:   30,
@@ -81,9 +81,9 @@ func initTemplate() *components.UnitAsset {
 		Mission: components.MissionControl,
 		Details: map[string][]string{"FunctionalLocation": {"UpperTank"}},
 		ServicesMap: components.Services{
-			setPointService.SubPath:   &setPointService,
-			levelErrorService.SubPath: &levelErrorService,
-			jitterService.SubPath:     &jitterService,
+			setPointService.SubPath:  &setPointService,
+			deviationService.SubPath: &deviationService,
+			jitterService.SubPath:    &jitterService,
 		},
 		Traits: &Traits{
 			SetPt:  20,

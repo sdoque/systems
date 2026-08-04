@@ -255,7 +255,7 @@ package 'AlphaCloud' {
     part def 'thermostat_controller_1UnitAsset' :> UnitAsset {
         attribute redefines mission : String = "control_heater";
         out port 'setpoint'     : 'Setpoint';      // provided
-        out port 'thermalerror' : 'Thermalerror';  // provided
+        out port 'deviation' : 'Deviation';  // provided
         in port  'temperature'  : 'Temperature';   // consumed
         in port  'rotation'     : 'Rotation';      // consumed
         perform action behave : 'thermostat_controller_1Behavior';

@@ -87,7 +87,7 @@ func main() {
 // serving dispatches incoming HTTP requests to the appropriate handler.
 func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
-	case "setpoint":
+	case "recommendedsetpoint":
 		switch r.Method {
 		case http.MethodGet:
 			sp := t.getSetPoint()

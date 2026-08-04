@@ -146,7 +146,7 @@ func TestSetpt(t *testing.T) {
 func TestDiff(t *testing.T) {
 	t.Run("GET returns 200", func(t *testing.T) {
 		tr := &Traits{deviation: 0.5}
-		req := httptest.NewRequest(http.MethodGet, "/thermalerror", nil)
+		req := httptest.NewRequest(http.MethodGet, "/deviation", nil)
 		w := httptest.NewRecorder()
 		tr.diff(w, req)
 
@@ -157,7 +157,7 @@ func TestDiff(t *testing.T) {
 
 	t.Run("DELETE returns 404", func(t *testing.T) {
 		tr := &Traits{}
-		req := httptest.NewRequest(http.MethodDelete, "/thermalerror", nil)
+		req := httptest.NewRequest(http.MethodDelete, "/deviation", nil)
 		w := httptest.NewRecorder()
 		tr.diff(w, req)
 
@@ -206,9 +206,9 @@ func TestInitTemplateServiceMissions(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"setpoint":     "state",
-		"thermalerror": "measurement",
-		"jitter":       "measurement",
+		"setpoint":  "state",
+		"deviation": "measurement",
+		"jitter":    "measurement",
 	}
 
 	for subPath, mission := range want {
@@ -234,9 +234,9 @@ func TestThermalErrorFollowsTheSetpointUnit(t *testing.T) {
 		"Celsius", // a deployment that has not migrated
 	} {
 		services := components.Services{
-			"setpoint":     {Definition: "setpoint", Details: map[string][]string{"Unit": {unit}}},
-			"thermalerror": {Definition: "thermalerror", Details: map[string][]string{"Measure": {"interval"}}},
-			"jitter":       {Definition: "jitter", Details: map[string][]string{"Unit": {"<http://qudt.org/vocab/unit/MilliSEC>"}}},
+			"setpoint":  {Definition: "setpoint", Details: map[string][]string{"Unit": {unit}}},
+			"deviation": {Definition: "deviation", Details: map[string][]string{"Measure": {"interval"}}},
+			"jitter":    {Definition: "jitter", Details: map[string][]string{"Unit": {"<http://qudt.org/vocab/unit/MilliSEC>"}}},
 		}
 
 		tr := &Traits{}
@@ -246,7 +246,7 @@ func TestThermalErrorFollowsTheSetpointUnit(t *testing.T) {
 			t.Errorf("setpoint in %q gave an error unit of %q", unit, tr.errorUnit)
 		}
 		// And it must be advertised, or a consumer has nothing to convert from.
-		if got := services["thermalerror"].Details["Unit"]; len(got) != 1 || got[0] != unit {
+		if got := services["deviation"].Details["Unit"]; len(got) != 1 || got[0] != unit {
 			t.Errorf("the registered error unit is %v; want %q", got, unit)
 		}
 		if tr.getError().Unit != unit {
@@ -264,7 +264,7 @@ func TestThermalErrorFollowsTheSetpointUnit(t *testing.T) {
 func TestProvidedServicesDeclareTheirQuantityKind(t *testing.T) {
 	ua := initTemplate()
 
-	for _, definition := range []string{"setpoint", "thermalerror", "jitter"} {
+	for _, definition := range []string{"setpoint", "deviation", "jitter"} {
 		serv := findService(ua.GetServices(), definition)
 		if serv == nil {
 			t.Errorf("%s is missing from the template", definition)
@@ -277,12 +277,12 @@ func TestProvidedServicesDeclareTheirQuantityKind(t *testing.T) {
 
 	// The error is a difference, and saying so is what stops a consumer applying
 	// an offset to it.
-	thermalError := findService(ua.GetServices(), "thermalerror")
+	thermalError := findService(ua.GetServices(), "deviation")
 	if measure := thermalError.Details["Measure"]; len(measure) != 1 || measure[0] != "interval" {
-		t.Errorf("thermalerror declares Measure %v; want [interval]", measure)
+		t.Errorf("deviation declares Measure %v; want [interval]", measure)
 	}
 	// And it declares no unit of its own: that is the setpoint's to give.
 	if unit := thermalError.Details["Unit"]; len(unit) != 0 {
-		t.Errorf("thermalerror declares its own unit %v; it must follow the setpoint", unit)
+		t.Errorf("deviation declares its own unit %v; it must follow the setpoint", unit)
 	}
 }

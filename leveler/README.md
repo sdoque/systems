@@ -2,7 +2,7 @@
 
 The Leveler is a distributed control system (DSC) for a pump station (part of an automatic control course's lab) where the aim is to keep the level of an upper tank constant, where the tank is part of a closed (water) circuit.
 
-It offers three services, *setpoint*, *levelError* and *jitter*. 
+It offers three services, *setpoint*, *deviation* and *jitter*. 
 The setpoint can be read (e.g., GET) or set (e.g., PUT). 
 The error signal is the difference between the setpoint or desired temperature and the current temperature.
 It can only be read. 

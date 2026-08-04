@@ -130,7 +130,7 @@ func TestDiff(t *testing.T) {
 	tr := &Traits{deviation: 5.0}
 
 	// GET → 200
-	req := httptest.NewRequest(http.MethodGet, "/levelerror", nil)
+	req := httptest.NewRequest(http.MethodGet, "/deviation", nil)
 	rr := httptest.NewRecorder()
 	tr.diff(rr, req)
 	if rr.Code != http.StatusOK {
@@ -138,7 +138,7 @@ func TestDiff(t *testing.T) {
 	}
 
 	// DELETE → 404
-	req = httptest.NewRequest(http.MethodDelete, "/levelerror", nil)
+	req = httptest.NewRequest(http.MethodDelete, "/deviation", nil)
 	rr = httptest.NewRecorder()
 	tr.diff(rr, req)
 	if rr.Code != http.StatusNotFound {
@@ -179,9 +179,9 @@ func TestInitTemplateServiceMissions(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"setpoint":   "state",
-		"levelerror": "measurement",
-		"jitter":     "measurement",
+		"setpoint":  "state",
+		"deviation": "measurement",
+		"jitter":    "measurement",
 	}
 
 	for subPath, mission := range want {

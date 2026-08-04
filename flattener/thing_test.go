@@ -32,7 +32,7 @@ func TestInitTemplate(t *testing.T) {
 		t.Errorf("expected Name %q, got %q", "ComfortController", ua.Name)
 	}
 
-	for _, subpath := range []string{"setpoint", "price"} {
+	for _, subpath := range []string{"recommendedsetpoint", "price"} {
 		if _, ok := ua.ServicesMap[subpath]; !ok {
 			t.Errorf("expected service sub-path %q in ServicesMap", subpath)
 		}
@@ -195,7 +195,7 @@ func TestServing_SetpointGET(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/setpoint", nil)
-	serving(tr, w, r, "setpoint")
+	serving(tr, w, r, "recommendedsetpoint")
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
@@ -240,7 +240,7 @@ func TestServing_MethodNotAllowed(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPut, "/setpoint", nil)
-	serving(tr, w, r, "setpoint")
+	serving(tr, w, r, "recommendedsetpoint")
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405 for PUT on setpoint, got %d", w.Code)

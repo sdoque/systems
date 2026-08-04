@@ -42,6 +42,12 @@ type Traits struct {
 	previousT float64             `json:"-"`
 	owner     *components.System  `json:"-"`
 	cervices  components.Cervices `json:"-"`
+	// Units reported in the payloads, taken from the configured services so the
+	// value a consumer receives and the unit registered for it are the same
+	// string. errorUnit is not configured: it is the setpoint's.
+	setpointUnit string `json:"-"`
+	errorUnit    string `json:"-"`
+	jitterUnit   string `json:"-"`
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -52,16 +58,19 @@ func initTemplate() *components.UnitAsset {
 		Definition:  "setpoint",
 		SubPath:     "setpoint",
 		Mission:     components.MissionState,
-		Details:     map[string][]string{"Unit": {"Celsius"}, "Forms": {"SignalA_v1a"}},
+		Details:     map[string][]string{"Unit": {"<http://qudt.org/vocab/unit/DEG_C>"}, "QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"}, "Forms": {"SignalA_v1a"}},
 		RegPeriod:   120,
 		CUnit:       "Eur/h",
 		Description: "provides the current thermal setpoint (GET) or sets it (PUT)",
 	}
 	thermalErrorService := components.Service{
-		Definition:  "thermalerror",
-		SubPath:     "thermalerror",
-		Mission:     components.MissionMeasurement,
-		Details:     map[string][]string{"Unit": {"Celsius"}, "Forms": {"SignalA_v1a"}},
+		Mission:    components.MissionMeasurement,
+		Definition: "thermalerror",
+		SubPath:    "thermalerror",
+		// No Unit here on purpose: an error is the difference between the setpoint
+		// and the measurement, so it is in whatever unit the setpoint is in.
+		// newResource copies it, and the two cannot drift apart.
+		Details:     map[string][]string{"QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"}, "Measure": {"interval"}, "Forms": {"SignalA_v1a"}},
 		RegPeriod:   120,
 		Description: "provides the current difference between the set point and the temperature (GET)",
 	}
@@ -69,7 +78,7 @@ func initTemplate() *components.UnitAsset {
 		Definition:  "jitter",
 		SubPath:     "jitter",
 		Mission:     components.MissionMeasurement,
-		Details:     map[string][]string{"Unit": {"millisecond"}, "Forms": {"SignalA_v1a"}},
+		Details:     map[string][]string{"Unit": {"<http://qudt.org/vocab/unit/MilliSEC>"}, "QuantityKind": {"<http://qudt.org/vocab/quantitykind/Time>"}, "Forms": {"SignalA_v1a"}},
 		RegPeriod:   120,
 		Description: "provides the current jitter or control algorithm execution calculated every period (GET)",
 	}
@@ -135,11 +144,20 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		CervicesMap: cervMap,
 		Traits:      t,
 	}
+	t.adoptUnits(ua.ServicesMap)
+
 	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
 		serving(t, w, r, servicePath)
 	}
 
-	ua.CervicesMap["temperature"].Details = components.MergeDetails(ua.Details, map[string][]string{"Unit": {"Celsius"}, "Forms": {"SignalA_v1a"}})
+	// The thermostat consumes a temperature, not a Celsius reading: the quantity
+	// kind is what the registrar matches on, so a Fahrenheit sensor is found too,
+	// and the unit is the target GetState converts the reading into.
+	ua.CervicesMap["temperature"].Details = components.MergeDetails(ua.Details, map[string][]string{
+		"QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"},
+		"Unit":         {"<http://qudt.org/vocab/unit/DEG_C>"},
+		"Forms":        {"SignalA_v1a"},
+	})
 	ua.CervicesMap["rotation"].Details = components.MergeDetails(ua.Details, map[string][]string{"Unit": {"Percent"}, "Forms": {"SignalA_v1a"}})
 
 	go t.feedbackLoop(sys.Ctx)
@@ -198,7 +216,7 @@ func (t *Traits) variations(w http.ResponseWriter, r *http.Request) {
 func (t *Traits) getSetPoint() (f forms.SignalA_v1a) {
 	f.NewForm()
 	f.Value = t.SetPt
-	f.Unit = "Celsius"
+	f.Unit = t.setpointUnit
 	f.Timestamp = time.Now()
 	return f
 }
@@ -213,7 +231,7 @@ func (t *Traits) setSetPoint(f forms.SignalA_v1a) {
 func (t *Traits) getError() (f forms.SignalA_v1a) {
 	f.NewForm()
 	f.Value = t.deviation
-	f.Unit = "Celsius"
+	f.Unit = t.errorUnit
 	f.Timestamp = time.Now()
 	return f
 }
@@ -222,7 +240,7 @@ func (t *Traits) getError() (f forms.SignalA_v1a) {
 func (t *Traits) getJitter() (f forms.SignalA_v1a) {
 	f.NewForm()
 	f.Value = float64(t.jitter.Milliseconds())
-	f.Unit = "millisecond"
+	f.Unit = t.jitterUnit
 	f.Timestamp = time.Now()
 	return f
 }
@@ -296,4 +314,58 @@ func (t *Traits) updateValvePosition(position float64) {
 	}
 	_, err = usecases.SetState(t.cervices["rotation"], t.owner, op)
 	_ = err
+}
+
+// adoptUnits takes the units this controller reports in from its configured
+// services, and gives the thermal error the setpoint's.
+//
+// The error is the difference between the setpoint and the measurement, so it is
+// in the setpoint's unit by construction rather than by convention. Configuring
+// it separately would let the two disagree, and a controller reporting a °C error
+// against a °F setpoint would look plausible for a long time.
+//
+// The unit is used as configured, whatever it says. A pre-QUDT deployment naming
+// "Celsius" keeps working; a QUDT one gets an IRI a consumer can convert from.
+func (t *Traits) adoptUnits(services components.Services) {
+	setpoint := findService(services, "setpoint")
+	thermalError := findService(services, "thermalerror")
+	jitter := findService(services, "jitter")
+
+	if setpoint != nil {
+		t.setpointUnit = firstDetail(setpoint.Details, "Unit")
+	}
+	if jitter != nil {
+		t.jitterUnit = firstDetail(jitter.Details, "Unit")
+	}
+
+	t.errorUnit = t.setpointUnit
+	if thermalError != nil {
+		// Advertise it too: a consumer converts using the unit in the service
+		// record, so leaving that blank would leave the reading unusable.
+		if thermalError.Details == nil {
+			thermalError.Details = make(map[string][]string)
+		}
+		if t.errorUnit != "" {
+			thermalError.Details["Unit"] = []string{t.errorUnit}
+		}
+	}
+}
+
+// findService looks a service up by definition, since the subpath an operator
+// configures need not be the definition the code knows it by.
+func findService(services components.Services, definition string) *components.Service {
+	for _, s := range services {
+		if s.Definition == definition {
+			return s
+		}
+	}
+	return nil
+}
+
+// firstDetail returns the first value recorded under a detail key.
+func firstDetail(details map[string][]string, key string) string {
+	if values := details[key]; len(values) > 0 {
+		return values[0]
+	}
+	return ""
 }

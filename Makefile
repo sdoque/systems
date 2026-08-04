@@ -11,10 +11,10 @@ BUILD_HASH := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 PKG        := github.com/sdoque/mbaigo/components
 
 SYSTEMS := authorizer beehive beekeeper busdriver ca clerk collector democrat \
-           drafter ds18b20 emulator esr ethermostat filmer flattener kgrapher \
-           leveler maitreD messenger meteorologue modboss modeler nurse \
-           orchestrator parallax photographer recognizer revolutionary sailor \
-           sapper telegrapher thermostat tracker uaclient weatherman
+           drafter ds18b20 ds18b20F emulator esr ethermostat filmer flattener \
+           kgrapher leveler maitreD messenger meteorologue modboss modeler \
+           nurse orchestrator parallax photographer recognizer revolutionary \
+           sailor sapper telegrapher thermostat tracker uaclient weatherman
 
 .PHONY: all ci release rpi test lint clean whitelist $(SYSTEMS)
 

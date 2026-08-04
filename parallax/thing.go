@@ -39,7 +39,10 @@ import (
 
 // Traits holds the configurable and runtime state for one servo unit asset.
 type Traits struct {
-	GpioPin     int        `json:"gpioPin"` // BCM GPIO pin number (default: 18)
+	GpioPin int `json:"gpioPin"` // BCM GPIO pin number (default: 18)
+	// unit is the unit this servo reports its position in, taken from the
+	// configured service so the payload and the service record cannot disagree.
+	unit        string     `json:"-"`
 	position    int        `json:"-"`
 	dutyChan    chan int   `json:"-"`
 	lastWidthUS int        `json:"-"`
@@ -90,9 +93,19 @@ func (r *rpioBackend) close() {
 // initTemplate initializes a UnitAsset with default values.
 func initTemplate() *components.UnitAsset {
 	rotation := components.Service{
-		Definition:  "rotation",
-		SubPath:     "rotation",
-		Details:     map[string][]string{"Forms": {"SignalA_v1a"}, "Unit": {"Percent", "Rotational"}},
+		Definition: "rotation",
+		SubPath:    "rotation",
+		// The command is a fraction of the servo's travel, which is why the unit
+		// is a ratio. A ratio says nothing about what is being ratioed, so the
+		// range restores it: 0 to 180 degrees is what makes 50% mean 90°, and it
+		// is calibration rather than anything unit conversion could derive.
+		Details: map[string][]string{
+			"Forms":        {"SignalA_v1a"},
+			"Unit":         {"<http://qudt.org/vocab/unit/PERCENT>"},
+			"QuantityKind": {"<http://qudt.org/vocab/quantitykind/DimensionlessRatio>"},
+			"RangeUnit":    {"<http://qudt.org/vocab/unit/DEG>"},
+			"Range":        {"0", "180"},
+		},
 		RegPeriod:   30,
 		Description: "informs of the servo's current position (GET) or updates the position (PUT)",
 	}
@@ -100,7 +113,7 @@ func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:    "Servo_1",
 		Mission: components.MissionActuation,
-		Details: map[string][]string{"Model": {"standardServo", "halfCircle"}, "FunctionalLocation": {"Kitchen"}},
+		Details: map[string][]string{"Model": {"standardServo"}, "FunctionalLocation": {"Kitchen"}},
 		ServicesMap: components.Services{
 			rotation.SubPath: &rotation,
 		},
@@ -132,6 +145,13 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
 		Traits:      t,
 	}
+	for _, serv := range ua.ServicesMap {
+		if values := serv.Details["Unit"]; len(values) > 0 {
+			t.unit = values[0]
+			break
+		}
+	}
+
 	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
 		serving(t, w, r, servicePath)
 	}
@@ -375,7 +395,7 @@ const (
 func (t *Traits) getPosition() (f forms.SignalA_v1a) {
 	f.NewForm()
 	f.Value = float64(t.position)
-	f.Unit = "Percent"
+	f.Unit = t.unit
 	f.Timestamp = time.Now()
 	return f
 }

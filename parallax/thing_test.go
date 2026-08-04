@@ -19,6 +19,7 @@ package main
 import (
 	"testing"
 
+	"github.com/sdoque/mbaigo/components"
 	"github.com/sdoque/mbaigo/forms"
 )
 
@@ -64,14 +65,49 @@ func TestGpioToRP1PWMChan(t *testing.T) {
 
 // TestGetPosition verifies that getPosition returns the current position and correct unit.
 func TestGetPosition(t *testing.T) {
-	tr := &Traits{position: 75}
+	// The unit comes from the configured service rather than a constant, so a
+	// servo can be commissioned to report something else without a recompile.
+	tr := &Traits{position: 75, unit: "<http://qudt.org/vocab/unit/PERCENT>"}
 	f := tr.getPosition()
 
 	if f.Value != 75 {
 		t.Errorf("getPosition().Value = %v, want 75", f.Value)
 	}
-	if f.Unit != "Percent" {
-		t.Errorf("getPosition().Unit = %q, want \"Percent\"", f.Unit)
+	if f.Unit != "<http://qudt.org/vocab/unit/PERCENT>" {
+		t.Errorf("getPosition().Unit = %q, want the configured unit", f.Unit)
+	}
+}
+
+// A percentage means nothing without the span it is a percentage of. The range
+// is what lets a consumer work out that half travel is 90 degrees — which unit
+// conversion cannot derive, because no arithmetic on ratios knows how far this
+// particular servo turns.
+func TestTemplateStatesItsTravel(t *testing.T) {
+	ua := initTemplate()
+
+	var serv *components.Service
+	for _, s := range ua.GetServices() {
+		serv = s
+		break
+	}
+	if serv == nil {
+		t.Fatal("the template provides no service")
+	}
+
+	if unit := serv.Details["Unit"]; len(unit) != 1 {
+		t.Errorf("Unit = %v; one key must carry one concept", unit)
+	}
+	if r := serv.Details["Range"]; len(r) != 2 || r[0] != "0" || r[1] != "180" {
+		t.Errorf("Range = %v; want the servo's travel", r)
+	}
+	if ru := serv.Details["RangeUnit"]; len(ru) != 1 {
+		t.Errorf("RangeUnit = %v; a range without a unit says as little as a percentage without a range", ru)
+	}
+	// A range stated in degrees is what "Rotational" was trying to say.
+	for _, m := range ua.GetDetails()["Model"] {
+		if m == "halfCircle" {
+			t.Error("halfCircle is still present; the range now states it precisely")
+		}
 	}
 }
 

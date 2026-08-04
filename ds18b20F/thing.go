@@ -70,7 +70,7 @@ func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:    "sensor_Id",
 		Mission: "measure_temperature",
-		Details: map[string][]string{"Unit": {"<http://qudt.org/vocab/unit/DEG_C>"}, "QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"}, "FunctionalLocation": {"Kitchen"}},
+		Details: map[string][]string{"Unit": {"<http://qudt.org/vocab/unit/DEG_F>"}, "QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"}, "FunctionalLocation": {"Kitchen"}},
 		ServicesMap: components.Services{
 			temperature.SubPath: &temperature,
 		},

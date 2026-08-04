@@ -1,7 +1,32 @@
-# mbaigo System: ds18b20
+# mbaigo System: ds18b20F
 
 ## Purpose
-This system offers as a service the temperature measured by a 1-wire digital thermometer.
+This system offers as a service the temperature measured by a 1-wire digital
+thermometer, reported in **degrees Fahrenheit**.
+
+It is the same driver as [ds18b20](../ds18b20), differing only in the unit its
+configuration declares. The DS18B20 chip reports millidegrees Celsius whatever
+the configuration says, so the reading is *converted* on the way out rather than
+relabelled — a relabelling would be wrong by 32 degrees and look entirely
+plausible.
+
+Run whichever of the two suits the deployment. A consumer that asks for a
+temperature by quantity kind rather than by unit is paired with either, and
+`GetState` converts the reading into the unit that consumer asked for. The
+thermostat needs no knowledge of which sensor is running.
+
+```json
+"details": {
+    "FunctionalLocation": ["Kitchen"],
+    "Unit":         ["<http://qudt.org/vocab/unit/DEG_F>"],
+    "QuantityKind": ["<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"]
+}
+```
+
+`QuantityKind` is what the registrar matches on, so a Fahrenheit sensor and a
+Celsius consumer can find each other at all; `Unit` is what the reading is
+converted from. A unit the framework cannot convert is fatal at startup rather
+than a wrong number later.
 
 Several sensors can be connected to the same pin, each offering its own temperature service.
 For demonstration purposes, a Raspberry Pi is recommended since it has the hardware interface to communicate with these digital thermometers. One needs to only add the serial number of the sensor to the systemconfig.json file and relevant attributes (e.g., location).

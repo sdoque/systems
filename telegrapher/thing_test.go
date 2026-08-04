@@ -17,6 +17,7 @@
 package main
 
 import (
+	"github.com/sdoque/mbaigo/components"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -227,5 +228,76 @@ func TestTemplatePatternNamesTheFunctionalLocation(t *testing.T) {
 	}
 	if len(traits.Pattern) == 0 || traits.Pattern[0] != "FunctionalLocation" {
 		t.Errorf("pattern = %v; the pairing rule and the knowledge graph both read FunctionalLocation", traits.Pattern)
+	}
+}
+
+// Firmware authors publish a reading in whichever shape they preferred, and a
+// plant contains both. Neither is wrong, so both are read.
+func TestAnalogValue(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload string
+		want    float64
+		wantErr bool
+	}{
+		{"a bare number", "21.5", 21.5, false},
+		{"a bare number with whitespace", "  21.5\n", 21.5, false},
+		{"a negative reading", "-3.25", -3.25, false},
+		{"an integer", "22", 22, false},
+		{"JSON naming the value", `{"value": 21.5}`, 21.5, false},
+		{"JSON with the reading among other fields", `{"unit":"C","value":19.75,"rssi":-58}`, 19.75, false},
+		{"JSON with a number under another name", `{"temperature": 18.5}`, 18.5, false},
+		{"a number sent as a string", `{"value": "20.25"}`, 20.25, false},
+		{"nothing numeric at all", `{"status":"ok"}`, 0, true},
+		{"not a reading", "hello", 0, true},
+		{"empty", "", 0, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := analogValue([]byte(tc.payload))
+			if tc.wantErr != (err != nil) {
+				t.Fatalf("analogValue(%q) error = %v; wantErr %v", tc.payload, err, tc.wantErr)
+			}
+			if err == nil && got != tc.want {
+				t.Errorf("analogValue(%q) = %v; want %v", tc.payload, got, tc.want)
+			}
+		})
+	}
+}
+
+// Zero is a plausible temperature, so a payload with no number must fail rather
+// than default — otherwise a fabricated reading reaches a control loop.
+func TestAnalogValueDoesNotInventAZero(t *testing.T) {
+	if v, err := analogValue([]byte(`{"status":"ok"}`)); err == nil {
+		t.Errorf("a payload with no reading produced %v", v)
+	}
+}
+
+// The template describes the common case: an analog signal with a unit, in a
+// form a consumer can unpack and convert.
+func TestTemplateDescribesAnAnalogSignal(t *testing.T) {
+	ua := initTemplate()
+
+	var serv *components.Service
+	for _, s := range ua.GetServices() {
+		serv = s
+		break
+	}
+	if serv == nil {
+		t.Fatal("the template provides no service")
+	}
+
+	if got := serv.Details["Forms"]; len(got) != 1 || got[0] != "SignalA_v1a" {
+		t.Errorf("Forms = %v; a consumer matches on the capitalised key and a registered form", got)
+	}
+	if got := serv.Details["Unit"]; len(got) != 1 {
+		t.Errorf("Unit = %v; without one the topic is served raw", got)
+	}
+	if got := serv.Details["QuantityKind"]; len(got) != 1 {
+		t.Errorf("QuantityKind = %v; without one no consumer asking for a temperature finds it", got)
+	}
+	if _, ok := serv.Details["forms"]; ok {
+		t.Error(`the lowercase "forms" key is still present; nothing matches on it`)
 	}
 }

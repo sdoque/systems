@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,6 +51,8 @@ type Traits struct {
 	Topic    string              `json:"-"`      // Topic is the MQTT topic to which the unit asset subscribes or publishes
 	Period   int                 `json:"period"` // Period is the time interval for periodic service consumption, e.g., 30 seconds
 	Message  []byte              `json:"-"`
+	received time.Time           `json:"-"` // when Message arrived, for the signal's timestamp
+	unit     string              `json:"-"` // the configured unit, empty for a topic served raw
 	owner    *components.System  `json:"-"`
 	cervices components.Cervices `json:"-"`
 }
@@ -62,10 +66,19 @@ func initTemplate() *components.UnitAsset {
 	// discloses nothing about whether what sits behind it is observed or driven.
 	// Only whoever configures the topic knows, so only they can say.
 	access := components.Service{
-		Definition:  "temperature",
-		SubPath:     "access",
-		Mission:     components.MissionMeasurement,
-		Details:     map[string][]string{"forms": {"payload"}},
+		Definition: "temperature",
+		SubPath:    "access",
+		Mission:    components.MissionMeasurement,
+		// Most MQTT topics in a plant carry an analog signal — a temperature or a
+		// pressure from an ESP32 — so that is what the template assumes. Declaring
+		// a Unit is what says so: with one, the topic is served as a SignalA_v1a
+		// and a consumer can convert it; without one it is passed through raw, as
+		// a topic carrying something else must be.
+		Details: map[string][]string{
+			"Forms":        {"SignalA_v1a"},
+			"Unit":         {"<http://qudt.org/vocab/unit/DEG_C>"},
+			"QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"},
+		},
 		RegPeriod:   30,
 		Description: "Read the current topic message (GET) or publish to it (PUT)",
 	}
@@ -119,6 +132,13 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	if configuredAsset.Details == nil {
 		configuredAsset.Details = make(map[string][]string)
 	}
+	for _, serv := range configuredAsset.Services {
+		if values := serv.Details["Unit"]; len(values) > 0 {
+			t.unit = values[0]
+			break
+		}
+	}
+
 	topicDetails := detailsFromTopic(t.Pattern, asset)
 	configuredAsset.Details = components.MergeDetails(configuredAsset.Details, topicDetails)
 
@@ -199,6 +219,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 				messageList = make(map[string][]byte)
 			}
 			t.Message = msg.Payload()
+			t.received = time.Now()
 		}
 
 		if token := t.mClient.Subscribe(topic, 0, messageHandler); token.Wait() && token.Error() != nil {
@@ -255,13 +276,30 @@ func (t *Traits) access(w http.ResponseWriter, r *http.Request, servicePath stri
 	switch r.Method {
 	case "GET":
 		msg := t.Message
-		if len(msg) > 0 {
+		if len(msg) == 0 {
+			http.Error(w, "The subscribed topic is not being published", http.StatusBadRequest)
+			return
+		}
+		if t.unit == "" {
+			// No unit declared: the topic carries something this system does not
+			// interpret, so it is passed through as it arrived.
 			w.WriteHeader(http.StatusOK)
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(msg)
-		} else {
-			http.Error(w, "The subscribed topic is not being published", http.StatusBadRequest)
+			return
 		}
+		value, err := analogValue(msg)
+		if err != nil {
+			log.Printf("%s: %v", t.Topic, err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var f forms.SignalA_v1a
+		f.NewForm()
+		f.Value = value
+		f.Unit = t.unit
+		f.Timestamp = t.received
+		usecases.HTTPProcessGetRequest(w, r, &f)
 	case "PUT":
 		log.Printf("MQTT client is connected: %v", t.mClient.IsConnected())
 
@@ -363,4 +401,65 @@ func detailsFromTopic(pattern []string, asset string) map[string][]string {
 		details[pattern[i]] = append(details[pattern[i]], segments[i])
 	}
 	return details
+}
+
+// analogValue reads a number out of an MQTT payload.
+//
+// Devices publish a reading in whichever of two shapes their firmware author
+// preferred: a bare number, or a small JSON object with the reading under some
+// key. Both are accepted, because a plant will contain both and neither is
+// wrong.
+//
+// A payload that yields no number is an error rather than a zero. Zero is a
+// plausible temperature, so guessing it would put a fabricated reading into a
+// control loop.
+func analogValue(payload []byte) (float64, error) {
+	text := strings.TrimSpace(string(payload))
+
+	if v, err := strconv.ParseFloat(text, 64); err == nil {
+		return v, nil
+	}
+
+	var object map[string]any
+	if err := json.Unmarshal(payload, &object); err == nil {
+		// "value" first, so a payload naming it explicitly is never ambiguous.
+		if v, ok := numberFrom(object["value"]); ok {
+			return v, nil
+		}
+		for _, key := range sortedKeys(object) {
+			if v, ok := numberFrom(object[key]); ok {
+				return v, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("no number in the payload %q", truncate(text))
+}
+
+func numberFrom(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(n), 64)
+		return f, err == nil
+	}
+	return 0, false
+}
+
+// sortedKeys keeps the choice of field deterministic when a payload carries
+// several numbers and names none of them "value".
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func truncate(s string) string {
+	if len(s) > 60 {
+		return s[:60] + "..."
+	}
+	return s
 }

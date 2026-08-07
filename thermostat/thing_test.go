@@ -24,6 +24,7 @@ import (
 
 	"github.com/sdoque/mbaigo/components"
 	"github.com/sdoque/mbaigo/forms"
+	"github.com/sdoque/mbaigo/usecases"
 )
 
 // TestGetSetPoint verifies that getSetPoint returns a form with the correct
@@ -44,15 +45,17 @@ func TestGetSetPoint(t *testing.T) {
 
 // TestSetSetPoint verifies that setSetPoint updates the SetPt field.
 func TestSetSetPoint(t *testing.T) {
-	tr := &Traits{SetPt: 20.0}
+	tr := &Traits{SetPt: 20.0, setpointUnit: "<http://qudt.org/vocab/unit/DEG_C>"}
 
 	var f forms.SignalA_v1a
 	f.NewForm()
 	f.Value = 24.0
-	f.Unit = "Celsius"
+	f.Unit = "<http://qudt.org/vocab/unit/DEG_C>"
 	f.Timestamp = time.Now()
 
-	tr.setSetPoint(f)
+	if err := tr.setSetPoint(f); err != nil {
+		t.Fatalf("setSetPoint: %v", err)
+	}
 
 	if tr.SetPt != 24.0 {
 		t.Errorf("expected SetPt 24.0, got %f", tr.SetPt)
@@ -284,5 +287,78 @@ func TestProvidedServicesDeclareTheirQuantityKind(t *testing.T) {
 	// And it declares no unit of its own: that is the setpoint's to give.
 	if unit := thermalError.Details["Unit"]; len(unit) != 0 {
 		t.Errorf("deviation declares its own unit %v; it must follow the setpoint", unit)
+	}
+}
+
+// The control loop subtracts the measurement from the setpoint, so the two must
+// be in one unit. Commissioning the setpoint in °F against a hardcoded °C
+// measurement gives 68 − 20 = 48, saturates the valve, and reports figures that
+// all look plausible.
+func TestMeasurementIsConvertedIntoTheSetpointUnit(t *testing.T) {
+	for _, unit := range []string{
+		"<http://qudt.org/vocab/unit/DEG_C>",
+		"<http://qudt.org/vocab/unit/DEG_F>",
+	} {
+		tr := &Traits{setpointUnit: unit}
+		cer := &components.Cervice{
+			Definition: "temperature",
+			Details:    map[string][]string{"Unit": {tr.setpointUnit}},
+		}
+
+		// A Fahrenheit sensor reporting a room at 20 °C.
+		var reading forms.SignalA_v1a
+		reading.NewForm()
+		reading.Value = 68
+		reading.Unit = "<http://qudt.org/vocab/unit/DEG_F>"
+
+		got, err := usecases.NormaliseUnits(cer, &reading)
+		if err != nil {
+			t.Fatalf("NormaliseUnits: %v", err)
+		}
+		sig := got.(*forms.SignalA_v1a)
+		if sig.Unit != unit {
+			t.Errorf("reading arrived as %q; want the setpoint's %q", sig.Unit, unit)
+		}
+		// 68 °F is 20 °C: the deviation from a 20-in-its-own-unit setpoint must
+		// be zero either way.
+		want := 20.0
+		if unit == "<http://qudt.org/vocab/unit/DEG_F>" {
+			want = 68.0
+		}
+		if diff := sig.Value - want; diff > 1e-9 || diff < -1e-9 {
+			t.Errorf("reading = %v in %s; want %v", sig.Value, unit, want)
+		}
+	}
+}
+
+// A setpoint arriving in someone else's unit is converted, and one that cannot
+// be reconciled is refused rather than written into the loop.
+func TestSetpointAdoptsTheConfiguredUnit(t *testing.T) {
+	tr := &Traits{setpointUnit: "<http://qudt.org/vocab/unit/DEG_C>"}
+
+	var f forms.SignalA_v1a
+	f.NewForm()
+	f.Value = 68
+	f.Unit = "<http://qudt.org/vocab/unit/DEG_F>"
+	if err := tr.setSetPoint(f); err != nil {
+		t.Fatalf("setSetPoint: %v", err)
+	}
+	if diff := tr.SetPt - 20.0; diff > 1e-9 || diff < -1e-9 {
+		t.Errorf("SetPt = %v; want 68 °F expressed as 20 °C", tr.SetPt)
+	}
+
+	var wrong forms.SignalA_v1a
+	wrong.NewForm()
+	wrong.Value = 50
+	wrong.Unit = "<http://qudt.org/vocab/unit/PERCENT>"
+	if err := tr.setSetPoint(wrong); err == nil {
+		t.Error("a percentage was accepted as a temperature setpoint")
+	}
+
+	var unnamed forms.SignalA_v1a
+	unnamed.NewForm()
+	unnamed.Value = 22
+	if err := tr.setSetPoint(unnamed); err == nil {
+		t.Error("a setpoint with no unit was accepted by a controller that names one")
 	}
 }

@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -151,11 +152,19 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 
 	// The thermostat consumes a temperature, not a Celsius reading: the quantity
-	// kind is what the registrar matches on, so a Fahrenheit sensor is found too,
-	// and the unit is the target GetState converts the reading into.
+	// kind is what the registrar matches on, so a Fahrenheit sensor is found too.
+	//
+	// The unit is the setpoint's, not a constant. The control loop subtracts the
+	// measurement from the setpoint, so the two must be in one unit or the
+	// deviation is meaningless — commission the setpoint in °F against a
+	// hardcoded °C measurement and 68 minus 20 is 48, the valve saturates, and
+	// every reported figure looks plausible.
+	if _, ok := usecases.LookupUnit(t.setpointUnit); !ok {
+		log.Fatalf("thermostat: the setpoint is configured in %q, which is not a QUDT unit this framework can convert a measurement into\n", t.setpointUnit)
+	}
 	ua.CervicesMap["temperature"].Details = components.MergeDetails(ua.Details, map[string][]string{
 		"QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"},
-		"Unit":         {"<http://qudt.org/vocab/unit/DEG_C>"},
+		"Unit":         {t.setpointUnit},
 		"Forms":        {"SignalA_v1a"},
 	})
 	// As with the temperature: the valve is asked for by what it is, not by the
@@ -184,9 +193,16 @@ func (t *Traits) setpt(w http.ResponseWriter, r *http.Request) {
 	case "PUT":
 		sig, err := usecases.HTTPProcessSetRequest(w, r)
 		if err != nil {
-			log.Println("Error with the setting request of the position ", err)
+			http.Error(w, "unreadable setpoint: "+err.Error(), http.StatusBadRequest)
+			return
 		}
-		t.setSetPoint(sig)
+		if err := t.setSetPoint(sig); err != nil {
+			// Refusing is the only safe answer: a setpoint in an unexpected unit
+			// is a number that will drive the valve for as long as nobody
+			// notices it looks reasonable.
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		confirmed := t.getSetPoint()
 		usecases.HTTPProcessGetRequest(w, r, &confirmed)
 	default:
@@ -228,9 +244,17 @@ func (t *Traits) getSetPoint() (f forms.SignalA_v1a) {
 }
 
 // setSetPoint updates the thermal setpoint
-func (t *Traits) setSetPoint(f forms.SignalA_v1a) {
+func (t *Traits) setSetPoint(f forms.SignalA_v1a) error {
+	// The value arrives in whatever unit the sender works in. Writing it
+	// straight into the loop is how a Fahrenheit target silently becomes a
+	// Celsius one — the one write path that moves a control target was the only
+	// place with no unit discipline.
+	if err := usecases.AdoptUnit(&f, t.setpointUnit, false); err != nil {
+		return fmt.Errorf("setpoint refused: %w", err)
+	}
 	t.SetPt = f.Value
 	log.Printf("new set point: %.1f", f.Value)
+	return nil
 }
 
 // getError fills out a signal form with the current thermal setpoint and temperature

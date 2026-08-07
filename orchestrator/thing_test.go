@@ -33,7 +33,7 @@ func (t *Traits) createDelayedBrokenURL(limit int) func() *http.Response {
 		count++
 		if count == limit {
 			f := createTestServiceRecordListForm()
-			t.leadingRegistrar = brokenUrl
+			t.leadingRegistrar.Resolve(func() (string, error) { return brokenUrl, nil }) //nolint:errcheck
 			resp.Body = io.NopCloser(bytes.NewReader(f))
 			return resp
 		}
@@ -380,7 +380,7 @@ func TestAuthorizedPassesThroughWithoutAnAuthorizer(t *testing.T) {
 // With an authorizer, only the granted candidates survive.
 func TestAuthorizedKeepsOnlyGrantedCandidates(t *testing.T) {
 	mua := createUnitAsset()
-	mua.leadingAuthorizer = "http://localhost:20104/authorizer/authorization"
+	mua.leadingAuthorizer.Resolve(func() (string, error) { return "http://localhost:20104/authorizer/authorization", nil }) //nolint:errcheck
 	all := candidates()
 	newMockTransport(grantListResponse(t, all.List[0]), 0, nil)
 
@@ -405,7 +405,7 @@ func TestAuthorizedKeepsOnlyGrantedCandidates(t *testing.T) {
 // an unreachable authorizer must not silently restore unfiltered orchestration.
 func TestAuthorizedFailsClosedWhenTheAuthorizerIsUnreachable(t *testing.T) {
 	mua := createUnitAsset()
-	mua.leadingAuthorizer = "http://localhost:20104/authorizer/authorization"
+	mua.leadingAuthorizer.Resolve(func() (string, error) { return "http://localhost:20104/authorizer/authorization", nil }) //nolint:errcheck
 	newMockTransport(func() *http.Response { return nil }, 1, errHTTP)
 
 	got, _, err := mua.authorized("thermostat", "read", candidates())
@@ -415,7 +415,7 @@ func TestAuthorizedFailsClosedWhenTheAuthorizerIsUnreachable(t *testing.T) {
 	if len(got.List) != 0 {
 		t.Errorf("returned %d candidates despite the failure", len(got.List))
 	}
-	if mua.leadingAuthorizer != "" {
+	if mua.leadingAuthorizer.URL() != "" {
 		t.Error("the cached authorizer URL survived a failure; it must be looked up again")
 	}
 }
@@ -424,7 +424,7 @@ func TestAuthorizedFailsClosedWhenTheAuthorizerIsUnreachable(t *testing.T) {
 // consumer must be told rather than handed a provider it may not use.
 func TestAuthorizedReturnsNothingWhenAllAreRefused(t *testing.T) {
 	mua := createUnitAsset()
-	mua.leadingAuthorizer = "http://localhost:20104/authorizer/authorization"
+	mua.leadingAuthorizer.Resolve(func() (string, error) { return "http://localhost:20104/authorizer/authorization", nil }) //nolint:errcheck
 
 	var empty forms.AuthorizationGrantList_v1
 	empty.NewForm()

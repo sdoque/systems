@@ -49,17 +49,36 @@ type ServiceRegistryRequest struct {
 // Traits holds all asset-specific state for the service registrar.
 // mu protects the fields it shares with concurrent goroutines.
 type Traits struct {
-	serviceRegistry  map[int]forms.ServiceRecord_v1
-	recCount         int64
-	requests         chan ServiceRegistryRequest
-	sched            *Scheduler
-	leading          bool
-	leadingSince     time.Time
-	leadingRegistrar *components.CoreSystem
-	mu               sync.Mutex
-	subscribers      map[int]chan struct{} // SSE listeners, keyed by connection ID
-	subMu            sync.Mutex
-	subSeq           int
+	serviceRegistry map[int]forms.ServiceRecord_v1
+	recCount        int64
+	requests        chan ServiceRegistryRequest
+	sched           *Scheduler
+	// role is who leads the registry. Written by the election goroutine and read
+	// by every request handler, so it is swapped as a whole rather than held as
+	// three fields: read separately, /status could answer "leading since" the
+	// zero time, or "on standby" naming a registrar the election had just
+	// cleared. That endpoint is what GetRunningCoreSystemURL polls to decide
+	// which registrar a whole cloud talks to.
+	role        atomic.Pointer[registrarRole]
+	mu          sync.Mutex
+	subscribers map[int]chan struct{} // SSE listeners, keyed by connection ID
+	subMu       sync.Mutex
+	subSeq      int
+}
+
+// registrarRole is one election outcome: this registrar leads since a moment, or
+// it is on standby behind a peer.
+type registrarRole struct {
+	leading   bool
+	since     time.Time
+	registrar *components.CoreSystem
+}
+
+// leads reports whether this registrar is currently the lead, tolerating the
+// startup window before the first election has run.
+func (t *Traits) leads() bool {
+	r := t.role.Load()
+	return r != nil && r.leading
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -342,7 +361,7 @@ func (t *Traits) notify() {
 
 // updateDB adds a new service record or extends its registration life.
 func (t *Traits) updateDB(w http.ResponseWriter, r *http.Request) {
-	if !t.leading {
+	if !t.leads() {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		if _, err := w.Write([]byte("Service Unavailable")); err != nil {
 			log.Printf("error occurred while writing to responsewriter: %v", err)
@@ -519,12 +538,14 @@ func (t *Traits) cleanDB(w http.ResponseWriter, r *http.Request) {
 func (t *Traits) roleStatus(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		if t.leading {
-			fmt.Fprintf(w, "lead Service Registrar since %s", t.leadingSince)
+		// One load, so the answer describes a single election outcome.
+		role := t.role.Load()
+		if role != nil && role.leading {
+			fmt.Fprintf(w, "lead Service Registrar since %s", role.since)
 			return
 		}
-		if t.leadingRegistrar != nil {
-			http.Error(w, fmt.Sprintf("On standby, leading registrar is %s", t.leadingRegistrar.Url), http.StatusServiceUnavailable)
+		if role != nil && role.registrar != nil {
+			http.Error(w, fmt.Sprintf("On standby, leading registrar is %s", role.registrar.Url), http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -552,14 +573,16 @@ func (t *Traits) startRole(sys *components.System) {
 				if err != nil {
 					break
 				}
-				defer resp.Body.Close()
+				status := resp.StatusCode
+				// Closed here rather than deferred: this loop never returns, so
+				// a deferred close held one response body per peer per tick for
+				// the life of the process.
+				resp.Body.Close()
 
-				switch resp.StatusCode {
+				switch status {
 				case http.StatusOK:
 					standby = true
-					t.leading = false
-					t.leadingSince = time.Time{}
-					t.leadingRegistrar = cSys
+					t.role.Store(&registrarRole{registrar: cSys})
 					break foundLead
 				case http.StatusServiceUnavailable:
 					// Service unavailable
@@ -567,11 +590,10 @@ func (t *Traits) startRole(sys *components.System) {
 					log.Printf("Received unexpected status code: %d\n", resp.StatusCode)
 				}
 			}
-			if !standby && !t.leading {
-				t.leading = true
-				t.leadingSince = time.Now()
-				t.leadingRegistrar = nil
-				log.Printf("Taking the service registry lead at %s\n", t.leadingSince)
+			if !standby && !t.leads() {
+				now := time.Now()
+				t.role.Store(&registrarRole{leading: true, since: now})
+				log.Printf("Taking the service registry lead at %s\n", now)
 			}
 			<-ticker.C
 		}

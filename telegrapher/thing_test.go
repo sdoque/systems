@@ -17,11 +17,16 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"github.com/sdoque/mbaigo/components"
+	"github.com/sdoque/mbaigo/forms"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestInitTemplate(t *testing.T) {
@@ -119,7 +124,7 @@ func TestServing_InvalidPath(t *testing.T) {
 // TestAccess_GET_EmptyMessage verifies that GET /access returns 400 when no
 // MQTT message has been received yet.
 func TestAccess_GET_EmptyMessage(t *testing.T) {
-	tr := &Traits{Message: nil}
+	tr := &Traits{}
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/telegrapher/Room_temperature/access", nil)
@@ -133,7 +138,8 @@ func TestAccess_GET_EmptyMessage(t *testing.T) {
 // TestAccess_GET_WithMessage verifies that GET /access returns 200 and the
 // stored message bytes when a message has been received.
 func TestAccess_GET_WithMessage(t *testing.T) {
-	tr := &Traits{Message: []byte(`{"temp":21.5}`)}
+	tr := &Traits{}
+	tr.latest.Store(&reading{payload: []byte(`{"temp":21.5}`), received: time.Now()})
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/telegrapher/Room_temperature/access", nil)
@@ -300,4 +306,58 @@ func TestTemplateDescribesAnAnalogSignal(t *testing.T) {
 	if _, ok := serv.Details["forms"]; ok {
 		t.Error(`the lowercase "forms" key is still present; nothing matches on it`)
 	}
+}
+
+// TestAReadingIsServedWhole is the defect this test was written for: Message and
+// received were separate fields written by the Paho callback and read separately
+// by the HTTP handler, so access could pair the payload of message n with the
+// timestamp of message n+1 and serve a signal whose value and timestamp never
+// coexisted. Run under -race, the unsynchronised version also reports the race
+// itself.
+func TestAReadingIsServedWhole(t *testing.T) {
+	tr := &Traits{unit: "<http://qudt.org/vocab/unit/DEG_C>", Topic: "room/temperature"}
+
+	// The publisher: every message pairs a value with the instant it arrived.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 500; i++ {
+			tr.latest.Store(&reading{
+				payload:  []byte(fmt.Sprintf(`{"value":%d}`, i)),
+				received: time.Unix(int64(i), 0),
+			})
+		}
+	}()
+
+	// The consumer: whatever it serves, the value and the timestamp must come
+	// from one message.
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				w := httptest.NewRecorder()
+				r := httptest.NewRequest(http.MethodGet, "/telegrapher/Room_temperature/access", nil)
+				tr.access(w, r, "access")
+				if w.Code != http.StatusOK {
+					continue
+				}
+				var got forms.SignalA_v1a
+				if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+					t.Errorf("unpacking the served signal: %v", err)
+					return
+				}
+				// The publisher pairs value i with timestamp i, so any served
+				// pair that disagrees was assembled from two messages.
+				if int64(got.Value) != got.Timestamp.Unix() {
+					t.Errorf("served value %v with timestamp %v — they are from different messages",
+						got.Value, got.Timestamp.Unix())
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	<-done
 }

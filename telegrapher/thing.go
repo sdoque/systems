@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -31,26 +32,31 @@ import (
 	"github.com/sdoque/mbaigo/usecases"
 )
 
-// Define your global variable
-var messageList map[string][]byte
-
-func init() {
-	// Initialize the map
-	messageList = make(map[string][]byte)
+// reading is one MQTT message and the moment it arrived.
+//
+// They are one observation and are swapped as one. Held as separate fields and
+// read separately, the HTTP handler could take the payload from message n and
+// the timestamp from message n+1, and serve a signal whose value and timestamp
+// never coexisted.
+type reading struct {
+	payload  []byte
+	received time.Time
 }
 
 // -------------------------------------Define the unit asset
 // Traits are Asset-specific configurable parameters and variables
 type Traits struct {
-	Broker   string              `json:"broker"`
-	mClient  mqtt.Client         `json:"-"`
-	Pattern  []string            `json:"pattern"`
-	Username string              `json:"username"`
-	Password string              `json:"password"`
-	Topic    string              `json:"-"`      // Topic is the MQTT topic to which the unit asset subscribes or publishes
-	Period   int                 `json:"period"` // Period is the time interval for periodic service consumption, e.g., 30 seconds
-	Message  []byte              `json:"-"`
-	received time.Time           `json:"-"` // when Message arrived, for the signal's timestamp
+	Broker   string      `json:"broker"`
+	mClient  mqtt.Client `json:"-"`
+	Pattern  []string    `json:"pattern"`
+	Username string      `json:"username"`
+	Password string      `json:"password"`
+	Topic    string      `json:"-"`      // Topic is the MQTT topic to which the unit asset subscribes or publishes
+	Period   int         `json:"period"` // Period is the time interval for periodic service consumption, e.g., 30 seconds
+	// latest is the most recent message. Written by the Paho callback, which
+	// runs on the client's own goroutine, and read by the HTTP handler — so it
+	// is swapped atomically rather than assigned.
+	latest   atomic.Pointer[reading]
 	unit     string              `json:"-"` // the configured unit, empty for a topic served raw
 	owner    *components.System  `json:"-"`
 	cervices components.Cervices `json:"-"`
@@ -222,11 +228,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		messageHandler := func(client mqtt.Client, msg mqtt.Message) {
 			fmt.Printf("Received message: %s from topic: %s\n", msg.Payload(), msg.Topic())
 
-			if messageList == nil {
-				messageList = make(map[string][]byte)
-			}
-			t.Message = msg.Payload()
-			t.received = time.Now()
+			t.latest.Store(&reading{payload: msg.Payload(), received: time.Now()})
 		}
 
 		if token := t.mClient.Subscribe(topic, 0, messageHandler); token.Wait() && token.Error() != nil {
@@ -282,11 +284,13 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 func (t *Traits) access(w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch r.Method {
 	case "GET":
-		msg := t.Message
-		if len(msg) == 0 {
+		// One load, so the payload and its timestamp are from the same message.
+		last := t.latest.Load()
+		if last == nil || len(last.payload) == 0 {
 			http.Error(w, "The subscribed topic is not being published", http.StatusBadRequest)
 			return
 		}
+		msg := last.payload
 		if t.unit == "" {
 			// No unit declared: the topic carries something this system does not
 			// interpret, so it is passed through as it arrived.
@@ -305,7 +309,7 @@ func (t *Traits) access(w http.ResponseWriter, r *http.Request, servicePath stri
 		f.NewForm()
 		f.Value = value
 		f.Unit = t.unit
-		f.Timestamp = t.received
+		f.Timestamp = last.received
 		usecases.HTTPProcessGetRequest(w, r, &f)
 	case "PUT":
 		log.Printf("MQTT client is connected: %v", t.mClient.IsConnected())

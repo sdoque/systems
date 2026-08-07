@@ -54,7 +54,10 @@ type Traits struct {
 	// verifiable asker. Guarded by mu.
 	lastPlaintextNote time.Time
 
-	leadingRegistrar string
+	// Read and written on the request path — Adjudicate resolves a subject's
+	// attributes through the registrar — and net/http gives every request its
+	// own goroutine, so this cannot be a plain string.
+	leadingRegistrar components.CachedURL
 
 	// attributesOf resolves a subject's attributes. It is a field rather than a
 	// direct call so a decision can be exercised without a registrar: the
@@ -443,12 +446,11 @@ func (t *Traits) recordsOf(systemName string) ([]forms.ServiceRecord_v1, error) 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	if t.leadingRegistrar == "" {
-		url, err := components.GetRunningCoreSystemURL(t.owner, components.ServiceRegistrarName)
-		if err != nil {
-			return nil, err
-		}
-		t.leadingRegistrar = url
+	registrar, err := t.leadingRegistrar.Resolve(func() (string, error) {
+		return components.GetRunningCoreSystemURL(t.owner, components.ServiceRegistrarName)
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	quest := forms.ServiceQuest_v1{
@@ -462,7 +464,7 @@ func (t *Traits) recordsOf(systemName string) ([]forms.ServiceRecord_v1, error) 
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.leadingRegistrar+"/query", bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, registrar+"/query", bytes.NewBuffer(body))
 	if err != nil {
 		return nil, err
 	}
@@ -470,7 +472,7 @@ func (t *Traits) recordsOf(systemName string) ([]forms.ServiceRecord_v1, error) 
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.leadingRegistrar = "" // find the leading registrar again next time
+		t.leadingRegistrar.Forget() // find the leading registrar again next time
 		return nil, err
 	}
 	defer resp.Body.Close()

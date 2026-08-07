@@ -17,11 +17,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"mime"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
@@ -33,10 +35,15 @@ import (
 
 // Traits are Asset-specific configurable parameters and variables
 type Traits struct {
-	leadingRegistrar  string
-	leadingAuthorizer string
-	uncheckedLogged   bool               // so an unauthorized cloud is reported once, not per request
-	owner             *components.System `json:"-"`
+	// Both are read and written on the request path, and net/http gives every
+	// request its own goroutine, so neither can be a plain string. A torn read
+	// while a concurrent failure clears one builds a request against "/query"
+	// with no host at all.
+	leadingRegistrar  components.CachedURL
+	leadingAuthorizer components.CachedURL
+	// unchecked reports an unauthorised cloud once rather than per request.
+	unchecked sync.Once
+	owner     *components.System `json:"-"`
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -189,11 +196,11 @@ func (t *Traits) orchestrateMultiple(w http.ResponseWriter, r *http.Request) {
 func (t *Traits) getServiceURL(newQuest forms.ServiceQuest_v1, subject string) (servLoc []byte, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if t.leadingRegistrar == "" {
-		t.leadingRegistrar, err = components.GetRunningCoreSystemURL(t.owner, "serviceregistrar")
-		if err != nil {
-			return servLoc, err
-		}
+	registrar, err := t.leadingRegistrar.Resolve(func() (string, error) {
+		return components.GetRunningCoreSystemURL(t.owner, "serviceregistrar")
+	})
+	if err != nil {
+		return servLoc, err
 	}
 
 	mediaType := "application/json"
@@ -202,7 +209,7 @@ func (t *Traits) getServiceURL(newQuest forms.ServiceQuest_v1, subject string) (
 		return servLoc, err
 	}
 
-	srURL := t.leadingRegistrar + "/query"
+	srURL := registrar + "/query"
 	req, err := http.NewRequest(http.MethodPost, srURL, bytes.NewBuffer(jsonQF))
 	if err != nil {
 		return servLoc, err
@@ -212,7 +219,7 @@ func (t *Traits) getServiceURL(newQuest forms.ServiceQuest_v1, subject string) (
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.leadingRegistrar = ""
+		t.leadingRegistrar.Forget()
 		return servLoc, err
 	}
 	defer resp.Body.Close()
@@ -263,11 +270,11 @@ func selectService(serviceList forms.ServiceRecordList_v1) forms.ServicePoint_v1
 func (t *Traits) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []byte, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if t.leadingRegistrar == "" {
-		t.leadingRegistrar, err = components.GetRunningCoreSystemURL(t.owner, "serviceregistrar")
-		if err != nil {
-			return servLoc, err
-		}
+	registrar, err := t.leadingRegistrar.Resolve(func() (string, error) {
+		return components.GetRunningCoreSystemURL(t.owner, "serviceregistrar")
+	})
+	if err != nil {
+		return servLoc, err
 	}
 
 	mediaType := "application/json"
@@ -276,7 +283,7 @@ func (t *Traits) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []byte,
 		return servLoc, err
 	}
 
-	srURL := t.leadingRegistrar + "/query"
+	srURL := registrar + "/query"
 	req, err := http.NewRequest(http.MethodPost, srURL, bytes.NewBuffer(jsonQF))
 	if err != nil {
 		return servLoc, err
@@ -286,7 +293,7 @@ func (t *Traits) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []byte,
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.leadingRegistrar = ""
+		t.leadingRegistrar.Forget()
 		return servLoc, err
 	}
 	defer resp.Body.Close()
@@ -314,6 +321,11 @@ func (t *Traits) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []byte,
 
 //-------------------------------------Authorization
 
+// errNoAuthorizer says this local cloud declares no authorizer. It is a
+// condition, not a fault: orchestration predates authorization and a cloud that
+// has not adopted it still orchestrates.
+var errNoAuthorizer = errors.New("no authorizer in this local cloud")
+
 // authorized asks the authorizer which of the registrar's candidates the subject
 // may use, and returns the survivors.
 //
@@ -326,16 +338,20 @@ func (t *Traits) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []byte,
 // A cloud that *does* declare an authorizer fails closed when it cannot be
 // reached. Having named the gate, running without it is a fault, not a fallback.
 func (t *Traits) authorized(subject, action string, candidates forms.ServiceRecordList_v1) (forms.ServiceRecordList_v1, map[string]string, error) {
-	if t.leadingAuthorizer == "" {
+	// An absent authorizer is not an error here — see the note above — so the
+	// lookup reports it by returning no URL rather than by failing.
+	authorizer, err := t.leadingAuthorizer.Resolve(func() (string, error) {
 		url, err := components.GetRunningCoreSystemURL(t.owner, "authorizer")
 		if err != nil || url == "" {
-			if !t.uncheckedLogged {
-				log.Printf("orchestrator: no authorizer in this local cloud — orchestration is unfiltered\n")
-				t.uncheckedLogged = true
-			}
-			return candidates, nil, nil
+			return "", errNoAuthorizer
 		}
-		t.leadingAuthorizer = url
+		return url, nil
+	})
+	if err != nil {
+		t.unchecked.Do(func() {
+			log.Printf("orchestrator: no authorizer in this local cloud — orchestration is unfiltered\n")
+		})
+		return candidates, nil, nil
 	}
 
 	var quest forms.AuthorizationQuest_v1
@@ -354,7 +370,7 @@ func (t *Traits) authorized(subject, action string, candidates forms.ServiceReco
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.leadingAuthorizer+"/authorize", bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, authorizer+"/authorize", bytes.NewBuffer(body))
 	if err != nil {
 		return forms.ServiceRecordList_v1{}, nil, err
 	}
@@ -362,7 +378,7 @@ func (t *Traits) authorized(subject, action string, candidates forms.ServiceReco
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.leadingAuthorizer = "" // look it up again next time
+		t.leadingAuthorizer.Forget() // look it up again next time
 		return forms.ServiceRecordList_v1{}, nil, fmt.Errorf("the authorizer is unreachable: %w", err)
 	}
 	defer resp.Body.Close()

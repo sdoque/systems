@@ -21,24 +21,21 @@ import (
 // ----------------------------------------------- //
 
 func createLeadingRegistrar() *Traits {
-	return &Traits{
-		leading:      true,
-		leadingSince: time.Now(),
-	}
+	t := &Traits{}
+	t.role.Store(&registrarRole{leading: true, since: time.Now()})
+	return t
 }
 
 func createNonLeadingRegistrar() *Traits {
-	return &Traits{
-		leading:          false,
-		leadingRegistrar: &components.CoreSystem{Name: "otherRegistrar", Url: "otherURL"},
-	}
+	t := &Traits{}
+	t.role.Store(&registrarRole{registrar: &components.CoreSystem{Name: "otherRegistrar", Url: "otherURL"}})
+	return t
 }
 
 func createServiceUnavailableRegistrar() *Traits {
-	return &Traits{
-		leading:          false,
-		leadingRegistrar: nil,
-	}
+	t := &Traits{}
+	t.role.Store(&registrarRole{})
+	return t
 }
 
 type roleStatusParams struct {
@@ -350,7 +347,7 @@ func TestUpdateDB(t *testing.T) {
 		confAsset := createConfAssetMultipleTraits()
 		temp, shutdown := newResource(confAsset, &sys)
 		ua := temp.Traits.(*Traits)
-		ua.leading = c.leading
+		ua.role.Store(&registrarRole{leading: c.leading})
 		w := httptest.NewRecorder()
 		var r *http.Request
 		if c.body == nil {
@@ -452,7 +449,7 @@ func TestQueryDB(t *testing.T) {
 		confAsset := createConfAssetMultipleTraits()
 		temp, shutdown := newResource(confAsset, &sys)
 		ua := temp.Traits.(*Traits)
-		ua.leading = c.leading
+		ua.role.Store(&registrarRole{leading: c.leading})
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(c.method, "http://localhost/reg", c.body)
 		r.Header = c.header
@@ -590,7 +587,7 @@ func TestQueryDBGetSSE(t *testing.T) {
 	temp, shutdown := newResource(confAsset, &sys)
 	defer shutdown()
 	ua := temp.Traits.(*Traits)
-	ua.leading = true
+	ua.role.Store(&registrarRole{leading: true})
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -656,7 +653,7 @@ func TestCleanDB(t *testing.T) {
 		confAsset := createConfAssetMultipleTraits()
 		temp, shutdown := newResource(confAsset, &sys)
 		ua := temp.Traits.(*Traits)
-		ua.leading = c.leading
+		ua.role.Store(&registrarRole{leading: c.leading})
 
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(c.method, "http://localhost/reg/a", c.body)

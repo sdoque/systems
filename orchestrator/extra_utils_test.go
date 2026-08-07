@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 
 	"github.com/sdoque/mbaigo/components"
 )
@@ -13,8 +14,12 @@ import (
 // http.DefaultClient) and it will intercept network requests.
 type mockTransport struct {
 	respFunc func() *http.Response
-	hits     int
-	err      error
+	// mu guards hits. A RoundTripper is called from whatever goroutine issued
+	// the request, and a test that exercises concurrent requests would otherwise
+	// race in the harness rather than in the code under test.
+	mu   sync.Mutex
+	hits int
+	err  error
 }
 
 func newMockTransport(respFunc func() *http.Response, v int, err error) *mockTransport {
@@ -32,8 +37,11 @@ func newMockTransport(respFunc func() *http.Response, v int, err error) *mockTra
 // It prevents the request from being sent over the network, and count how many times
 // a http request was sent
 func (t *mockTransport) RoundTrip(req *http.Request) (resp *http.Response, err error) {
+	t.mu.Lock()
 	t.hits -= 1
-	if t.hits == 0 {
+	exhausted := t.hits == 0
+	t.mu.Unlock()
+	if exhausted {
 		return resp, t.err
 	}
 	resp = t.respFunc()
@@ -57,10 +65,7 @@ func createSystemWithUnitAsset() components.System {
 
 func createUnitAsset() *Traits {
 	sys := createSystemWithUnitAsset()
-	return &Traits{
-		leadingRegistrar: "",
-		owner:            &sys,
-	}
+	return &Traits{owner: &sys}
 }
 
 type errorReader struct{}

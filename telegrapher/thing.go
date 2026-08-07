@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -151,14 +150,22 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 
 	// Make the topic an Arrowhead service (since we are subscribing to it)
 	if t.Period < 0 {
-		access := components.Service{
-			Definition:  service,
-			SubPath:     "access",
-			Details:     map[string][]string{"forms": {"mqttPayload"}},
-			RegPeriod:   30,
-			Description: "Read the current topic message (GET) or publish to it (PUT)",
+		// Use what was configured. Rebuilding the service here would discard the
+		// unit and quantity kind the topic was commissioned with, leaving the
+		// record undiscoverable by a consumer that asks for a temperature — and
+		// the payload would still carry a unit the registration never mentioned.
+		if len(configuredAsset.Services) > 0 {
+			ua.ServicesMap = usecases.MakeServiceMap(configuredAsset.Services)
+		} else {
+			access := components.Service{
+				Definition:  service,
+				SubPath:     "access",
+				Details:     map[string][]string{"Forms": {"mqttPayload"}},
+				RegPeriod:   30,
+				Description: "Read the current topic message (GET) or publish to it (PUT)",
+			}
+			ua.ServicesMap = components.Services{access.SubPath: &access}
 		}
-		ua.ServicesMap = components.Services{access.SubPath: &access}
 	}
 
 	// Make the topic a consumed service to be published (since we are consuming it)
@@ -422,15 +429,16 @@ func analogValue(payload []byte) (float64, error) {
 
 	var object map[string]any
 	if err := json.Unmarshal(payload, &object); err == nil {
-		// "value" first, so a payload naming it explicitly is never ambiguous.
-		if v, ok := numberFrom(object["value"]); ok {
-			return v, nil
-		}
-		for _, key := range sortedKeys(object) {
+		// Only fields that plausibly carry the reading. Taking any number would
+		// serve a humidity as a temperature: {"humidity":45,"temperature":21.5}
+		// has no order that makes 45 the right answer, and the service is
+		// registered as a temperature in degrees Celsius.
+		for _, key := range []string{"value", "temperature", "temp", "pressure", "level"} {
 			if v, ok := numberFrom(object[key]); ok {
 				return v, nil
 			}
 		}
+		return 0, fmt.Errorf("payload %q carries no reading under a name this system recognises", truncate(text))
 	}
 	return 0, fmt.Errorf("no number in the payload %q", truncate(text))
 }
@@ -444,17 +452,6 @@ func numberFrom(v any) (float64, bool) {
 		return f, err == nil
 	}
 	return 0, false
-}
-
-// sortedKeys keeps the choice of field deterministic when a payload carries
-// several numbers and names none of them "value".
-func sortedKeys(m map[string]any) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func truncate(s string) string {

@@ -226,7 +226,7 @@ func discoverHeaters(sys *components.System, sProtocols []string, defaults Trait
 func buildHeaterAsset(name, location string, t *Traits, sys *components.System, uac usecases.ConfigurableAsset) *components.UnitAsset {
 	ua := &components.UnitAsset{
 		Name:        name,
-		Mission:     "electric_heating",
+		Mission:     components.MissionActuation,
 		Owner:       sys,
 		Details:     map[string][]string{"FunctionalLocation": {location}},
 		ServicesMap: usecases.MakeServiceMap(uac.Services),

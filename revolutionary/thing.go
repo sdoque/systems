@@ -148,7 +148,18 @@ func (t *Traits) access(w http.ResponseWriter, r *http.Request) {
 			SampledDatum: make(chan forms.SignalA_v1a),
 			Error:        make(chan error),
 		}
-		t.serviceChannel <- requestTray
+		// The handoff is bounded as well as the answer. The channel is
+		// unbuffered, so an unattended loop left this send blocked for the life
+		// of the process — a hung request rather than a failed one, and one
+		// leaked goroutine per caller.
+		select {
+		case t.serviceChannel <- requestTray:
+		case <-time.After(5 * time.Second):
+			log.Printf("%s: the sampling loop is not accepting requests\n", t.name)
+			http.Error(w, "Service unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
 		select {
 		case err := <-requestTray.Error:
 			log.Printf("Logic error in getting measurement: %v", err)
@@ -192,8 +203,13 @@ func (t *Traits) access(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		t.outputChannel <- outputForm.Value // Send the value to the output channel for processing
-		w.WriteHeader(http.StatusOK)        // Respond with 200 OK if the write is successful
+		select {
+		case t.outputChannel <- outputForm.Value:
+			w.WriteHeader(http.StatusOK)
+		case <-time.After(5 * time.Second):
+			log.Printf("%s: the sampling loop is not accepting output requests\n", t.name)
+			http.Error(w, "Service unavailable", http.StatusServiceUnavailable)
+		}
 
 	default:
 		http.Error(w, "Method not supported", http.StatusMethodNotAllowed)
@@ -216,7 +232,10 @@ func (t *Traits) sampleSignal(ctx context.Context) {
 		for {
 			select {
 			case <-ctx.Done(): // Stop when the context is canceled
-				os.Exit(0)
+				// Returning, not exiting. This goroutine belongs to one channel
+				// of one unit asset; calling os.Exit here took the whole system
+				// down with it, so every other asset lost its shutdown and the
+				// cleanup function newResource returns never ran.
 				return
 
 			case <-ticker.C: // sample the signal at regular intervals
@@ -241,6 +260,11 @@ func (t *Traits) sampleSignal(ctx context.Context) {
 
 	for {
 		select {
+		case <-ctx.Done():
+			// Without this the loop outlived the system: it kept answering
+			// requests after shutdown and never released, which is what the
+			// os.Exit in the reader goroutine was standing in for.
+			return
 		case sigValue := <-sigChan: // Update signal value and timestamp
 			t.Value = sigValue
 			t.tStamp = <-tStampChan
@@ -255,10 +279,12 @@ func (t *Traits) sampleSignal(ctx context.Context) {
 			log.Printf("Received output request for %s: %.2f%%\n", t.name, requestedOutput)
 			rawValue := PercentToRaw(requestedOutput)
 			log.Printf("Converted output value to raw: %d\n", rawValue)
-			err := writeOutput(t.Address, rawValue)
-			if err != nil {
-				fmt.Printf("Error writing output: %v\n", err)
-				return
+			if err := writeOutput(t.Address, rawValue); err != nil {
+				// Reported, not fatal to the loop. Returning here stopped the
+				// sampling and the serving of every subsequent request because
+				// one write to the process image failed — a channel that is
+				// briefly unwritable is not a reason to stop reading it.
+				log.Printf("%s: writing the output failed: %v\n", t.name, err)
 			}
 		}
 	}

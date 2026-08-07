@@ -163,6 +163,12 @@ func discoverHeaters(sys *components.System, sProtocols []string, defaults Trait
 		Definition: "OnOff",
 		Protos:     sProtocols,
 		Nodes:      make(map[string][]components.NodeInfo),
+		// The plugs are switched, never read, so the tokens this discovery
+		// obtains have to be write tokens. The nodes it finds are pinned to one
+		// heater each below and are not rediscovered, so a token minted for the
+		// wrong action would not be corrected later: every PUT would be refused
+		// and the heaters would never switch.
+		Mode: "set",
 	}
 	if err := usecases.Search4MultipleServices(onOffCer, sys); err != nil {
 		log.Printf("ethermostat: could not discover OnOff services: %v\n", err)

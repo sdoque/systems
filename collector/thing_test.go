@@ -202,7 +202,7 @@ func TestCollectIngestSingleProvider(t *testing.T) {
 		Definition: "pressure",
 		Protos:     []string{"http"},
 		Nodes: map[string][]components.NodeInfo{
-			"sensor1": {{URL: srv.URL, Details: map[string][]string{"Unit": {"kPa"}}}},
+			"sensor1": {readNode(srv.URL, map[string][]string{"Unit": {"kPa"}})},
 		},
 	}
 	mwa := &mockWriteAPI{}
@@ -251,8 +251,8 @@ func TestCollectIngestMultipleProviders(t *testing.T) {
 		Definition: "pressure",
 		Protos:     []string{"http"},
 		Nodes: map[string][]components.NodeInfo{
-			"sensor1": {{URL: srv1.URL, Details: map[string][]string{"Unit": {"kPa"}}}},
-			"sensor2": {{URL: srv2.URL, Details: map[string][]string{"Unit": {"bar"}}}},
+			"sensor1": {readNode(srv1.URL, map[string][]string{"Unit": {"kPa"}})},
+			"sensor2": {readNode(srv2.URL, map[string][]string{"Unit": {"bar"}})},
 		},
 	}
 	mwa := &mockWriteAPI{}
@@ -328,7 +328,7 @@ func TestCollectIngestProviderFailure(t *testing.T) {
 		Definition: "pressure",
 		Protos:     []string{"http"},
 		Nodes: map[string][]components.NodeInfo{
-			"sensor1": {{URL: srv.URL}},
+			"sensor1": {readNode(srv.URL, nil)},
 		},
 	}
 	tr := &Traits{
@@ -367,7 +367,7 @@ func TestCollectIngestBadForm(t *testing.T) {
 		Definition: "switch",
 		Protos:     []string{"http"},
 		Nodes: map[string][]components.NodeInfo{
-			"device1": {{URL: srv.URL}},
+			"device1": {readNode(srv.URL, nil)},
 		},
 	}
 	mwa := &mockWriteAPI{}
@@ -419,4 +419,13 @@ func TestServing(t *testing.T) {
 			t.Errorf("status = %d, want 404", w.Code)
 		}
 	})
+}
+
+// readNode is a provider already discovered for a read, which is the state the
+// collector's discovery leaves behind. The action key has to be present: a node
+// carrying no token for the action being performed is one that has not been
+// discovered for it, and GetState re-orchestrates rather than present the wrong
+// token — which in a test means reaching for an orchestrator that is not there.
+func readNode(url string, details map[string][]string) components.NodeInfo {
+	return components.NodeInfo{URL: url, Details: details, Tokens: map[string]string{"read": ""}}
 }

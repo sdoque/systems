@@ -70,15 +70,20 @@ ls /sys/class/pwm/
 
 ## Setup: Raspberry Pi 4
 
-No overlay is required. The go-rpio library accesses BCM hardware registers directly through `/dev/mem`, which requires either:
-
-- Running the binary as **root** (`sudo`), or
-- Adding the user to the **gpio** group:
+No overlay is required. The go-rpio library accesses BCM hardware registers directly through `/dev/mem`, which requires membership of the **gpio** group:
 
 ```bash
 sudo usermod -aG gpio $USER
 # log out and back in for the group change to take effect
 ```
+
+`sudo ./parallax` also works and is the wrong answer in a cloud that attests
+its binaries. maitreD identifies a system by reading `/proc/<pid>/exe`, which
+Linux allows only for a process it could trace — so a maitreD running as your
+user cannot see one started with sudo, the CA refuses to certify it, and
+parallax retries enrolment once a minute forever while every other system on
+the host comes up. Group membership costs one command and keeps parallax
+attestable.
 
 ---
 

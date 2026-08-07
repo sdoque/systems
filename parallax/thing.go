@@ -321,16 +321,29 @@ func exportPWM(chipPath string, ch int) (string, error) {
 	// script. Poll 'enable' for write access for up to 1 s so udev has time
 	// to catch up.
 	enablePath := filepath.Join(pwmPath, "enable")
+	var lastErr error
 	for i := 0; i < 100; i++ {
 		f, err := os.OpenFile(enablePath, os.O_WRONLY, 0)
 		if err == nil {
 			_ = f.Close()
+			lastErr = nil
 			break
 		}
+		lastErr = err
 		if !os.IsPermission(err) {
 			break // some other error — let the caller's write surface it
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Still unwritable after a second, so it is not udev being slow. Say what to
+	// do, and say the group rather than sudo: a system started with sudo cannot
+	// be attested by a maitreD running as anyone else, so it enrols on no
+	// cloud — a working PWM bought at the price of no certificate.
+	if os.IsPermission(lastErr) {
+		return "", fmt.Errorf("%s is not writable by this user: add the user to the gpio group "+
+			"(sudo usermod -aG gpio $USER, then log out and back in) rather than running parallax with sudo, "+
+			"which would leave it unattestable", enablePath)
 	}
 
 	return pwmPath, nil

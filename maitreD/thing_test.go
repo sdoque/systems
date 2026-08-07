@@ -22,10 +22,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/sdoque/mbaigo/components"
@@ -330,5 +333,63 @@ func TestIsApproved(t *testing.T) {
 	}
 	if (&Traits{}).isApproved("aaa") {
 		t.Error("empty whitelist should reject everything")
+	}
+}
+
+// TestAProcessOwnedByAnotherUserSaysSo is the failure seen on a live Pi: a
+// system started with sudo, for the GPIO access it needs, could never be
+// attested — Linux lets a process read another's /proc/<pid>/exe only if it
+// could trace it. Every other system on the host certified; that one retried
+// once a minute for as long as it ran, and the only clue was "Cannot resolve
+// executable for PID", which names neither the cause nor a remedy.
+func TestAProcessOwnedByAnotherUserSaysSo(t *testing.T) {
+	tr := &Traits{Whitelist: []string{}, loaded: true}
+
+	withResolveExecutable(t, func(pid int) (string, error) {
+		return "", &fs.PathError{Op: "readlink", Path: "/proc/1234/exe", Err: syscall.EACCES}
+	})
+
+	body, _ := json.Marshal(map[string]int{"pid": 1234})
+	w := httptest.NewRecorder()
+	tr.attest(w, httptest.NewRequest(http.MethodPost, "/attest", bytes.NewReader(body)))
+
+	// A refusal, not a fault of maitreD's: it will never be able to see this
+	// process, so there is nothing to retry.
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", w.Code)
+	}
+
+	said := w.Body.String()
+	for _, want := range []string{"another user", "/proc/1234/exe"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the refusal does not mention %q: %s", want, strings.TrimSpace(said))
+		}
+	}
+	// The remedy has to point away from privilege, not towards it: a maitreD
+	// running as root to inspect everything is a larger thing to trust than the
+	// systems it attests.
+	if strings.Contains(said, "sudo") && !strings.Contains(said, "rather than sudo") {
+		t.Errorf("the refusal recommends sudo: %s", strings.TrimSpace(said))
+	}
+}
+
+// TestAProcessThatExitedIsNotAFault: the other resolution failure, which is
+// nothing to worry about and must not read like the one above.
+func TestAProcessThatExitedIsNotAFault(t *testing.T) {
+	tr := &Traits{Whitelist: []string{}, loaded: true}
+
+	withResolveExecutable(t, func(pid int) (string, error) {
+		return "", &fs.PathError{Op: "readlink", Path: "/proc/1234/exe", Err: syscall.ENOENT}
+	})
+
+	body, _ := json.Marshal(map[string]int{"pid": 1234})
+	w := httptest.NewRecorder()
+	tr.attest(w, httptest.NewRequest(http.MethodPost, "/attest", bytes.NewReader(body)))
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "exited") {
+		t.Errorf("a vanished process is not reported as such: %s", strings.TrimSpace(w.Body.String()))
 	}
 }

@@ -1,8 +1,11 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sdoque/mbaigo/components"
@@ -236,4 +239,48 @@ func subpaths(ua *components.UnitAsset) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// TestAnUnobservedLocomotiveIsNotInvented is the defect this test was written
+// for: onTrack is set only by Observe, which nothing in production calls, so
+// every PUT returned 503 — correctly, since there is no transport — while every
+// GET happily served speed 0, forward true and a zero timestamp. That is not
+// "unknown"; it is a specific claim that the engine is stationary and facing
+// forward, and a consumer cannot tell it from a real reading.
+func TestAnUnobservedLocomotiveIsNotInvented(t *testing.T) {
+	assets, cleanup := newResources(configurable(), nil, fixedSource{theSet()}, silentBus{})
+	defer cleanup()
+	if len(assets) == 0 {
+		t.Fatal("no locomotive assets")
+	}
+	ua := assets[0]
+
+	for _, path := range []string{"speed", "direction", "light"} {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/hobbyist/loco/"+path, nil)
+		ua.Serving(w, r, path)
+
+		if w.Code == http.StatusOK {
+			t.Errorf("%s served %q for a locomotive the layout has never reported",
+				path, strings.TrimSpace(w.Body.String()))
+			continue
+		}
+		if w.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s returned %d, want 503", path, w.Code)
+		}
+	}
+
+	// Once the layout reports it, the state is real and is served.
+	tr := ua.Traits.(*Traits)
+	frame, err := SpeedFrame(theSet()[0].UID, 50)
+	if err != nil {
+		t.Fatalf("building a speed frame: %v", err)
+	}
+	tr.Observe(frame)
+
+	w := httptest.NewRecorder()
+	ua.Serving(w, httptest.NewRequest(http.MethodGet, "/hobbyist/loco/speed", nil), "speed")
+	if w.Code != http.StatusOK {
+		t.Errorf("speed returned %d after the layout reported it, want 200", w.Code)
+	}
 }

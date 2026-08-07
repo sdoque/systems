@@ -75,8 +75,13 @@ type Traits struct {
 	speed     float64 // percent of full scale
 	forward   bool
 	functions map[uint8]bool
-	onTrack   bool
-	lastSeen  time.Time
+	// onTrack becomes true when the layout is heard from — see Observe. Nothing
+	// hears from it yet: Bus is send-only and openBus returns a silentBus, so
+	// until the CAN receive path exists this stays false and every command is
+	// refused. The refusal is correct; what was not was answering a GET with the
+	// zero value as though it were a reading.
+	onTrack  bool
+	lastSeen time.Time
 
 	owner *components.System
 }
@@ -128,6 +133,14 @@ decoder uses:
 	}
 	if len(locomotives) == 0 {
 		log.Println("hobbyist: the Central Station knows no locomotives yet — place one on the track and restart")
+	}
+
+	// Said once and plainly. Without a transport every command is refused and
+	// every read reports nothing heard, and an operator watching a rack of 503s
+	// deserves to know the cause is a missing driver rather than a locomotive in
+	// its box.
+	if _, silent := bus.(silentBus); silent {
+		log.Println("hobbyist: no CAN transport is open, so nothing can be commanded and no locomotive state can be read — the services are registered and will answer 503 until openBus returns a real bus")
 	}
 
 	assets := make([]*components.UnitAsset, 0, len(locomotives))
@@ -298,9 +311,32 @@ func (t *Traits) unavailable(w http.ResponseWriter) {
 	http.Error(w, fmt.Sprintf("%s is not on the track", t.loco.Name), http.StatusServiceUnavailable)
 }
 
+// observed reports whether the layout has ever said anything about this
+// locomotive. Until it has, there is no state to serve.
+func (t *Traits) observed() bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return !t.lastSeen.IsZero()
+}
+
+// unobserved refuses a read for which there is no reading.
+//
+// The alternative was what this code used to do: serve speed 0, forward true and
+// a zero timestamp, which is not "unknown" but a specific and false claim about
+// where the locomotive is and what it is doing. A consumer cannot tell that
+// apart from a stationary engine.
+func (t *Traits) unobserved(w http.ResponseWriter) {
+	http.Error(w, fmt.Sprintf("nothing has been heard from %s: the layout has not reported its state",
+		t.loco.Name), http.StatusServiceUnavailable)
+}
+
 func (t *Traits) serveSpeed(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		if !t.observed() {
+			t.unobserved(w)
+			return
+		}
 		t.mu.RLock()
 		f := t.signalA(t.speed, "<http://qudt.org/vocab/unit/PERCENT>")
 		t.mu.RUnlock()
@@ -328,6 +364,10 @@ func (t *Traits) serveSpeed(w http.ResponseWriter, r *http.Request) {
 func (t *Traits) serveDirection(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		if !t.observed() {
+			t.unobserved(w)
+			return
+		}
 		t.mu.RLock()
 		f := t.signalB(t.forward)
 		t.mu.RUnlock()
@@ -361,6 +401,10 @@ func (t *Traits) serveFunction(w http.ResponseWriter, r *http.Request, servicePa
 
 	switch r.Method {
 	case http.MethodGet:
+		if !t.observed() {
+			t.unobserved(w)
+			return
+		}
 		t.mu.RLock()
 		f := t.signalB(t.functions[number])
 		t.mu.RUnlock()

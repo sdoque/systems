@@ -125,27 +125,18 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 }
 
 // serviceUnit returns the physical unit for a given service subpath.
-func serviceUnit(s string) string {
-	switch s {
-	case "temperature":
-		return "Celsius"
-	case "humidity":
-		return "%"
-	case "co2":
-		return "ppm"
-	case "pressure":
-		return "mbar"
-	case "noise":
-		return "dB"
-	case "wind_speed", "gust_speed":
-		return "km/h"
-	case "wind_angle", "gust_angle":
-		return "°"
-	case "rain":
-		return "mm/h"
-	case "rain_24h":
-		return "mm"
-	default:
-		return ""
+//
+// It reads the same table the services are declared from rather than repeating
+// it. Two lists meant the reading and the record describing it could disagree,
+// and a consumer converts using the record — so the unit stated there is the one
+// that has to be true of the value.
+func serviceUnit(subPath string) string {
+	for _, info := range moduleTypeMap {
+		for _, spec := range info.services {
+			if spec.subPath == subPath {
+				return spec.unit
+			}
+		}
 	}
+	return ""
 }

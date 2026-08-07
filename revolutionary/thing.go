@@ -53,6 +53,10 @@ type Traits struct {
 	serviceChannel chan ServiceTray `json:"-"`
 	outputChannel  chan float64     `json:"-"`
 	name           string           `json:"-"`
+	// The unit the channel's readings are reported in, taken from the configured
+	// asset so the payload and the record a consumer converts from cannot
+	// disagree.
+	unit string `json:"-"`
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -77,7 +81,13 @@ func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:    "LevelSensor_1",
 		Mission: components.MissionMeasurement,
-		Details: map[string][]string{"Unit": {"Percent"}, "FunctionalLocation": {"UpperTank"}, "Description": {"level"}},
+		Details: map[string][]string{
+			"Unit":         {"<http://qudt.org/vocab/unit/PERCENT>"},
+			"QuantityKind": {"<http://qudt.org/vocab/quantitykind/DimensionlessRatio>"},
+
+			"FunctionalLocation": {"UpperTank"},
+			"Description":        {"level"},
+		},
 		ServicesMap: components.Services{
 			access.SubPath: &access,
 		},
@@ -112,6 +122,10 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
 		Traits:      t,
 	}
+	if u := configuredAsset.Details["Unit"]; len(u) > 0 {
+		t.unit = u[0]
+	}
+
 	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
 		serving(t, w, r, servicePath)
 	}
@@ -234,7 +248,7 @@ func (t *Traits) sampleSignal(ctx context.Context) {
 			var f forms.SignalA_v1a
 			f.NewForm()
 			f.Value = t.Value
-			f.Unit = "Percent"
+			f.Unit = t.unit
 			f.Timestamp = t.tStamp
 			order.SampledDatum <- f
 		case requestedOutput := <-t.outputChannel:

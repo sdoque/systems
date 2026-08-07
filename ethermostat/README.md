@@ -100,8 +100,20 @@ curl -s http://localhost:20196/ethermostat/KitchenHeater/setpoint
 ```bash
 curl -s -X PUT http://localhost:20196/ethermostat/KitchenHeater/setpoint \
   -H "Content-Type: application/json" \
-  -d '{"value": 22.0, "unit": "Celsius", "version": "SignalA_v1a"}'
+  -d '{"value": 22.0, "unit": "<http://qudt.org/vocab/unit/DEG_C>", "version": "SignalA_v1a"}'
 ```
+
+The unit is read, not assumed. Send the same target in °F and it is converted:
+
+```bash
+curl -s -X PUT http://localhost:20196/ethermostat/KitchenHeater/setpoint \
+  -H "Content-Type: application/json" \
+  -d '{"value": 71.6, "unit": "<http://qudt.org/vocab/unit/DEG_F>", "version": "SignalA_v1a"}'
+```
+
+A unit that is not a temperature — or no unit at all — is refused with 400 rather
+than written into the loop. This controller switches a real heater, and a number
+taken for the wrong unit looks plausible for a long time.
 
 **Read the current thermal error:**
 ```bash

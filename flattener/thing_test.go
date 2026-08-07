@@ -110,8 +110,8 @@ func TestGetSetPoint(t *testing.T) {
 	if f.Value != 20.5 {
 		t.Errorf("expected Value 20.5, got %.1f", f.Value)
 	}
-	if f.Unit != "Celsius" {
-		t.Errorf("expected Unit %q, got %q", "Celsius", f.Unit)
+	if f.Unit != degreeCelsius {
+		t.Errorf("expected Unit %q, got %q", degreeCelsius, f.Unit)
 	}
 }
 
@@ -244,5 +244,21 @@ func TestServing_MethodNotAllowed(t *testing.T) {
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405 for PUT on setpoint, got %d", w.Code)
+	}
+}
+
+// TestSetpointQuestIsNarrowedToTemperature is the defect this test was written
+// for: the setpoint cervice carried no Details, so Search4MultipleServices
+// matched every service defined as "setpoint" — including the leveler's, which
+// is a tank level in percent. A 21 °C recommendation went into it as 21 % full.
+func TestSetpointQuestIsNarrowedToTemperature(t *testing.T) {
+	cer := newSetpointCervice([]string{"http"})
+
+	kinds := cer.Details["QuantityKind"]
+	if len(kinds) == 0 {
+		t.Fatal("the setpoint quest names no quantity kind, so it matches any controller's setpoint")
+	}
+	if kinds[0] != temperatureKind {
+		t.Errorf("setpoint quest asks for %q, want %q", kinds[0], temperatureKind)
 	}
 }

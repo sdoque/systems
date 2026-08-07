@@ -447,10 +447,14 @@ func newModuleAsset(info moduleInfo, moduleName, stationName string, sys *compon
 
 	services := make(components.Services)
 	for _, spec := range info.services {
+		details := map[string][]string{"Unit": {spec.unit}, "Forms": {"SignalA_v1a"}}
+		if spec.quantityKind != "" {
+			details["QuantityKind"] = []string{spec.quantityKind}
+		}
 		s := &components.Service{
 			Definition:  spec.definition,
 			SubPath:     spec.subPath,
-			Details:     map[string][]string{"Unit": {spec.unit}, "Forms": {"SignalA_v1a"}},
+			Details:     details,
 			RegPeriod:   30,
 			Description: spec.description,
 		}

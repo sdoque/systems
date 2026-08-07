@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/sdoque/mbaigo/forms"
+	"github.com/sdoque/mbaigo/usecases"
 )
 
 func TestPercentToRaw(t *testing.T) {
@@ -75,7 +76,7 @@ func TestAccess_GET(t *testing.T) {
 		var f forms.SignalA_v1a
 		f.NewForm()
 		f.Value = 42.0
-		f.Unit = "Percent"
+		f.Unit = "<http://qudt.org/vocab/unit/PERCENT>"
 		tray.SampledDatum <- f
 	}()
 
@@ -130,5 +131,29 @@ func TestServing_InvalidPath(t *testing.T) {
 	serving(tr, w, r, "unknown")
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+// TestConfiguredUnitIsConvertible checks that the level is declared in a unit
+// the framework can convert, which is what lets the leveler consume this channel
+// at all: the controller asks for its setpoint's unit, and a reading in a name
+// QUDT does not know is refused rather than converted.
+//
+// The payload itself is stamped from the same configured detail — see the unit
+// field newResource fills in — so the reading and the record cannot disagree.
+func TestConfiguredUnitIsConvertible(t *testing.T) {
+	ua := initTemplate()
+
+	declared := ua.Details["Unit"]
+	if len(declared) == 0 {
+		t.Fatal("the asset declares no unit, so a consumer has nothing to convert from")
+	}
+	if _, ok := usecases.LookupUnit(declared[0]); !ok {
+		t.Errorf("the level is published in %q, which no consumer can convert from", declared[0])
+	}
+
+	kinds := ua.Details["QuantityKind"]
+	if len(kinds) == 0 {
+		t.Error("the asset declares no quantity kind, so a consumer asking for a ratio never finds it")
 	}
 }

@@ -19,6 +19,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,23 +28,26 @@ import (
 )
 
 func TestGetSetPoint(t *testing.T) {
-	tr := &Traits{SetPt: 42.5}
+	tr := &Traits{SetPt: 42.5, setpointUnit: "<http://qudt.org/vocab/unit/PERCENT>"}
 	f := tr.getSetPoint()
 
 	if f.Value != 42.5 {
 		t.Errorf("getSetPoint().Value = %v, want 42.5", f.Value)
 	}
-	if f.Unit != "Percent" {
-		t.Errorf("getSetPoint().Unit = %q, want \"Percent\"", f.Unit)
+	if f.Unit != "<http://qudt.org/vocab/unit/PERCENT>" {
+		t.Errorf("getSetPoint().Unit = %q, want %q", f.Unit, "<http://qudt.org/vocab/unit/PERCENT>")
 	}
 }
 
 func TestSetSetPoint(t *testing.T) {
-	tr := &Traits{SetPt: 10.0}
+	tr := &Traits{SetPt: 10.0, setpointUnit: "<http://qudt.org/vocab/unit/PERCENT>"}
 
 	var f forms.SignalA_v1a
 	f.Value = 55.0
-	tr.setSetPoint(f)
+	f.Unit = "<http://qudt.org/vocab/unit/PERCENT>"
+	if err := tr.setSetPoint(f); err != nil {
+		t.Fatalf("setSetPoint: %v", err)
+	}
 
 	if tr.SetPt != 55.0 {
 		t.Errorf("SetPt after setSetPoint(55) = %v, want 55.0", tr.SetPt)
@@ -51,26 +55,26 @@ func TestSetSetPoint(t *testing.T) {
 }
 
 func TestGetError(t *testing.T) {
-	tr := &Traits{deviation: 7.3}
+	tr := &Traits{deviation: 7.3, errorUnit: "<http://qudt.org/vocab/unit/PERCENT>"}
 	f := tr.getError()
 
 	if f.Value != 7.3 {
 		t.Errorf("getError().Value = %v, want 7.3", f.Value)
 	}
-	if f.Unit != "Percent" {
-		t.Errorf("getError().Unit = %q, want \"Percent\"", f.Unit)
+	if f.Unit != "<http://qudt.org/vocab/unit/PERCENT>" {
+		t.Errorf("getError().Unit = %q, want %q", f.Unit, "<http://qudt.org/vocab/unit/PERCENT>")
 	}
 }
 
 func TestGetJitter(t *testing.T) {
-	tr := &Traits{jitter: 250 * time.Millisecond}
+	tr := &Traits{jitter: 250 * time.Millisecond, jitterUnit: "<http://qudt.org/vocab/unit/MilliSEC>"}
 	f := tr.getJitter()
 
 	if f.Value != 250 {
 		t.Errorf("getJitter().Value = %v, want 250", f.Value)
 	}
-	if f.Unit != "millisecond" {
-		t.Errorf("getJitter().Unit = %q, want \"millisecond\"", f.Unit)
+	if f.Unit != "<http://qudt.org/vocab/unit/MilliSEC>" {
+		t.Errorf("getJitter().Unit = %q, want %q", f.Unit, "<http://qudt.org/vocab/unit/MilliSEC>")
 	}
 }
 
@@ -193,5 +197,64 @@ func TestInitTemplateServiceMissions(t *testing.T) {
 		if got := components.EffectiveMission(ua, serv); got != mission {
 			t.Errorf("service %q effective mission = %q; want %q", subPath, got, mission)
 		}
+	}
+}
+
+// TestSetpointAdoptsTheConfiguredUnit is the defect this test was written for:
+// setSetPoint wrote f.Value into the control loop without ever reading f.Unit,
+// so a fraction offered as a level became a percentage. 0.8 of a tank arrived as
+// 0.8 % and the pump ran until the tank was empty.
+func TestSetpointAdoptsTheConfiguredUnit(t *testing.T) {
+	percent := "<http://qudt.org/vocab/unit/PERCENT>"
+
+	// A ratio expressed as a plain number is 100 times the percentage.
+	tr := &Traits{SetPt: 10, setpointUnit: percent}
+	var f forms.SignalA_v1a
+	f.NewForm()
+	f.Value = 0.8
+	f.Unit = "<http://qudt.org/vocab/unit/NUM>"
+	if err := tr.setSetPoint(f); err != nil {
+		t.Fatalf("setSetPoint: %v", err)
+	}
+	if tr.SetPt != 80 {
+		t.Errorf("0.8 as a ratio is 80 %%, got %v", tr.SetPt)
+	}
+
+	// A temperature is not a level, however plausible the number looks.
+	var wrong forms.SignalA_v1a
+	wrong.NewForm()
+	wrong.Value = 21
+	wrong.Unit = "<http://qudt.org/vocab/unit/DEG_C>"
+	if err := tr.setSetPoint(wrong); err == nil {
+		t.Errorf("a temperature was accepted as a tank level: SetPt = %v", tr.SetPt)
+	}
+
+	// A bare number says nothing, and this loop drives a pump.
+	var silent forms.SignalA_v1a
+	silent.NewForm()
+	silent.Value = 55
+	if err := tr.setSetPoint(silent); err == nil {
+		t.Errorf("a setpoint with no unit was accepted: SetPt = %v", tr.SetPt)
+	}
+}
+
+// TestSetpointHandlerRefusesAWrongUnit checks the refusal reaches the caller.
+// The handler used to log the error and carry on, so a rejected setpoint was
+// answered with 200 and the sender had no way to know.
+func TestSetpointHandlerRefusesAWrongUnit(t *testing.T) {
+	tr := &Traits{SetPt: 20, setpointUnit: "<http://qudt.org/vocab/unit/PERCENT>"}
+
+	body := `{"value":21,"unit":"<http://qudt.org/vocab/unit/DEG_C>","version":"SignalA_v1.0"}`
+	req := httptest.NewRequest(http.MethodPut, "/leveler/Leveler_1/setpoint", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	tr.setpt(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for a setpoint in the wrong unit, got %d", rec.Code)
+	}
+	if tr.SetPt != 20 {
+		t.Errorf("the refused setpoint was written anyway: SetPt = %v", tr.SetPt)
 	}
 }

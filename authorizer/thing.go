@@ -50,6 +50,9 @@ type Traits struct {
 	mu       sync.RWMutex
 	policies Policies
 	loadedAt time.Time // modification time of the file the policies came from
+	// lastPlaintextNote rate-limits the report that quests arrive with no
+	// verifiable asker. Guarded by mu.
+	lastPlaintextNote time.Time
 
 	leadingRegistrar string
 
@@ -225,6 +228,29 @@ func (t *Traits) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Who is asking, when the connection can say. The orchestrator is the only
+	// system that calls this service, and it asks on another system's behalf, so
+	// the quest names a subject the peer is not. What the peer certificate
+	// establishes is that the *asker* is the orchestrator.
+	//
+	// Over plain HTTP there is no certificate to check. That is not a
+	// misconfiguration to refuse: the core-system URLs are http:// in the
+	// template, enrolment itself is plaintext, and a cloud is expected to run
+	// before it is protected. Refusing here would break every default
+	// deployment to close a hole that only exists in deployments which have not
+	// adopted TLS anyway. It is recorded instead — in the log line below, and in
+	// the security posture the knowledge graph carries — so a cloud that
+	// believes it is protected can be seen not to be.
+	asker, verified := usecases.PeerCN(r)
+	if verified && asker != t.owner.Name && asker != orchestratorCN {
+		log.Printf("authorizer: refusing an authorization quest from %q: only the orchestrator may ask\n", asker)
+		http.Error(w, "only the orchestrator may request authorization", http.StatusForbidden)
+		return
+	}
+	if !verified {
+		t.notePlaintextQuest()
+	}
+
 	grants := t.Adjudicate(*quest)
 
 	payload, err := usecases.Pack(&grants, mediaType)
@@ -238,6 +264,27 @@ func (t *Traits) authorize(w http.ResponseWriter, r *http.Request) {
 	if _, err := w.Write(payload); err != nil {
 		log.Printf("authorizer: writing the answer: %v\n", err)
 	}
+}
+
+// orchestratorCN is the common name the orchestrator enrols under. The
+// authorize service has exactly one legitimate caller, so naming it is the whole
+// of the access rule.
+const orchestratorCN = "orchestrator"
+
+// notePlaintextQuest reports, at most once a minute, that quests are arriving
+// with no verifiable asker.
+//
+// Rate-limited rather than silent: one line per orchestration would drown the
+// log of a working cloud, and no line at all is how an operator comes to believe
+// the gate is checking something it is not.
+func (t *Traits) notePlaintextQuest() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if time.Since(t.lastPlaintextNote) < time.Minute {
+		return
+	}
+	t.lastPlaintextNote = time.Now()
+	log.Printf("authorizer: authorization quests are arriving without a client certificate, so the asking system is unverified — this cloud reaches the authorizer over plain HTTP\n")
 }
 
 //-------------------------------------Unit asset's functionalities

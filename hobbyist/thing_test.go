@@ -87,8 +87,11 @@ func TestSpeedIsARatioWithItsRangeStated(t *testing.T) {
 	if kind := speed.Details["QuantityKind"]; len(kind) != 1 {
 		t.Errorf("QuantityKind = %v; without one no consumer finds it by what it is", kind)
 	}
-	if r := speed.Details["Range"]; len(r) != 2 || r[1] != "1000" {
-		t.Errorf("Range = %v; want the decoder's full scale", r)
+	// The service's range, in the service's unit. It used to advertise the
+	// decoder's full scale of 1000 beside a unit of percent, so a consumer was
+	// told it could ask for 1000 % — which SpeedFrame refuses.
+	if r := speed.Details["Range"]; len(r) != 2 || r[0] != "0" || r[1] != "100" {
+		t.Errorf("Range = %v; want 0 to 100, the range of the unit it is stated in", r)
 	}
 	if speed.Mission != "actuation" {
 		t.Errorf("mission = %q; commanding a locomotive acts on the world", speed.Mission)
@@ -282,5 +285,65 @@ func TestAnUnobservedLocomotiveIsNotInvented(t *testing.T) {
 	ua.Serving(w, httptest.NewRequest(http.MethodGet, "/hobbyist/loco/speed", nil), "speed")
 	if w.Code != http.StatusOK {
 		t.Errorf("speed returned %d after the layout reported it, want 200", w.Code)
+	}
+}
+
+// TestTwoLocomotivesWithOneNameBothAnswer is review finding #23: assetName used
+// the uid only when the name was empty, so two engines called "421 393-0" — the
+// same model twice, which a layout has every reason to hold — produced one asset
+// name and sys.UAssets silently kept whichever was built last. The other
+// locomotive was on the track and unreachable.
+func TestTwoLocomotivesWithOneNameBothAnswer(t *testing.T) {
+	twins := []Locomotive{
+		{UID: 0x4001, Name: "421 393-0", Kind: DecoderMFX, Functions: []Function{{Number: 0, Name: "Light"}}},
+		{UID: 0x4002, Name: "421 393-0", Kind: DecoderMFX, Functions: []Function{{Number: 0, Name: "Light"}}},
+		{UID: 0x4003, Name: "Krokodil", Kind: DecoderMFX},
+	}
+
+	assets, cleanup := newResources(configurable(), nil, fixedSource{twins}, silentBus{})
+	defer cleanup()
+
+	if len(assets) != len(twins) {
+		t.Fatalf("%d assets for %d locomotives", len(assets), len(twins))
+	}
+
+	seen := make(map[string]int, len(assets))
+	for _, ua := range assets {
+		seen[ua.GetName()]++
+	}
+	for name, n := range seen {
+		if n > 1 {
+			t.Errorf("%d locomotives answer to %q, so all but one are unreachable", n, name)
+		}
+	}
+
+	// A name that does not collide is left alone, so existing URLs do not move.
+	if seen["Krokodil"] != 1 {
+		t.Errorf("a unique name was renamed: %v", seen)
+	}
+}
+
+// TestASpeedFrameCannotReportMoreThanFullScale is review finding #24:
+// SpeedPercent divided by the full scale without bounding the word first, so a
+// malformed frame carrying 0xFFFF was served as 6553.5 % — a percentage that
+// cannot exist, presented as a reading, off a bus this code does not control.
+func TestASpeedFrameCannotReportMoreThanFullScale(t *testing.T) {
+	frame, err := SpeedFrame(0x4001, 100)
+	if err != nil {
+		t.Fatalf("building a speed frame: %v", err)
+	}
+	if got, err := SpeedPercent(frame.Data); err != nil || got != 100 {
+		t.Fatalf("full scale read as %v (%v), want 100", got, err)
+	}
+
+	// The word a corrupted or foreign frame can carry.
+	bad := append([]byte(nil), frame.Data...)
+	bad[4], bad[5] = 0xFF, 0xFF
+	got, err := SpeedPercent(bad)
+	if err == nil {
+		t.Error("a speed above full scale was accepted without comment")
+	}
+	if got > 100 {
+		t.Errorf("a speed of %v %% was reported", got)
 	}
 }

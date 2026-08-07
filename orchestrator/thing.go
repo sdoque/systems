@@ -41,9 +41,11 @@ type Traits struct {
 	// with no host at all.
 	leadingRegistrar  components.CachedURL
 	leadingAuthorizer components.CachedURL
-	// unchecked reports an unauthorised cloud once rather than per request.
-	unchecked sync.Once
-	owner     *components.System `json:"-"`
+	// unchecked reports an unauthorised cloud once rather than per request, and
+	// unidentified does the same for consumers the connection cannot name.
+	unchecked    sync.Once
+	unidentified sync.Once
+	owner        *components.System `json:"-"`
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -124,7 +126,14 @@ func (t *Traits) orchestrate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		subject, _ := usecases.PeerCN(r)
+		subject, identified := usecases.PeerCN(r)
+		if !identified {
+			// Not a refusal: a cloud with no authorizer needs no certificate to
+			// orchestrate, and this is the path it uses. Recorded so that when
+			// the authorizer then refuses every candidate, the reason is in the
+			// log next to it.
+			t.noteUnidentified()
+		}
 		servLocation, err := t.getServiceURL(*qf, subject)
 		if err != nil {
 			log.Println(err)
@@ -321,6 +330,14 @@ func (t *Traits) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []byte,
 
 //-------------------------------------Authorization
 
+// noteUnidentified reports, at most once a minute, that quests are arriving from
+// consumers the connection cannot name.
+func (t *Traits) noteUnidentified() {
+	t.unidentified.Do(func() {
+		log.Printf("orchestrator: service quests are arriving without a client certificate, so the consumer is unverified — an authorised cloud will refuse them\n")
+	})
+}
+
 // errNoAuthorizer says this local cloud declares no authorizer. It is a
 // condition, not a fault: orchestration predates authorization and a cloud that
 // has not adopted it still orchestrates.
@@ -398,6 +415,13 @@ func (t *Traits) authorized(subject, action string, candidates forms.ServiceReco
 
 	for _, refusal := range answer.Refusals {
 		log.Printf("orchestrator: %q refused %s: %s\n", subject, refusal.ServiceNode, refusal.Reason)
+	}
+
+	// An unnamed subject is refused everything by Decide's empty-subject check,
+	// and the refusal then reads as "no policy permits this" — which sends an
+	// operator to the policy file for a problem that is not in it.
+	if subject == "" && len(answer.Grants) == 0 && len(answer.Refusals) > 0 {
+		log.Printf("orchestrator: the consumer presented no verified certificate, so no policy can name it — this quest reached the authorizer over a connection with no client certificate\n")
 	}
 
 	var permitted forms.ServiceRecordList_v1

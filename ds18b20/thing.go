@@ -97,7 +97,14 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 	unit, ok := usecases.LookupUnit(declared)
 	if !ok {
-		log.Fatalf("%s declares the unit %q, which is not a QUDT unit this framework knows\n", configuredAsset.Name, declared)
+		// Name the replacement where there is one. A pre-QUDT name resolves
+		// through the framework's alias table, so reaching here means the unit
+		// is outside the table altogether — and an error that says only "not
+		// known" leaves the operator to guess what to write instead.
+		if canonical, legacy := usecases.CanonicalUnit(declared); legacy {
+			log.Fatalf("%s declares the unit %q; write <%s> instead\n", configuredAsset.Name, declared, canonical)
+		}
+		log.Fatalf("%s declares the unit %q, which is not a QUDT unit this framework knows. Temperatures are <http://qudt.org/vocab/unit/DEG_C>, <...DEG_F> or <...K>\n", configuredAsset.Name, declared)
 	}
 	if _, err := usecases.Convert(0, celsius(), unit, false); err != nil {
 		log.Fatalf("%s cannot report in %s: %v\n", configuredAsset.Name, declared, err)

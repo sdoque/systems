@@ -106,7 +106,7 @@ func initTemplate() *components.UnitAsset {
 			{Number: 3, Name: "horn"},
 		},
 	}
-	return unitAssetFor(example, nil, nil)
+	return unitAssetFor(example, assetName(example), nil, nil)
 }
 
 //-------------------------------------Instantiate the unit assets based on configuration
@@ -143,9 +143,11 @@ decoder uses:
 		log.Println("hobbyist: no CAN transport is open, so nothing can be commanded and no locomotive state can be read — the services are registered and will answer 503 until openBus returns a real bus")
 	}
 
+	names := disambiguate(locomotives)
+
 	assets := make([]*components.UnitAsset, 0, len(locomotives))
 	for _, loco := range locomotives {
-		ua := unitAssetFor(loco, bus, sys)
+		ua := unitAssetFor(loco, names[loco.UID], bus, sys)
 		assets = append(assets, ua)
 		log.Printf("hobbyist: %s (%s, uid %#x) with %d function(s)\n", loco.Name, loco.Kind, loco.UID, len(loco.Functions))
 	}
@@ -162,7 +164,7 @@ decoder uses:
 // so no place on the layout describes it — but its light and its horn are on
 // *that* engine, and a consumer paired to one locomotive should reach that one's
 // horn and no other's.
-func unitAssetFor(loco Locomotive, bus Bus, sys *components.System) *components.UnitAsset {
+func unitAssetFor(loco Locomotive, name string, bus Bus, sys *components.System) *components.UnitAsset {
 	t := &Traits{
 		loco:      loco,
 		bus:       bus,
@@ -178,7 +180,7 @@ func unitAssetFor(loco Locomotive, bus Bus, sys *components.System) *components.
 	}
 
 	ua := &components.UnitAsset{
-		Name:    assetName(loco),
+		Name:    name,
 		Mission: components.MissionActuation,
 		Owner:   sys,
 		Details: map[string][]string{
@@ -209,7 +211,12 @@ func servicesFor(loco Locomotive) []components.Service {
 				"Forms":        {"SignalA_v1a"},
 				"Unit":         {"<http://qudt.org/vocab/unit/PERCENT>"},
 				"QuantityKind": {"<http://qudt.org/vocab/quantitykind/DimensionlessRatio>"},
-				"Range":        {"0", fmt.Sprint(SpeedMax)},
+				// The service's range, not the decoder's. SpeedMax is the
+				// wire full-scale value, and advertising it beside a unit of
+				// PERCENT told a consumer it could ask for 1000 % — which
+				// SpeedFrame then refuses. The two disagreed and the consumer
+				// was told the wrong one.
+				"Range": {"0", "100"},
 			},
 			RegPeriod:   30,
 			Description: "reads the current speed (GET) or sets it (PUT), as a percentage of the decoder's full scale",
@@ -281,6 +288,35 @@ func assetName(loco Locomotive) string {
 		return fmt.Sprintf("loco_%X", loco.UID)
 	}
 	return strings.ReplaceAll(name, " ", "_")
+}
+
+// disambiguate gives every locomotive a name no other locomotive answers to.
+//
+// The uid was used only when the name was empty, so two engines named "421
+// 393-0" — the same model twice, which a layout has every reason to hold —
+// produced one asset name and sys.UAssets silently kept whichever was built
+// last. The other locomotive was on the track and unreachable.
+//
+// A name that does not collide is left alone, so an existing deployment's URLs
+// do not move. Only the duplicates take the uid, which is the identity the
+// station uses anyway.
+func disambiguate(locomotives []Locomotive) map[uint32]string {
+	counts := make(map[string]int, len(locomotives))
+	for _, loco := range locomotives {
+		counts[assetName(loco)]++
+	}
+
+	names := make(map[uint32]string, len(locomotives))
+	for _, loco := range locomotives {
+		name := assetName(loco)
+		if counts[name] > 1 {
+			name = fmt.Sprintf("%s_%X", name, loco.UID)
+			log.Printf("hobbyist: more than one locomotive is called %q — this one answers to %q\n",
+				assetName(loco), name)
+		}
+		names[loco.UID] = name
+	}
+	return names
 }
 
 //-------------------------------------Service handlers

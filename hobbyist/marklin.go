@@ -231,7 +231,15 @@ func SpeedPercent(data []byte) (float64, error) {
 	if len(data) < 6 {
 		return 0, fmt.Errorf("a speed frame carries 6 bytes, not %d", len(data))
 	}
-	return float64(binary.BigEndian.Uint16(data[4:6])) / SpeedMax * 100, nil
+	raw := binary.BigEndian.Uint16(data[4:6])
+	// Clamped, because the frame comes off a bus this code does not control. A
+	// malformed or corrupted speed word of 0xFFFF is 6553.5 %, which SpeedFrame
+	// would refuse on the way out but which is served to a consumer on the way
+	// in — a percentage that cannot exist, presented as a reading.
+	if raw > SpeedMax {
+		return 100, fmt.Errorf("the frame reports %d of a full scale of %d: clamped to 100%%", raw, SpeedMax)
+	}
+	return float64(raw) / SpeedMax * 100, nil
 }
 
 // UIDOf reads the locomotive a frame concerns.

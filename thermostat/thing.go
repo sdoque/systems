@@ -158,7 +158,13 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		"Unit":         {"<http://qudt.org/vocab/unit/DEG_C>"},
 		"Forms":        {"SignalA_v1a"},
 	})
-	ua.CervicesMap["rotation"].Details = components.MergeDetails(ua.Details, map[string][]string{"Unit": {"Percent"}, "Forms": {"SignalA_v1a"}})
+	// As with the temperature: the valve is asked for by what it is, not by the
+	// unit it speaks, so a servo advertising a QUDT identifier is still found.
+	ua.CervicesMap["rotation"].Details = components.MergeDetails(ua.Details, map[string][]string{
+		"QuantityKind": {"<http://qudt.org/vocab/quantitykind/DimensionlessRatio>"},
+		"Unit":         {"<http://qudt.org/vocab/unit/PERCENT>"},
+		"Forms":        {"SignalA_v1a"},
+	})
 
 	go t.feedbackLoop(sys.Ctx)
 

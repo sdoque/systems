@@ -48,6 +48,17 @@ sequenceDiagram
 | `orchestrator` | Matches service consumers with providers by returning the URL of a currently available and authorized service |
 | `esr` | Ephemeral Service Registrar — lightweight in-memory alternative to a database-backed registrar, keeps track of currently available services |
 
+A local cloud needs a registrar and an orchestrator. The three below are optional
+and each raises what the cloud can protect against; a cloud without them works,
+and says so. See [SECURITY.md](SECURITY.md) for what to deploy and what each
+level actually protects.
+
+| System | What it adds |
+|---|---|
+| `ca` | Issues the certificates that give every system a verifiable identity |
+| `maitreD` | Attests a requesting binary's hash against the CA-mastered whitelist before the CA signs for it |
+| `authorizer` | Decides which system may use which service, and mints the access token that proves it |
+
 ### Sensors and gateways
 
 | System | Description |

@@ -17,6 +17,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -87,4 +88,70 @@ func TestReadTemp(t *testing.T) {
 			t.Errorf("expected status 404, got %d", resp.StatusCode)
 		}
 	})
+}
+
+// TestParseDeviceFileSurvivesABadSensor is the defect this test was written for:
+// the reader indexed the second line of the device file guarded only by a check
+// that the file was non-empty. A CRC failure or a sensor unplugged mid-read
+// yields one line, and the index panicked the reader goroutine and took the
+// system with it — every two seconds, against hardware this code does not
+// control.
+func TestParseDeviceFileSurvivesABadSensor(t *testing.T) {
+	good := "6a 01 4b 46 7f ff 0c 10 07 : crc=07 YES\n6a 01 4b 46 7f ff 0c 10 07 t=22625\n"
+
+	if got, err := parseDeviceFile([]byte(good)); err != nil {
+		t.Fatalf("a good reading was refused: %v", err)
+	} else if got < 22.62 || got > 22.63 {
+		t.Errorf("t=22625 read as %v, want 22.625", got)
+	}
+
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{"one line, as a CRC failure leaves it", "6a 01 4b 46 7f ff 0c 10 07 : crc=07 NO"},
+		{"empty, as an unplugged sensor leaves it", ""},
+		{"a second line with no reading", "crc=07 YES\nnothing here\n"},
+		{"a reading that is not a number", "crc=07 YES\n... t=hot\n"},
+		// The power-on default. A chip that reset mid-read reports 85 C, which
+		// is a plausible number and would drive a control loop.
+		{"the 85 C power-on default", "crc=07 YES\n... t=85000\n"},
+		{"below what the part can measure", "crc=07 YES\n... t=-60000\n"},
+	} {
+		if _, err := parseDeviceFile([]byte(tc.raw)); err == nil {
+			t.Errorf("%s: accepted", tc.name)
+		}
+	}
+}
+
+// TestAGetDuringShutdownIsRefusedNotAPanic is the other half of the defect:
+// readTemperature closed trayChan when the context was cancelled, while the HTTP
+// handler sent on it unguarded. main cancels the context and then sleeps two
+// seconds with the servers still accepting, so any GET in that window sent on a
+// closed channel — which panics and takes the system down, on hardware in the
+// field, on an ordinary Ctrl-C.
+func TestAGetDuringShutdownIsRefusedNotAPanic(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	tr := &Traits{trayChan: make(chan STray), ctx: ctx}
+
+	stopped := make(chan struct{})
+	go func() {
+		tr.readTemperature(ctx)
+		close(stopped)
+	}()
+
+	cancel()
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("readTemperature did not return after the context was cancelled")
+	}
+
+	// The window main leaves open: the reader has gone, the server has not.
+	w := httptest.NewRecorder()
+	tr.readTemp(w, httptest.NewRequest(http.MethodGet, "/temperature", nil))
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("a GET during shutdown returned %d, want 503", w.Code)
+	}
 }

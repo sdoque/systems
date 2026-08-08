@@ -4,5 +4,5 @@ go 1.26.5
 
 require (
 	github.com/gorilla/websocket v1.5.3
-	github.com/sdoque/mbaigo v0.1.0-alpha.7
+	github.com/sdoque/mbaigo v0.1.0-alpha.8
 )

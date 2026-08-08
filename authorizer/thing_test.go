@@ -85,7 +85,7 @@ func TestReloadPoliciesKeepsPreviousRulesOnABadEdit(t *testing.T) {
 		t.Fatalf("reloadPolicies: %v", err)
 	}
 
-	write(t, path, `{"policies":[{"subject":"a","missions":["measurment"],"actions":["read"]}]}`)
+	write(t, path, `{"policies":[{"subject":"a","missions":["not-a-mission"],"actions":["read"]}]}`)
 	bumpModTime(t, path)
 
 	if err := tr.reloadPolicies(); err == nil {

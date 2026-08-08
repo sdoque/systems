@@ -104,7 +104,7 @@ type Decision struct {
 
 // LoadPolicies parses a policies.json document and validates it.
 //
-// An unparseable or invalid file is an error rather than an empty policy set:
+// An unparsable or invalid file is an error rather than an empty policy set:
 // silently falling back to "deny everything" would look identical to a correct
 // lockdown, and an operator would have no way to tell a typo from an intent.
 func LoadPolicies(data []byte) (Policies, error) {

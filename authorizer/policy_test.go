@@ -254,9 +254,9 @@ func TestLoadPoliciesRejectsInvalidFiles(t *testing.T) {
 		doc         string
 		wantInError string
 	}{
-		{"unknown mission", `{"policies":[{"subject":"a","missions":["measurment"],"actions":["read"]}]}`, "unknown mission"},
+		{"unknown mission", `{"policies":[{"subject":"a","missions":["not-a-mission"],"actions":["read"]}]}`, "unknown mission"},
 		{"unknown action", `{"policies":[{"subject":"a","missions":["measurement"],"actions":["delete"]}]}`, "unknown action"},
-		{"unparseable ttl", `{"policies":[{"subject":"a","missions":["measurement"],"actions":["read"],"ttl":"soon"}]}`, "bad ttl"},
+		{"unparsable ttl", `{"policies":[{"subject":"a","missions":["measurement"],"actions":["read"],"ttl":"soon"}]}`, "bad ttl"},
 		{"no subject", `{"policies":[{"missions":["measurement"],"actions":["read"]}]}`, "no subject"},
 		{"no missions", `{"policies":[{"subject":"a","actions":["read"]}]}`, "no missions"},
 		{"no actions", `{"policies":[{"subject":"a","missions":["measurement"]}]}`, "no actions"},

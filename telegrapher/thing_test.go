@@ -312,7 +312,7 @@ func TestTemplateDescribesAnAnalogSignal(t *testing.T) {
 // received were separate fields written by the Paho callback and read separately
 // by the HTTP handler, so access could pair the payload of message n with the
 // timestamp of message n+1 and serve a signal whose value and timestamp never
-// coexisted. Run under -race, the unsynchronised version also reports the race
+// coexisted. Run under -race, the unsynchronized version also reports the race
 // itself.
 func TestAReadingIsServedWhole(t *testing.T) {
 	tr := &Traits{unit: "<http://qudt.org/vocab/unit/DEG_C>", Topic: "room/temperature"}

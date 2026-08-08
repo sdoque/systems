@@ -34,7 +34,7 @@ Assets that change physical or digital state.
 
 - **Examples:** servo position setter, valve open/close, heater plug, pump speed
   command.
-- **Typical actions:** `write` only by authorised controllers; `read` permitted
+- **Typical actions:** `write` only by authorized controllers; `read` permitted
   for status display and audit.
 - **Pairing:** location-bound. A kitchen heater plug is paired to kitchen-class
   controllers.
@@ -122,7 +122,7 @@ position; PUT sets a new one. Two design choices, in increasing complexity:
    for the common case where read is permissive but write is tight.
 
 For mbaigo today, option 2 is operationally simpler. Option 1 is the right move
-if the read and write semantics ever need to be authorised differently for
+if the read and write semantics ever need to be authorized differently for
 different consumers.
 
 ### Multi-mission assets
@@ -223,9 +223,9 @@ default is either too permissive to be safe or too restrictive to be tolerated,
 so it will be worked around.
 
 Instead, **validate `Mission` against this taxonomy at system startup and refuse
-to start** when it is missing or unrecognised, naming the valid values in the
+to start** when it is missing or unrecognized, naming the valid values in the
 error. A field the system will not boot without cannot be skipped. This is the
-mechanism that makes the mission trustworthy enough to authorise against.
+mechanism that makes the mission trustworthy enough to authorize against.
 
 Migration is largely mechanical, since the existing free text already encodes the
 intent: `measure_temperature` → `measurement`, `control_heater` → `control`,

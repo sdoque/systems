@@ -81,7 +81,7 @@ sudo usermod -aG gpio $USER
 its binaries. maitreD identifies a system by reading `/proc/<pid>/exe`, which
 Linux allows only for a process it could trace — so a maitreD running as your
 user cannot see one started with sudo, the CA refuses to certify it, and
-parallax retries enrolment once a minute forever while every other system on
+parallax retries enrollment once a minute forever while every other system on
 the host comes up. Group membership costs one command and keeps parallax
 attestable.
 

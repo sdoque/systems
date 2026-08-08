@@ -261,7 +261,7 @@ sequenceDiagram
 ```
 
 > `canPoller` and the HTTP handler run **in parallel**.  The only
-> synchronisation point is the `updateChan` / `trayChan` channels — `assetLoop`
+> synchronization point is the `updateChan` / `trayChan` channels — `assetLoop`
 > handles them one at a time via `select`, which is sufficient because the
 > CAN poll interval (100 ms per PID) is much slower than an HTTP round-trip.
 

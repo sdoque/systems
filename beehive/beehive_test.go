@@ -89,7 +89,7 @@ func TestServing_Dashboard_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-// TestServing_UnknownService verifies 404 for an unrecognised service subpath.
+// TestServing_UnknownService verifies 404 for an unrecognized service subpath.
 func TestServing_UnknownService(t *testing.T) {
 	tr := &Traits{}
 	w := httptest.NewRecorder()

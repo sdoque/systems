@@ -32,7 +32,7 @@ func TestInitTemplate(t *testing.T) {
 	}
 }
 
-// A missing policy file means "nothing is authorised yet", not "start refusing
+// A missing policy file means "nothing is authorized yet", not "start refusing
 // to run": an uncommissioned cloud must be able to boot.
 func TestReloadPoliciesToleratesAMissingFile(t *testing.T) {
 	inDir(t, t.TempDir())

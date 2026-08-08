@@ -280,7 +280,7 @@ func functionsInOrder(functions []Function) []Function {
 }
 
 // assetName identifies the locomotive in URLs and in the registry. The station's
-// name is what an operator recognises; the UID keeps two engines with the same
+// name is what an operator recognizes; the UID keeps two engines with the same
 // name apart.
 func assetName(loco Locomotive) string {
 	name := strings.TrimSpace(loco.Name)

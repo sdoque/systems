@@ -14,7 +14,7 @@ import (
 // production: every request runs in its own goroutine, and getServiceURL caches
 // the registrar and authorizer URLs on the shared Traits.
 //
-// Run under -race. Without synchronisation this reports a data race on
+// Run under -race. Without synchronization this reports a data race on
 // t.leadingRegistrar, t.leadingAuthorizer and t.uncheckedLogged — the three
 // fields the orchestration path both reads and writes on the request path.
 func TestConcurrentOrchestrationIsRaceFree(t *testing.T) {

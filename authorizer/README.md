@@ -18,7 +18,7 @@ The authorizer is the **second gate** of a two-gate chain:
    so it receives tokens for specific (provider, asset, service, action) tuples.
    The system *acts*.
 
-A binary that is whitelisted but not policy-authorised has cryptographic identity
+A binary that is whitelisted but not policy-authorized has cryptographic identity
 and no permissions. A binary holding a token whose certificate has been revoked
 fails at the TLS handshake before any policy is consulted.
 
@@ -198,8 +198,8 @@ return a subject rather than nothing.
 
 Two consequences to expect when running this:
 
-- **HTTPS binds only after enrolment.** `SetoutServers` waits for the
-  certificate, so between boot and enrolment a system advertises a port that is
+- **HTTPS binds only after enrollment.** `SetoutServers` waits for the
+  certificate, so between boot and enrollment a system advertises a port that is
   not yet listening. A consumer reaching it gets a connection refused, the node
   cache is cleared, and the next call re-orchestrates. Transient, and visible in
   the logs.
@@ -219,7 +219,7 @@ running deployment.
    testbed presented a usable client certificate, continuously rather than as a
    one-off audit.
 2. **`Mission` carried to the registrar, validated at startup, populated.** A
-   system with a missing or unrecognised mission refuses to start.
+   system with a missing or unrecognized mission refuses to start.
 3. **The policy engine, with no network.** `Decide(policies, request) → decision`
    as a pure function, table-driven against POLICY.md's worked examples.
 4. **Wired into the Orchestrator as filtering only.** Observable end to end with

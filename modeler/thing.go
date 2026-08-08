@@ -144,7 +144,7 @@ func (t *Traits) assembleModel(w http.ResponseWriter) {
 
 	// Preserve the framework-configured Transport so this call uses mTLS
 	// when the registrar serves only HTTPS. http.DefaultClient.Transport is
-	// set up by installTLSConfig at enrolment.
+	// set up by installTLSConfig at enrollment.
 	client := &http.Client{Transport: http.DefaultClient.Transport}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -433,7 +433,7 @@ func parseSystemFragment(ibdPart string) systemFragment {
 		if m := connectRe.FindStringSubmatch(line); m != nil {
 			url := strings.TrimSpace(m[3])
 			// An unresolved consumer ("(no registered provider)") has no URL to
-			// match; normalise that to an empty string so the emitter can treat
+			// match; normalize that to an empty string so the emitter can treat
 			// it uniformly.
 			if strings.HasPrefix(url, "(") {
 				url = ""
@@ -449,7 +449,7 @@ func parseSystemFragment(ibdPart string) systemFragment {
 
 // emitCloudPackage produces the complete SysML v2 package representing the
 // local cloud: port defs, abstract action defs, the Host and LocalCloud type
-// definitions, per-system block defs, behaviour defs, and a LocalCloud IBD
+// definitions, per-system block defs, behavior defs, and a LocalCloud IBD
 // instance containing host parts, system parts, and formal connect statements.
 func (t *Traits) emitCloudPackage(portDefs, abstractActions, blockDefs, behaviorDefs []string, fragments []systemFragment) string {
 	// URL → (systemPart, assetName, definition) lookup for connect resolution.
@@ -543,7 +543,7 @@ func (t *Traits) emitCloudPackage(portDefs, abstractActions, blockDefs, behavior
 	sb.WriteString("    }\n\n")
 
 	if len(behaviorDefs) > 0 {
-		sb.WriteString("    // ── Behaviour Definitions ────────────────────────────────────────────────\n")
+		sb.WriteString("    // ── Behavior Definitions ────────────────────────────────────────────────\n")
 		for _, block := range behaviorDefs {
 			sb.WriteString(block + "\n\n")
 		}
@@ -666,7 +666,7 @@ func containsString(s []string, v string) bool {
 	return false
 }
 
-// sysmlIdent normalises a name to a SysML-compatible identifier. Mirrors
+// sysmlIdent normalizes a name to a SysML-compatible identifier. Mirrors
 // the helper used in mbaigo's smodeling.go so generated type names align.
 func sysmlIdent(name string) string {
 	r := strings.NewReplacer("-", "_", " ", "_", ".", "_")

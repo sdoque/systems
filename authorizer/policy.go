@@ -36,7 +36,7 @@ import (
 	"github.com/sdoque/mbaigo/forms"
 )
 
-// DefaultTTL is the lifetime of a token whose authorising rule sets none.
+// DefaultTTL is the lifetime of a token whose authorizing rule sets none.
 const DefaultTTL = 5 * time.Minute
 
 // Wildcard matches any subject, mission, service or action.
@@ -53,7 +53,7 @@ const (
 
 var validActions = []string{ActionRead, ActionWrite, ActionInvoke}
 
-// Rule is one allow entry. A request is authorised when at least one rule
+// Rule is one allow entry. A request is authorized when at least one rule
 // matches it and no denial does.
 type Rule struct {
 	Subject            string   `json:"subject"`
@@ -185,7 +185,7 @@ func Decide(p Policies, req Request) Decision {
 	}
 
 	// The shortest TTL among the matching rules wins. POLICY.md does not say
-	// which rule's lifetime applies when several authorise the same request;
+	// which rule's lifetime applies when several authorize the same request;
 	// taking the shortest bounds revocation latency by the most cautious rule an
 	// operator wrote rather than by the order they happened to list them in.
 	allowed := false
@@ -256,7 +256,7 @@ func matches(pattern, value string) bool {
 }
 
 // matchesAny reports whether any pattern in the list matches the value. An empty
-// list matches nothing: a rule listing no missions authorises nothing, which
+// list matches nothing: a rule listing no missions authorizes nothing, which
 // Validate refuses to load in the first place.
 func matchesAny(patterns []string, value string) bool {
 	for _, p := range patterns {

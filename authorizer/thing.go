@@ -95,7 +95,7 @@ func initTemplate() *components.UnitAsset {
 //
 // A missing policy file is not a startup failure: an authorizer with no policies
 // denies everything, which is the correct state for a cloud that has not been
-// commissioned yet. It is logged loudly, because "nothing is authorised" and
+// commissioned yet. It is logged loudly, because "nothing is authorized" and
 // "the authorizer is misconfigured" look identical from the outside.
 func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (*components.UnitAsset, func()) {
 	t := &Traits{owner: sys}
@@ -238,7 +238,7 @@ func (t *Traits) authorize(w http.ResponseWriter, r *http.Request) {
 	//
 	// Over plain HTTP there is no certificate to check. That is not a
 	// misconfiguration to refuse: the core-system URLs are http:// in the
-	// template, enrolment itself is plaintext, and a cloud is expected to run
+	// template, enrollment itself is plaintext, and a cloud is expected to run
 	// before it is protected. Refusing here would break every default
 	// deployment to close a hole that only exists in deployments which have not
 	// adopted TLS anyway. It is recorded instead — in the log line below, and in
@@ -269,7 +269,7 @@ func (t *Traits) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// orchestratorCN is the common name the orchestrator enrols under. The
+// orchestratorCN is the common name the orchestrator enrolls under. The
 // authorize service has exactly one legitimate caller, so naming it is the whole
 // of the access rule.
 const orchestratorCN = "orchestrator"
@@ -330,7 +330,7 @@ func (t *Traits) Adjudicate(quest forms.AuthorizationQuest_v1) forms.Authorizati
 
 		token, err := t.mint(quest, candidate, decision.TTL, now)
 		if err != nil {
-			// An authorizer that cannot sign cannot authorise. Refusing is the
+			// An authorizer that cannot sign cannot authorize. Refusing is the
 			// only honest answer: a grant without a token would be a permission
 			// no provider can check.
 			answer.Refusals = append(answer.Refusals, forms.AuthorizationRefusal_v1{
@@ -387,7 +387,7 @@ func (t *Traits) mint(quest forms.AuthorizationQuest_v1, candidate forms.Service
 }
 
 // signingKey is the authorizer's own private key, generated in memory when it
-// enrolled with the CA. It is nil until enrolment completes, which is why mint
+// enrolled with the CA. It is nil until enrollment completes, which is why mint
 // can fail.
 func (t *Traits) signingKey() *ecdsa.PrivateKey {
 	if t.owner == nil || t.owner.Husk == nil {

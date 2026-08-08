@@ -73,7 +73,7 @@ func (r locoRecord) locomotive() (Locomotive, error) {
 		return Locomotive{}, err
 	}
 	if strings.TrimSpace(r.Name) == "" {
-		return Locomotive{}, fmt.Errorf("no name, so nothing an operator could recognise it by")
+		return Locomotive{}, fmt.Errorf("no name, so nothing an operator could recognize it by")
 	}
 
 	functions := make([]Function, 0, len(r.Functions))

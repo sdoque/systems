@@ -162,7 +162,7 @@ Beehive discovers devices by querying the Orchestrator for the `OnOff` service d
 
 1. **Beekeeper is running** and has successfully registered its services with the Service Registrar.
 2. **The Orchestrator URL** in `systemconfig.json` is correct and reachable.
-3. The Orchestrator has an authorisation rule permitting `beehive` to consume `OnOff` from `beekeeper`.
+3. The Orchestrator has an authorization rule permitting `beehive` to consume `OnOff` from `beekeeper`.
 
 You can verify that beekeeper has registered its services by querying the Service Registrar directly:
 
@@ -172,7 +172,7 @@ curl -s http://<registrar-ip>:20102/serviceregistrar/registry | python3 -m json.
 
 ### A device shows "offline"
 
-The switch card is faded and labelled "offline" when beehive received an HTTP error or timeout when reading the device's `on_off` service. This usually means:
+The switch card is faded and labeled "offline" when beehive received an HTTP error or timeout when reading the device's `on_off` service. This usually means:
 
 - Beekeeper is running but the specific device has not yet reported a measurement (returns `503`). Wait a few minutes after first pairing.
 - The device URL stored by the Orchestrator points to a stale IP or port.

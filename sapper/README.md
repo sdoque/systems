@@ -19,7 +19,7 @@ Alex Chiquito's
 
 Three responsibilities:
 
-1. **Accept** `MaintenanceOrder` POSTs from any authorised consumer (e.g. the
+1. **Accept** `MaintenanceOrder` POSTs from any authorized consumer (e.g. the
    [Nurse](../nurse/)). New orders are created in **CRTD** (created) status —
    they do **not** auto-progress.
 2. **Show the work to a planner** via the `firefighting` web service. The
@@ -203,7 +203,7 @@ SELECT (MAX(?id) AS ?max) WHERE {
 The returned literal (e.g. `"400000017"`) primes the counter so the next
 order becomes `400000018`. The peek is failure-tolerant: if GraphDB is
 unconfigured, unreachable, empty, or returns garbage, the counter stays at
-`0` and the Sapper produces `400000001` (the previous behaviour).
+`0` and the Sapper produces `400000001` (the previous behavior).
 
 ## Order payload
 

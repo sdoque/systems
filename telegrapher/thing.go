@@ -442,7 +442,7 @@ func analogValue(payload []byte) (float64, error) {
 				return v, nil
 			}
 		}
-		return 0, fmt.Errorf("payload %q carries no reading under a name this system recognises", truncate(text))
+		return 0, fmt.Errorf("payload %q carries no reading under a name this system recognizes", truncate(text))
 	}
 	return 0, fmt.Errorf("no number in the payload %q", truncate(text))
 }

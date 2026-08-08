@@ -233,7 +233,7 @@ func (t *Traits) lookupFromTracker(w http.ResponseWriter, id, email string) {
 		return
 	}
 	// The query string is built here rather than by GetState, so the token has to
-	// be attached here too. Without it an authorised tracker refuses the lookup
+	// be attached here too. Without it an authorized tracker refuses the lookup
 	// while the order that created the record went through.
 	if token != "" {
 		req.Header.Set(usecases.TokenHeader, token)

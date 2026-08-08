@@ -56,30 +56,30 @@ see [`mbaigo/usecases/SECURITY.md`](https://github.com/sdoque/mbaigo/blob/main/u
 ### 1. No CA, no maitreD, no authorizer
 
 **Works, completely.** The HTTP server binds immediately and does not wait for
-enrolment. Every system reports `open`.
+enrollment. Every system reports `open`.
 
 **Protection: none.** No identity, no attestation, no authorization. Anyone who
 can reach the port can call any service. This is the right way to learn the
 framework and the wrong way to run anything.
 
 One nuisance worth knowing: if a `ca` entry is left in `coreSystems` pointing at
-a CA that is not running, every system retries enrolment once a minute, forever,
+a CA that is not running, every system retries enrollment once a minute, forever,
 and logs each failure. Remove the entry to get a quiet `open` cloud.
 
 ### 2. CA and maitreD, no authorizer
 
-**Works.** Systems enrol, receive certificates, bind their HTTPS endpoints, and
+**Works.** Systems enroll, receive certificates, bind their HTTPS endpoints, and
 present their client certificate on outbound calls. Providers verify it. Systems
 report `identified`.
 
 **Protection: authentication, not authorization.** You know who is calling — a
 verified common name chaining to your CA, whose binary maitreD attested at
-enrolment. You do not restrict what they may do: any enrolled system may call any
+enrollment. You do not restrict what they may do: any enrolled system may call any
 service on any other.
 
 Two hops stay in the clear at this level, by construction:
 
-- **Enrolment.** A system with no certificate cannot complete an mTLS handshake,
+- **Enrollment.** A system with no certificate cannot complete an mTLS handshake,
   so the CSR goes to the CA over plain HTTP. This is exactly what maitreD is for:
   the hop is not authenticated, so the *executable* is.
 - **The core hops.** Registration, orchestration and certification all use the
@@ -91,9 +91,9 @@ Two hops stay in the clear at this level, by construction:
 
 **The cloud never starts, and this is not something you can configure around.**
 
-Enrolment is the reason. A system with no certificate cannot complete the mTLS
+Enrollment is the reason. A system with no certificate cannot complete the mTLS
 handshake the CA's HTTPS listener demands, and with `http = 0` there is no
-plaintext port left to send the CSR to. Nothing enrols, so nothing receives a
+plaintext port left to send the CSR to. Nothing enrolls, so nothing receives a
 certificate, so no HTTPS listener ever binds. Every system retries once a minute
 forever, reporting `enrolling`.
 
@@ -101,7 +101,7 @@ maitreD compounds it: the CA reaches it at a hardcoded `http://` URL, so a
 maitreD with no HTTP port can never attest anyone and the CA signs nothing.
 
 **What does work** is `http = 0` on everything *except* the CA and maitreD, with
-`coreSystems` pointed at the HTTPS ports. Enrolment is then the only plaintext
+`coreSystems` pointed at the HTTPS ports. Enrollment is then the only plaintext
 hop — the ordinary bootstrap compromise — and everything after it is mTLS.
 
 ## Turning authorization on
@@ -110,9 +110,9 @@ Authorization is opt-in **per system**, through that system's own configuration:
 a provider enforces only if its own `coreSystems` list has an `authorizer` entry.
 Adding one switches enforcement on for that system alone.
 
-This means a cloud can be authorised in part, which is how you migrate one. A
+This means a cloud can be authorized in part, which is how you migrate one. A
 system that names an authorizer and cannot reach it refuses every request with
-503 rather than serving them unauthorised — visible on the graph as
+503 rather than serving them unauthorized — visible on the graph as
 `namesAuthorizer true` with `verifiesTokens false`.
 
 Policies live in the authorizer's `policies.json`; see

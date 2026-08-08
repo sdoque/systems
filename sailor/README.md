@@ -300,7 +300,7 @@ sequenceDiagram
 ```
 
 > `canPoller` and the HTTP handler run **in parallel**.  The only
-> synchronisation points are the `updateChan` and `trayChan` channels —
+> synchronization points are the `updateChan` and `trayChan` channels —
 > `assetLoop` handles them one at a time via `select`.
 
 ### Sequence diagram — shutdown

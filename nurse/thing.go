@@ -120,7 +120,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		}
 	}
 
-	// Default all signals to operational at startup and initialise per-source counters.
+	// Default all signals to operational at startup and initialize per-source counters.
 	for i := range t.Signals {
 		t.Signals[i].Operational = true
 		t.Signals[i].TOverCount = make(map[string]int)

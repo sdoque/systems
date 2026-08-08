@@ -206,7 +206,7 @@ func TestLocoFile(t *testing.T) {
 		t.Errorf("uids = %#x, %#x", locos[0].UID, locos[1].UID)
 	}
 	if locos[0].Kind != DecoderMFX {
-		t.Errorf("kind = %q; an mfx address should be recognised as one", locos[0].Kind)
+		t.Errorf("kind = %q; an mfx address should be recognized as one", locos[0].Kind)
 	}
 	if len(locos[0].Functions) != 2 {
 		t.Errorf("functions = %v", locos[0].Functions)

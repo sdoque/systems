@@ -20,7 +20,7 @@
 //
 //   - hello  – returns "Hello Integrated World!" (stateless, no goroutines needed)
 //   - metric – samples the Go runtime goroutine count every second via a
-//              channel-based goroutine; concurrent HTTP requests are serialised
+//              channel-based goroutine; concurrent HTTP requests are serialized
 //              through the channel so no mutex is required.
 //
 // Students should start here (main, serving) and in thing.go (Traits, logic).

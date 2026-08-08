@@ -213,7 +213,7 @@ func detectPlatform() string {
 	return "pi4"
 }
 
-// newSysfsBackend initialises the RP1 sysfs PWM channel for Raspberry Pi 5.
+// newSysfsBackend initializes the RP1 sysfs PWM channel for Raspberry Pi 5.
 // Requires dtoverlay=pwm-2chan in /boot/firmware/config.txt.
 func newSysfsBackend(gpioPin int, periodNS int64) (*sysfsBackend, func(), error) {
 	chipPath, err := findPWMChipPath()
@@ -248,7 +248,7 @@ func newSysfsBackend(gpioPin int, periodNS int64) (*sysfsBackend, func(), error)
 	return b, cleanup, nil
 }
 
-// newRpioBackend initialises BCM hardware PWM for Raspberry Pi 4 and earlier via
+// newRpioBackend initializes BCM hardware PWM for Raspberry Pi 4 and earlier via
 // the go-rpio library (requires /dev/mem access: run as root or gpio group).
 func newRpioBackend(gpioPin int) (*rpioBackend, func(), error) {
 	if err := rpio.Open(); err != nil {
@@ -338,7 +338,7 @@ func exportPWM(chipPath string, ch int) (string, error) {
 
 	// Still unwritable after a second, so it is not udev being slow. Say what to
 	// do, and say the group rather than sudo: a system started with sudo cannot
-	// be attested by a maitreD running as anyone else, so it enrols on no
+	// be attested by a maitreD running as anyone else, so it enrolls on no
 	// cloud — a working PWM bought at the price of no certificate.
 	if os.IsPermission(lastErr) {
 		return "", fmt.Errorf("%s is not writable by this user: add the user to the gpio group "+

@@ -11,7 +11,7 @@ The Certificate Authority (CA) is the trust anchor for a local cloud of mbaigo s
 - Delegates executable verification to the maitreD before signing any other system's CSR
 - **Owns the cloud's approved-binary whitelist** at `whitelist.json` and serves it to maitreDs on demand
 
-Because the CA certificate is the root of trust for the entire local cloud, `ca_certificate.pem` and `ca_private_key.pem` must be kept secure and backed up. The same applies to `whitelist.json`: anyone who can edit it can authorise a binary to run anywhere in the cloud.
+Because the CA certificate is the root of trust for the entire local cloud, `ca_certificate.pem` and `ca_private_key.pem` must be kept secure and backed up. The same applies to `whitelist.json`: anyone who can edit it can authorize a binary to run anywhere in the cloud.
 
 ## Whitelist file (`whitelist.json`)
 

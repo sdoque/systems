@@ -105,7 +105,7 @@ request returns `503 Service Unavailable`.
 To approve a new binary, edit the CA's `whitelist.json`. See
 [ca/README.md](../ca/README.md) for the CA-side instructions.
 
-| Failure mode | Behaviour |
+| Failure mode | Behavior |
 |---|---|
 | First-ever startup, CA reachable | Pull, cache, then start serving |
 | First-ever startup, CA unreachable | Log fatal, exit (no cache to fall back on) |

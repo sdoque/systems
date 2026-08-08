@@ -96,7 +96,7 @@ func TestDecideDeniesByDefault(t *testing.T) {
 		Record:  bathroomSensor,
 	})
 	if got.Allowed {
-		t.Errorf("an empty policy set authorised a request: %s", got.Reason)
+		t.Errorf("an empty policy set authorized a request: %s", got.Reason)
 	}
 }
 
@@ -110,7 +110,7 @@ func TestDecideRefusesAnonymousRequests(t *testing.T) {
 
 	got := Decide(permissive, Request{Action: ActionRead, Record: bathroomSensor})
 	if got.Allowed {
-		t.Error("a request with no subject was authorised even though nothing identified the caller")
+		t.Error("a request with no subject was authorized even though nothing identified the caller")
 	}
 	if !strings.Contains(got.Reason, "no subject") {
 		t.Errorf("Reason = %q; want it to name the missing subject", got.Reason)
@@ -173,7 +173,7 @@ func TestServiceSelector(t *testing.T) {
 		t.Errorf("the named service was refused: %s", got.Reason)
 	}
 	if got := Decide(scoped, Request{Subject: "thermostat", Action: ActionWrite, Record: firmware}); got.Allowed {
-		t.Error("a service outside the selector was authorised; the selector does not narrow the rule")
+		t.Error("a service outside the selector was authorized; the selector does not narrow the rule")
 	}
 
 	// Omitting the selector must not narrow anything.
@@ -210,7 +210,7 @@ func TestDenialsOverrideRules(t *testing.T) {
 	}
 }
 
-// Where several rules authorise the same request, the most cautious lifetime
+// Where several rules authorize the same request, the most cautious lifetime
 // applies: revocation latency should not depend on the order rules were written.
 func TestShortestMatchingTTLWins(t *testing.T) {
 	p := Policies{Rules: []Rule{
@@ -325,7 +325,7 @@ func TestLoadPoliciesAcceptsAnEmptyDocument(t *testing.T) {
 		t.Fatalf("LoadPolicies: %v", err)
 	}
 	if got := Decide(p, Request{Subject: "anyone", Action: ActionRead, Record: bathroomSensor}); got.Allowed {
-		t.Error("an empty document authorised a request")
+		t.Error("an empty document authorized a request")
 	}
 }
 

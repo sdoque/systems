@@ -81,7 +81,7 @@ func TestInitTemplate(t *testing.T) {
 	}
 }
 
-// ── Traits serialisation ──────────────────────────────────────────────────────
+// ── Traits serialization ──────────────────────────────────────────────────────
 
 func TestTraitsSerialization(t *testing.T) {
 	// All Traits fields are runtime state, not config: marshalling must

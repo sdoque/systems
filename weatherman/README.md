@@ -41,7 +41,7 @@ sequenceDiagram
 
     W->>S: open port (19200 baud, 8N1)
     W->>S: send "\n" (wake console, up to 3 attempts)
-    S-->>W: "\n\r" (acknowledgement)
+    S-->>W: "\n\r" (acknowledgment)
     W->>S: send "LOOP 1\n"
     S-->>W: 0x06 (ACK)
     S-->>W: 99-byte LOOP packet

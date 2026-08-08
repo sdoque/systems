@@ -7,7 +7,7 @@ thermometer, reported in **degrees Fahrenheit**.
 It is the same driver as [ds18b20](../ds18b20), differing only in the unit its
 configuration declares. The DS18B20 chip reports millidegrees Celsius whatever
 the configuration says, so the reading is *converted* on the way out rather than
-relabelled — a relabelling would be wrong by 32 degrees and look entirely
+relabeled — a relabeling would be wrong by 32 degrees and look entirely
 plausible.
 
 Run whichever of the two suits the deployment. A consumer that asks for a

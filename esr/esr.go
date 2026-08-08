@@ -134,7 +134,7 @@ func renderListItems(servicesList []forms.ServiceRecord_v1) string {
 	})
 
 	// Protocol render order: HTTP first because it is the browser-clickable
-	// link; HTTPS afterwards as an mTLS-labelled endpoint.
+	// link; HTTPS afterwards as an mTLS-labeled endpoint.
 	protoOrder := []string{"http", "https", "coap"}
 
 	var sb strings.Builder
@@ -160,7 +160,7 @@ func renderListItems(servicesList []forms.ServiceRecord_v1) string {
 				fmt.Fprintf(&endpoints, ` <a href="%s">%s</a>`, url, proto)
 			} else {
 				// mTLS endpoint (HTTPS) or non-HTTP protocols (CoAP):
-				// shown as a labelled span so the URL is visible but not
+				// shown as a labeled span so the URL is visible but not
 				// clickable into a regular browser session.
 				fmt.Fprintf(&endpoints, ` <span title="requires mTLS">[%s: %s]</span>`, proto, url)
 			}

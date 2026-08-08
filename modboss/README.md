@@ -55,7 +55,7 @@ address,name,rights,dataType[,functionalLocation]
 process and becomes `measurement`; one that can be written acts on it and becomes
 `actuation`. Nothing declares this separately, so the classification the
 authorizer evaluates cannot drift away from what the register actually permits.
-An unrecognised value stops the system at startup rather than producing an asset
+An unrecognized value stops the system at startup rather than producing an asset
 with no mission.
 
 **`functionalLocation` is per device.** The PLC sits in a cabinet while the

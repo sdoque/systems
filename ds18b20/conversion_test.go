@@ -8,7 +8,7 @@ import (
 )
 
 // The chip reports millidegrees Celsius whatever the configuration says, so the
-// unit a consumer sees is produced by conversion rather than by relabelling.
+// unit a consumer sees is produced by conversion rather than by relabeling.
 // If this were a label change, the number would be wrong by 32 degrees and no
 // test anywhere would notice.
 func TestReportsCelsiusUnchanged(t *testing.T) {
@@ -32,7 +32,7 @@ func TestReportsCelsiusUnchanged(t *testing.T) {
 }
 
 // The template must declare a unit the framework can convert into, or the system
-// refuses to start — which is the intended behaviour, but only useful if the
+// refuses to start — which is the intended behavior, but only useful if the
 // shipped template is not itself the thing that fails.
 func TestTemplateDeclaresAConvertibleUnit(t *testing.T) {
 	ua := initTemplate()

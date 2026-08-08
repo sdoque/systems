@@ -41,11 +41,11 @@ Each entry in the `policies` array is an allow rule:
 | Field | Type | Required | Meaning |
 |-------|------|----------|---------|
 | `subject` | string | yes | The CN of the consumer's mTLS certificate. `"*"` matches any authenticated subject. |
-| `missions` | string[] | yes | Mission names from MISSIONS.md the policy authorises. `["*"]` matches any mission. |
-| `services` | string[] | no | Service definitions the policy authorises. Omitted or `["*"]` means every service of a matching asset. |
+| `missions` | string[] | yes | Mission names from MISSIONS.md the policy authorizes. `["*"]` matches any mission. |
+| `services` | string[] | no | Service definitions the policy authorizes. Omitted or `["*"]` means every service of a matching asset. |
 | `actions` | string[] | yes | One or more of `read`, `write`, `invoke`, or `*`. |
 | `must_match_attribute` | string | no | If set, an additional ABAC constraint: the named attribute must match between subject and asset (see *Pairing semantics* below). |
-| `ttl` | duration string | no | Token lifetime if this policy authorises the request. Defaults to `5m`. |
+| `ttl` | duration string | no | Token lifetime if this policy authorizes the request. Defaults to `5m`. |
 
 ### `ttl` and which one applies
 
@@ -55,7 +55,7 @@ bound on revocation: edit `policies.json` to withdraw a permission and tokens
 already issued keep working until they expire. Short TTLs mean fast revocation
 and more orchestration traffic; long ones mean the opposite.
 
-More than one rule can authorise the same request, and they may set different
+More than one rule can authorize the same request, and they may set different
 lifetimes. **The shortest TTL among the matching rules applies.** Revocation
 latency should follow the most cautious rule an operator wrote, not the order
 the rules happen to appear in — a broad `"*"` rule with a generous lifetime must
@@ -82,7 +82,7 @@ permit one and refuse the other. The `denials` list keys on `(subject, asset)`,
 not on service, and the issued token carries a `service` claim that no policy
 field would otherwise constrain.
 
-A request is authorised iff at least one policy entry matches AND no `denials`
+A request is authorized iff at least one policy entry matches AND no `denials`
 entry matches.
 
 ## Denials (the escape hatch)
@@ -285,7 +285,7 @@ control. Left as a deployment rule until there is a reason to do otherwise.
 
 ## Token format (issued by the authorizer)
 
-When a request is authorised, the authorizer returns a signed token the consumer
+When a request is authorized, the authorizer returns a signed token the consumer
 attaches to its provider request. JWT-style payload:
 
 ```json
@@ -310,7 +310,7 @@ being made. No network round-trip to the authorizer is required at request time.
 ## Revocation
 
 Revocation latency is bounded by token TTL. The authorizer will not issue a new
-token for a deauthorised request the moment `policies.json` is edited; existing
+token for a deauthorized request the moment `policies.json` is edited; existing
 tokens remain valid until they expire (default 5 minutes; tunable per policy).
 
 For revocation-sensitive deployments, set short TTLs (1–5 min). For low-frequency
@@ -327,7 +327,7 @@ The authorizer is the *second* gate in a two-gate chain:
    issue tokens for specific (provider, asset, service, action). The system
    *acts* in the cloud.
 
-A binary that is whitelisted but not policy-authorised has cryptographic identity
+A binary that is whitelisted but not policy-authorized has cryptographic identity
 but no permissions. A binary that has a token but whose certificate is revoked
 fails at the mTLS handshake before any policy check runs. Both files,
 operator-edited, version-controlled, fail-closed.

@@ -41,7 +41,7 @@ type Traits struct {
 	// with no host at all.
 	leadingRegistrar  components.CachedURL
 	leadingAuthorizer components.CachedURL
-	// unchecked reports an unauthorised cloud once rather than per request, and
+	// unchecked reports an unauthorized cloud once rather than per request, and
 	// unidentified does the same for consumers the connection cannot name.
 	unchecked    sync.Once
 	unidentified sync.Once
@@ -334,7 +334,7 @@ func (t *Traits) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []byte,
 // consumers the connection cannot name.
 func (t *Traits) noteUnidentified() {
 	t.unidentified.Do(func() {
-		log.Printf("orchestrator: service quests are arriving without a client certificate, so the consumer is unverified — an authorised cloud will refuse them\n")
+		log.Printf("orchestrator: service quests are arriving without a client certificate, so the consumer is unverified — an authorized cloud will refuse them\n")
 	})
 }
 
@@ -350,7 +350,7 @@ var errNoAuthorizer = errors.New("no authorizer in this local cloud")
 // predates authorization, and making the authorizer a hard dependency of every
 // deployment would break clouds that have not adopted it. The absence is
 // reported once so it cannot pass for a working control: a cloud that expects to
-// be authorised and quietly is not is the worst of the three states.
+// be authorized and quietly is not is the worst of the three states.
 //
 // A cloud that *does* declare an authorizer fails closed when it cannot be
 // reached. Having named the gate, running without it is a fault, not a fallback.

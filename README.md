@@ -115,7 +115,7 @@ level actually protects.
 |---|---|
 | `beehive` | Web dashboard that discovers all OnOff services in the local cloud and presents them as toggle switches |
 
-### Modelling and documentation
+### Modeling and documentation
 
 | System | Description |
 |---|---|

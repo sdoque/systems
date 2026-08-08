@@ -18,6 +18,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -41,6 +42,12 @@ type Traits struct {
 	name      string
 	owner     *components.System
 	cervices  components.Cervices
+	// Units the payloads report in, taken from the configured services so a
+	// reading and the record that describes it cannot disagree. errorUnit is
+	// not configured: it is the setpoint\'s.
+	setpointUnit string `json:"-"`
+	errorUnit    string `json:"-"`
+	jitterUnit   string `json:"-"`
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -50,34 +57,40 @@ func initTemplate() *components.UnitAsset {
 	setPointService := components.Service{
 		Definition:  "setpoint",
 		SubPath:     "setpoint",
-		Details:     map[string][]string{"Unit": {"Celsius"}, "Forms": {"SignalA_v1a"}},
+		Mission:     components.MissionState,
+		Details:     map[string][]string{"Unit": {"<http://qudt.org/vocab/unit/DEG_C>"}, "QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"}, "Forms": {"SignalA_v1a"}},
 		RegPeriod:   120,
 		CUnit:       "Eur/h",
 		Description: "provides the current thermal setpoint (GET) or sets it (PUT)",
 	}
-	thermalErrorService := components.Service{
-		Definition:  "thermalerror",
-		SubPath:     "thermalerror",
-		Details:     map[string][]string{"Unit": {"Celsius"}, "Forms": {"SignalA_v1a"}},
+	deviationService := components.Service{
+		Definition: "deviation",
+		SubPath:    "deviation",
+		Mission:    components.MissionMeasurement,
+		// No Unit: the deviation is the difference between the setpoint
+		// and the measurement, so it is in the setpoint's unit. adoptUnits
+		// copies it, and the two cannot drift apart.
+		Details:     map[string][]string{"QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"}, "Measure": {"interval"}, "Forms": {"SignalA_v1a"}},
 		RegPeriod:   120,
 		Description: "provides the current difference between the setpoint and the temperature (GET)",
 	}
 	jitterService := components.Service{
 		Definition:  "jitter",
 		SubPath:     "jitter",
-		Details:     map[string][]string{"Unit": {"millisecond"}, "Forms": {"SignalA_v1a"}},
+		Mission:     components.MissionMeasurement,
+		Details:     map[string][]string{"Unit": {"<http://qudt.org/vocab/unit/MilliSEC>"}, "QuantityKind": {"<http://qudt.org/vocab/quantitykind/Time>"}, "Forms": {"SignalA_v1a"}},
 		RegPeriod:   120,
 		Description: "provides the control loop execution jitter in milliseconds (GET)",
 	}
 
 	return &components.UnitAsset{
 		Name:    "KitchenHeater",
-		Mission: "electric_heating",
+		Mission: components.MissionControl,
 		Details: map[string][]string{"FunctionalLocation": {"Kitchen"}},
 		ServicesMap: components.Services{
-			setPointService.SubPath:     &setPointService,
-			thermalErrorService.SubPath: &thermalErrorService,
-			jitterService.SubPath:       &jitterService,
+			setPointService.SubPath:  &setPointService,
+			deviationService.SubPath: &deviationService,
+			jitterService.SubPath:    &jitterService,
 		},
 		Traits: &Traits{
 			SetPt:  20,
@@ -97,6 +110,14 @@ func initTemplate() *components.UnitAsset {
 func newResources(uac usecases.ConfigurableAsset, sys *components.System) ([]*components.UnitAsset, func()) {
 	defaults := parseTraitDefaults(uac)
 	sProtocols := components.SProtocols(sys.Husk.ProtoPort)
+
+	// Checked here rather than per heater: discovery retries every 15 s until a
+	// plug answers, so a misconfigured setpoint unit would otherwise surface
+	// minutes later, or on a quiet cloud never at all.
+	setpointUnit := configuredSetpointUnit(uac)
+	if _, ok := usecases.LookupUnit(setpointUnit); !ok {
+		log.Fatalf("ethermostat: the setpoint is configured in %q, which is not a QUDT unit this framework can convert a measurement into\n", setpointUnit)
+	}
 
 	var assets []*components.UnitAsset
 	for {
@@ -142,6 +163,12 @@ func discoverHeaters(sys *components.System, sProtocols []string, defaults Trait
 		Definition: "OnOff",
 		Protos:     sProtocols,
 		Nodes:      make(map[string][]components.NodeInfo),
+		// The plugs are switched, never read, so the tokens this discovery
+		// obtains have to be write tokens. The nodes it finds are pinned to one
+		// heater each below and are not rediscovered, so a token minted for the
+		// wrong action would not be corrected later: every PUT would be refused
+		// and the heaters would never switch.
+		Mode: "set",
 	}
 	if err := usecases.Search4MultipleServices(onOffCer, sys); err != nil {
 		log.Printf("ethermostat: could not discover OnOff services: %v\n", err)
@@ -223,17 +250,43 @@ func discoverHeaters(sys *components.System, sProtocols []string, defaults Trait
 func buildHeaterAsset(name, location string, t *Traits, sys *components.System, uac usecases.ConfigurableAsset) *components.UnitAsset {
 	ua := &components.UnitAsset{
 		Name:        name,
-		Mission:     "electric_heating",
+		Mission:     components.MissionActuation,
 		Owner:       sys,
 		Details:     map[string][]string{"FunctionalLocation": {location}},
 		ServicesMap: usecases.MakeServiceMap(uac.Services),
 		CervicesMap: t.cervices,
 		Traits:      t,
 	}
+	t.adoptUnits(ua.ServicesMap)
+
+	// The temperature cervice is built by discovery, so it carries the provider's
+	// details and not a request. Stating the unit here is what makes the reading
+	// arrive in the setpoint's: the loop subtracts one from the other, and a °F
+	// module against a °C target gives a deviation that is wrong in both sign and
+	// magnitude while looking like an ordinary number.
+	if cer := t.cervices["temperature"]; cer != nil && t.setpointUnit != "" {
+		if cer.Details == nil {
+			cer.Details = make(map[string][]string)
+		}
+		cer.Details["QuantityKind"] = []string{"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"}
+		cer.Details["Unit"] = []string{t.setpointUnit}
+	}
+
 	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
 		serving(t, w, r, servicePath)
 	}
 	return ua
+}
+
+// configuredSetpointUnit reports the unit the setpoint service is configured in,
+// before any asset exists to adopt it.
+func configuredSetpointUnit(uac usecases.ConfigurableAsset) string {
+	for _, s := range uac.Services {
+		if s.Definition == "setpoint" {
+			return firstDetail(s.Details, "Unit")
+		}
+	}
+	return ""
 }
 
 //-------------------------------------Helper functions for discovery
@@ -332,10 +385,17 @@ func (t *Traits) setpt(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		sig, err := usecases.HTTPProcessSetRequest(w, r)
 		if err != nil {
-			log.Printf("ethermostat %s: setpoint PUT error: %v\n", t.name, err)
+			http.Error(w, "unreadable setpoint: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		t.setSetPoint(sig)
+		if err := t.setSetPoint(sig); err != nil {
+			// Refusing is the only safe answer: a setpoint in an unexpected unit
+			// is a number that will drive the heater for as long as nobody
+			// notices it looks reasonable.
+			log.Printf("ethermostat %s: %v\n", t.name, err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		confirmed := t.getSetPoint()
 		usecases.HTTPProcessGetRequest(w, r, &confirmed)
 	default:
@@ -371,22 +431,29 @@ func (t *Traits) variations(w http.ResponseWriter, r *http.Request) {
 func (t *Traits) getSetPoint() (f forms.SignalA_v1a) {
 	f.NewForm()
 	f.Value = t.SetPt
-	f.Unit = "Celsius"
+	f.Unit = t.setpointUnit
 	f.Timestamp = time.Now()
 	return f
 }
 
 // setSetPoint updates the thermal setpoint.
-func (t *Traits) setSetPoint(f forms.SignalA_v1a) {
+func (t *Traits) setSetPoint(f forms.SignalA_v1a) error {
+	// The value arrives in whatever unit the sender works in. Writing it
+	// straight into the loop is how a Fahrenheit target silently becomes a
+	// Celsius one, and this controller drives real heaters.
+	if err := usecases.AdoptUnit(&f, t.setpointUnit, false); err != nil {
+		return fmt.Errorf("setpoint refused: %w", err)
+	}
 	t.SetPt = f.Value
-	log.Printf("ethermostat %s: new setpoint %.1f °C\n", t.name, f.Value)
+	log.Printf("ethermostat %s: new setpoint %.1f %s\n", t.name, f.Value, t.setpointUnit)
+	return nil
 }
 
 // getError fills out a signal form with the current thermal error.
 func (t *Traits) getError() (f forms.SignalA_v1a) {
 	f.NewForm()
 	f.Value = t.deviation
-	f.Unit = "Celsius"
+	f.Unit = t.errorUnit
 	f.Timestamp = time.Now()
 	return f
 }
@@ -395,7 +462,7 @@ func (t *Traits) getError() (f forms.SignalA_v1a) {
 func (t *Traits) getJitter() (f forms.SignalA_v1a) {
 	f.NewForm()
 	f.Value = float64(t.jitter.Milliseconds())
-	f.Unit = "millisecond"
+	f.Unit = t.jitterUnit
 	f.Timestamp = time.Now()
 	return f
 }
@@ -479,4 +546,59 @@ func (t *Traits) updatePlugState(on bool) {
 		log.Printf("ethermostat %s: could not set plug state: %v\n", t.name, err)
 		t.cervices["on_off"].Nodes = make(map[string][]components.NodeInfo)
 	}
+}
+
+// adoptUnits takes the units this controller reports in from its configured
+// services, and gives the deviation the setpoint's.
+//
+// The deviation is the difference between the setpoint and the measurement, so
+// it is in the setpoint's unit by construction rather than by convention.
+// Configuring it separately would let the two disagree, and a controller
+// reporting a deviation in one unit against a setpoint in another would look
+// plausible for a long time.
+//
+// The unit is used as configured, whatever it says. A pre-QUDT deployment keeps
+// working; a QUDT one gets an IRI a consumer can convert from.
+func (t *Traits) adoptUnits(services components.Services) {
+	setpoint := findService(services, "setpoint")
+	deviation := findService(services, "deviation")
+	jitter := findService(services, "jitter")
+
+	if setpoint != nil {
+		t.setpointUnit = firstDetail(setpoint.Details, "Unit")
+	}
+	if jitter != nil {
+		t.jitterUnit = firstDetail(jitter.Details, "Unit")
+	}
+
+	t.errorUnit = t.setpointUnit
+	if deviation != nil {
+		// Advertise it too: a consumer converts using the unit in the service
+		// record, so leaving that blank would leave the reading unusable.
+		if deviation.Details == nil {
+			deviation.Details = make(map[string][]string)
+		}
+		if t.errorUnit != "" {
+			deviation.Details["Unit"] = []string{t.errorUnit}
+		}
+	}
+}
+
+// findService looks a service up by definition, since the subpath an operator
+// configures need not be the definition the code knows it by.
+func findService(services components.Services, definition string) *components.Service {
+	for _, s := range services {
+		if s.Definition == definition {
+			return s
+		}
+	}
+	return nil
+}
+
+// firstDetail returns the first value recorded under a detail key.
+func firstDetail(details map[string][]string, key string) string {
+	if values := details[key]; len(values) > 0 {
+		return values[0]
+	}
+	return ""
 }

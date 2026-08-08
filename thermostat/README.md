@@ -5,7 +5,7 @@ The thermostat system consumes the services from a temperature system and from a
 It regulates the valve position (assuming a hydronic system) based on the current temperature and its set point.
 The thermostat system consumes services from the Service Registrar and the Orchestrator.
 
-It offers three services, *setpoint*, *thermalerror* and *jitter*. The setpoint can be read (e.g., GET) or set (e.g., PUT). The error signal is the difference between the setpoint or desired temperature and the current temperature. It can only be read. The jitter is the time it takes to obtain a new temperature reading and setting the new valve position.
+It offers three services, *setpoint*, *deviation* and *jitter*. The setpoint can be read (e.g., GET) or set (e.g., PUT). The error signal is the difference between the setpoint or desired temperature and the current temperature. It can only be read. The jitter is the time it takes to obtain a new temperature reading and setting the new valve position.
 
 The control loop is executed every 10 seconds, and can be configured.
 

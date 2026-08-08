@@ -39,7 +39,10 @@ import (
 
 // Traits holds the configurable and runtime state for one servo unit asset.
 type Traits struct {
-	GpioPin     int        `json:"gpioPin"` // BCM GPIO pin number (default: 18)
+	GpioPin int `json:"gpioPin"` // BCM GPIO pin number (default: 18)
+	// unit is the unit this servo reports its position in, taken from the
+	// configured service so the payload and the service record cannot disagree.
+	unit        string     `json:"-"`
 	position    int        `json:"-"`
 	dutyChan    chan int   `json:"-"`
 	lastWidthUS int        `json:"-"`
@@ -90,17 +93,27 @@ func (r *rpioBackend) close() {
 // initTemplate initializes a UnitAsset with default values.
 func initTemplate() *components.UnitAsset {
 	rotation := components.Service{
-		Definition:  "rotation",
-		SubPath:     "rotation",
-		Details:     map[string][]string{"Forms": {"SignalA_v1a"}, "Unit": {"Percent", "Rotational"}},
+		Definition: "rotation",
+		SubPath:    "rotation",
+		// The command is a fraction of the servo's travel, which is why the unit
+		// is a ratio. A ratio says nothing about what is being ratioed, so the
+		// range restores it: 0 to 180 degrees is what makes 50% mean 90°, and it
+		// is calibration rather than anything unit conversion could derive.
+		Details: map[string][]string{
+			"Forms":        {"SignalA_v1a"},
+			"Unit":         {"<http://qudt.org/vocab/unit/PERCENT>"},
+			"QuantityKind": {"<http://qudt.org/vocab/quantitykind/DimensionlessRatio>"},
+			"RangeUnit":    {"<http://qudt.org/vocab/unit/DEG>"},
+			"Range":        {"0", "180"},
+		},
 		RegPeriod:   30,
 		Description: "informs of the servo's current position (GET) or updates the position (PUT)",
 	}
 
 	return &components.UnitAsset{
 		Name:    "Servo_1",
-		Mission: "actuate_servo",
-		Details: map[string][]string{"Model": {"standardServo", "halfCircle"}, "FunctionalLocation": {"Kitchen"}},
+		Mission: components.MissionActuation,
+		Details: map[string][]string{"Model": {"standardServo"}, "FunctionalLocation": {"Kitchen"}},
 		ServicesMap: components.Services{
 			rotation.SubPath: &rotation,
 		},
@@ -132,6 +145,13 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
 		Traits:      t,
 	}
+	for _, serv := range ua.ServicesMap {
+		if values := serv.Details["Unit"]; len(values) > 0 {
+			t.unit = values[0]
+			break
+		}
+	}
+
 	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
 		serving(t, w, r, servicePath)
 	}
@@ -193,7 +213,7 @@ func detectPlatform() string {
 	return "pi4"
 }
 
-// newSysfsBackend initialises the RP1 sysfs PWM channel for Raspberry Pi 5.
+// newSysfsBackend initializes the RP1 sysfs PWM channel for Raspberry Pi 5.
 // Requires dtoverlay=pwm-2chan in /boot/firmware/config.txt.
 func newSysfsBackend(gpioPin int, periodNS int64) (*sysfsBackend, func(), error) {
 	chipPath, err := findPWMChipPath()
@@ -228,7 +248,7 @@ func newSysfsBackend(gpioPin int, periodNS int64) (*sysfsBackend, func(), error)
 	return b, cleanup, nil
 }
 
-// newRpioBackend initialises BCM hardware PWM for Raspberry Pi 4 and earlier via
+// newRpioBackend initializes BCM hardware PWM for Raspberry Pi 4 and earlier via
 // the go-rpio library (requires /dev/mem access: run as root or gpio group).
 func newRpioBackend(gpioPin int) (*rpioBackend, func(), error) {
 	if err := rpio.Open(); err != nil {
@@ -301,16 +321,29 @@ func exportPWM(chipPath string, ch int) (string, error) {
 	// script. Poll 'enable' for write access for up to 1 s so udev has time
 	// to catch up.
 	enablePath := filepath.Join(pwmPath, "enable")
+	var lastErr error
 	for i := 0; i < 100; i++ {
 		f, err := os.OpenFile(enablePath, os.O_WRONLY, 0)
 		if err == nil {
 			_ = f.Close()
+			lastErr = nil
 			break
 		}
+		lastErr = err
 		if !os.IsPermission(err) {
 			break // some other error — let the caller's write surface it
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Still unwritable after a second, so it is not udev being slow. Say what to
+	// do, and say the group rather than sudo: a system started with sudo cannot
+	// be attested by a maitreD running as anyone else, so it enrolls on no
+	// cloud — a working PWM bought at the price of no certificate.
+	if os.IsPermission(lastErr) {
+		return "", fmt.Errorf("%s is not writable by this user: add the user to the gpio group "+
+			"(sudo usermod -aG gpio $USER, then log out and back in) rather than running parallax with sudo, "+
+			"which would leave it unattestable", enablePath)
 	}
 
 	return pwmPath, nil
@@ -375,7 +408,7 @@ const (
 func (t *Traits) getPosition() (f forms.SignalA_v1a) {
 	f.NewForm()
 	f.Value = float64(t.position)
-	f.Unit = "Percent"
+	f.Unit = t.unit
 	f.Timestamp = time.Now()
 	return f
 }

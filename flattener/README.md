@@ -93,6 +93,22 @@ Example `systemconfig.json` excerpt:
 
 The Flattener also needs an orchestration rule so it can discover the thermostat's `setpoint` service. Ensure the orchestrator is configured to match a consumer with `definition: "setpoint"` to the thermostat provider.
 
+The quest names a quantity kind as well as the definition:
+
+```
+QuantityKind: <http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>
+```
+
+`setpoint` alone is any controller's target. The [leveler](../leveler/) defines
+one too — a tank level in percent — and without the quantity kind this system
+found it and pushed a temperature into it, where 21 °C was read as 21 % full. A
+provider whose `setpoint` service declares no `QuantityKind` is no longer
+matched; that is the intended narrowing, not a regression.
+
+The unit is deliberately *not* part of the quest. The registrar compares strings,
+so asking for °C by unit would exclude a controller working in °F rather than
+convert for it. The unit is the conversion target once a provider is chosen.
+
 ---
 
 ## Price regions

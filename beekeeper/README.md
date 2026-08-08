@@ -20,7 +20,7 @@ No device-specific configuration is needed. The system adapts automatically to w
 
 ## Supported device types
 
-Beekeeper recognises every ZigBee device that deCONZ exposes. The services created for each device depend on its deCONZ type.
+Beekeeper recognizes every ZigBee device that deCONZ exposes. The services created for each device depend on its deCONZ type.
 
 ### Lights and plugs (`/lights` endpoint)
 

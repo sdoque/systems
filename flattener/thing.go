@@ -51,11 +51,16 @@ type Traits struct {
 // initTemplate returns a UnitAsset with default values used by the configuration step.
 func initTemplate() *components.UnitAsset {
 	setpointSvc := components.Service{
-		Definition:  "setPoint",
-		SubPath:     "setpoint",
-		Details:     map[string][]string{"Unit": {"Celsius"}, "Forms": {"SignalA_v1a"}},
+		Definition: "recommendedSetpoint",
+		SubPath:    "recommendedsetpoint",
+		// Advice about a setpoint, not a setpoint. The thermostat's is that
+		// controller's own target — authoritative and writable; this is a value
+		// derived from the spot price, which is why the service is an
+		// aggregation rather than the state of anything.
+		Mission:     components.MissionAggregation,
+		Details:     map[string][]string{"Unit": {"<http://qudt.org/vocab/unit/DEG_C>"}, "QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"}, "Forms": {"SignalA_v1a"}},
 		RegPeriod:   30,
-		Description: "provides the currently calculated temperature setpoint (GET)",
+		Description: "provides the setpoint this system recommends from the current electricity price (GET)",
 	}
 
 	priceSvc := components.Service{
@@ -68,7 +73,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "ComfortController",
-		Mission: "flatten_peak_demand",
+		Mission: components.MissionControl,
 		Details: map[string][]string{"FunctionalLocation": {"Kitchen"}},
 		ServicesMap: components.Services{
 			setpointSvc.SubPath: &setpointSvc,
@@ -101,12 +106,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 
 	// Cervice: the thermostat's setpoint service (we PUT to it)
 	sProtocols := components.SProtocols(sys.Husk.ProtoPort)
-	setpointCervice := &components.Cervice{
-		Definition: "setpoint",
-		Protos:     sProtocols,
-		Nodes:      make(map[string][]components.NodeInfo),
-		Mode:       "set",
-	}
+	setpointCervice := newSetpointCervice(sProtocols)
 
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
@@ -130,6 +130,29 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 
 //-------------------------------------Core logic
 
+// newSetpointCervice builds the quest for the controllers this system advises.
+func newSetpointCervice(sProtocols []string) *components.Cervice {
+	return &components.Cervice{
+		Definition: "setpoint",
+		Protos:     sProtocols,
+		Nodes:      make(map[string][]components.NodeInfo),
+		Mode:       "set",
+		// "setpoint" alone is any controller's target, and this system pushes a
+		// temperature. Without the quantity kind the discovery matches a tank
+		// leveler's setpoint too, and a °C figure lands in a controller that
+		// reads it as a percentage of full.
+		//
+		// The unit is a conversion target, not a search key — the registrar
+		// compares strings, so naming it as one would exclude a controller
+		// working in °F rather than convert for it.
+		Details: map[string][]string{
+			"QuantityKind": {temperatureKind},
+			"Unit":         {degreeCelsius},
+			"Forms":        {"SignalA_v1a"},
+		},
+	}
+}
+
 // run is the main control loop: fetch price, calculate setpoint, push to thermostat.
 func (t *Traits) run() {
 	// Fetch and apply immediately, then tick every Period seconds.
@@ -152,6 +175,14 @@ func (t *Traits) run() {
 		}
 	}
 }
+
+// degreeCelsius is the unit this system states its temperatures in. A QUDT IRI
+// rather than a name, so a controller working in °F converts the recommendation
+// instead of refusing it.
+const (
+	degreeCelsius   = "<http://qudt.org/vocab/unit/DEG_C>"
+	temperatureKind = "<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"
+)
 
 // updateSetPoint fetches the current price, calculates the optimal setpoint,
 // and pushes it to all discovered thermostat setpoint services.
@@ -188,7 +219,7 @@ func (t *Traits) updateSetPoint() {
 	now := time.Now()
 	sp := forms.SignalA_v1a{
 		Value:     t.currentSetPoint,
-		Unit:      "Celsius",
+		Unit:      degreeCelsius,
 		Timestamp: now,
 	}
 	sp.NewForm()
@@ -283,7 +314,7 @@ func fetchCurrentPrice(region string) (float64, error) {
 func (t *Traits) getSetPoint() forms.SignalA_v1a {
 	f := forms.SignalA_v1a{
 		Value:     t.currentSetPoint,
-		Unit:      "Celsius",
+		Unit:      degreeCelsius,
 		Timestamp: time.Now(),
 	}
 	f.NewForm()

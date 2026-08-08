@@ -17,12 +17,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"mime"
 	"net/http"
-	"strconv"
+	"sync"
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
@@ -34,8 +35,17 @@ import (
 
 // Traits are Asset-specific configurable parameters and variables
 type Traits struct {
-	leadingRegistrar string
-	owner            *components.System `json:"-"`
+	// Both are read and written on the request path, and net/http gives every
+	// request its own goroutine, so neither can be a plain string. A torn read
+	// while a concurrent failure clears one builds a request against "/query"
+	// with no host at all.
+	leadingRegistrar  components.CachedURL
+	leadingAuthorizer components.CachedURL
+	// unchecked reports an unauthorized cloud once rather than per request, and
+	// unidentified does the same for consumers the connection cannot name.
+	unchecked    sync.Once
+	unidentified sync.Once
+	owner        *components.System `json:"-"`
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -52,6 +62,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "orchestration",
+		Mission: components.MissionCore,
 		Details: map[string][]string{"Platform": {"Independent"}},
 		Traits:  &Traits{},
 		ServicesMap: components.Services{
@@ -115,7 +126,15 @@ func (t *Traits) orchestrate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		servLocation, err := t.getServiceURL(*qf)
+		subject, identified := usecases.PeerCN(r)
+		if !identified {
+			// Not a refusal: a cloud with no authorizer needs no certificate to
+			// orchestrate, and this is the path it uses. Recorded so that when
+			// the authorizer then refuses every candidate, the reason is in the
+			// log next to it.
+			t.noteUnidentified()
+		}
+		servLocation, err := t.getServiceURL(*qf, subject)
 		if err != nil {
 			log.Println(err)
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -183,14 +202,14 @@ func (t *Traits) orchestrateMultiple(w http.ResponseWriter, r *http.Request) {
 //-------------------------------------Thing's resource functions
 
 // getServiceURL retrieves the service URL for a given ServiceQuest_v1.
-func (t *Traits) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []byte, err error) {
+func (t *Traits) getServiceURL(newQuest forms.ServiceQuest_v1, subject string) (servLoc []byte, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if t.leadingRegistrar == "" {
-		t.leadingRegistrar, err = components.GetRunningCoreSystemURL(t.owner, "serviceregistrar")
-		if err != nil {
-			return servLoc, err
-		}
+	registrar, err := t.leadingRegistrar.Resolve(func() (string, error) {
+		return components.GetRunningCoreSystemURL(t.owner, "serviceregistrar")
+	})
+	if err != nil {
+		return servLoc, err
 	}
 
 	mediaType := "application/json"
@@ -199,7 +218,7 @@ func (t *Traits) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []byte, 
 		return servLoc, err
 	}
 
-	srURL := t.leadingRegistrar + "/query"
+	srURL := registrar + "/query"
 	req, err := http.NewRequest(http.MethodPost, srURL, bytes.NewBuffer(jsonQF))
 	if err != nil {
 		return servLoc, err
@@ -209,7 +228,7 @@ func (t *Traits) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []byte, 
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.leadingRegistrar = ""
+		t.leadingRegistrar.Forget()
 		return servLoc, err
 	}
 	defer resp.Body.Close()
@@ -231,30 +250,40 @@ func (t *Traits) getServiceURL(newQuest forms.ServiceQuest_v1) (servLoc []byte, 
 		return nil, fmt.Errorf("unable to locate any such service: %s", newQuest.ServiceDefinition)
 	}
 
-	serviceLocation := selectService(*serviceList)
+	permitted, tokens, err := t.authorized(subject, newQuest.Action, *serviceList)
+	if err != nil {
+		return nil, err
+	}
+	if len(permitted.List) == 0 {
+		return nil, fmt.Errorf("%q may not use any provider of %q", subject, newQuest.ServiceDefinition)
+	}
+
+	serviceLocation := selectService(permitted)
+	// The token belongs to the provider that was chosen, so it is attached after
+	// the choice rather than before it.
+	serviceLocation.Token = tokens[serviceLocation.ServNode]
 	payload, err := json.MarshalIndent(serviceLocation, "", "  ")
 	return payload, err
 }
 
-func selectService(serviceList forms.ServiceRecordList_v1) (sp forms.ServicePoint_v1) {
-	rec := serviceList.List[0]
-	sp.NewForm()
-	sp.ProviderName = rec.SystemName
-	sp.ServiceDefinition = rec.ServiceDefinition
-	sp.Details = rec.Details
-	sp.ServLocation = "http://" + rec.IPAddresses[0] + ":" + strconv.Itoa(rec.ProtoPort["http"]) + "/" + rec.SystemName + "/" + rec.SubPath
-	sp.ServNode = rec.ServiceNode
-	return
+// selectService picks a provider from the registrar's answer. The conversion to a
+// service point is mbaigo's, so this path and the multi-service discovery path
+// agree on the endpoint URL — in particular on reaching a provider over HTTPS
+// when it has bound it. This used to build the URL here with "http://" and the
+// http port hardcoded, which sent every consumer to the plain-HTTP endpoint and
+// stripped its identity at the provider.
+func selectService(serviceList forms.ServiceRecordList_v1) forms.ServicePoint_v1 {
+	return usecases.ConvertToServicePoint(serviceList.List[0])
 }
 
 func (t *Traits) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []byte, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if t.leadingRegistrar == "" {
-		t.leadingRegistrar, err = components.GetRunningCoreSystemURL(t.owner, "serviceregistrar")
-		if err != nil {
-			return servLoc, err
-		}
+	registrar, err := t.leadingRegistrar.Resolve(func() (string, error) {
+		return components.GetRunningCoreSystemURL(t.owner, "serviceregistrar")
+	})
+	if err != nil {
+		return servLoc, err
 	}
 
 	mediaType := "application/json"
@@ -263,7 +292,7 @@ func (t *Traits) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []byte,
 		return servLoc, err
 	}
 
-	srURL := t.leadingRegistrar + "/query"
+	srURL := registrar + "/query"
 	req, err := http.NewRequest(http.MethodPost, srURL, bytes.NewBuffer(jsonQF))
 	if err != nil {
 		return servLoc, err
@@ -273,7 +302,7 @@ func (t *Traits) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []byte,
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.leadingRegistrar = ""
+		t.leadingRegistrar.Forget()
 		return servLoc, err
 	}
 	defer resp.Body.Close()
@@ -297,4 +326,110 @@ func (t *Traits) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []byte,
 
 	payload, err := json.MarshalIndent(serviceList, "", "  ")
 	return payload, err
+}
+
+//-------------------------------------Authorization
+
+// noteUnidentified reports, at most once a minute, that quests are arriving from
+// consumers the connection cannot name.
+func (t *Traits) noteUnidentified() {
+	t.unidentified.Do(func() {
+		log.Printf("orchestrator: service quests are arriving without a client certificate, so the consumer is unverified — an authorized cloud will refuse them\n")
+	})
+}
+
+// errNoAuthorizer says this local cloud declares no authorizer. It is a
+// condition, not a fault: orchestration predates authorization and a cloud that
+// has not adopted it still orchestrates.
+var errNoAuthorizer = errors.New("no authorizer in this local cloud")
+
+// authorized asks the authorizer which of the registrar's candidates the subject
+// may use, and returns the survivors.
+//
+// **A cloud with no authorizer configured is not filtered.** Orchestration
+// predates authorization, and making the authorizer a hard dependency of every
+// deployment would break clouds that have not adopted it. The absence is
+// reported once so it cannot pass for a working control: a cloud that expects to
+// be authorized and quietly is not is the worst of the three states.
+//
+// A cloud that *does* declare an authorizer fails closed when it cannot be
+// reached. Having named the gate, running without it is a fault, not a fallback.
+func (t *Traits) authorized(subject, action string, candidates forms.ServiceRecordList_v1) (forms.ServiceRecordList_v1, map[string]string, error) {
+	// An absent authorizer is not an error here — see the note above — so the
+	// lookup reports it by returning no URL rather than by failing.
+	authorizer, err := t.leadingAuthorizer.Resolve(func() (string, error) {
+		url, err := components.GetRunningCoreSystemURL(t.owner, "authorizer")
+		if err != nil || url == "" {
+			return "", errNoAuthorizer
+		}
+		return url, nil
+	})
+	if err != nil {
+		t.unchecked.Do(func() {
+			log.Printf("orchestrator: no authorizer in this local cloud — orchestration is unfiltered\n")
+		})
+		return candidates, nil, nil
+	}
+
+	var quest forms.AuthorizationQuest_v1
+	quest.NewForm()
+	quest.RequesterName = t.owner.Name
+	quest.Subject = subject
+	quest.Action = action
+	quest.Candidates = candidates.List
+
+	mediaType := "application/json"
+	body, err := usecases.Pack(&quest, mediaType)
+	if err != nil {
+		return forms.ServiceRecordList_v1{}, nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, authorizer+"/authorize", bytes.NewBuffer(body))
+	if err != nil {
+		return forms.ServiceRecordList_v1{}, nil, err
+	}
+	req.Header.Set("Content-Type", mediaType)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.leadingAuthorizer.Forget() // look it up again next time
+		return forms.ServiceRecordList_v1{}, nil, fmt.Errorf("the authorizer is unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return forms.ServiceRecordList_v1{}, nil, err
+	}
+	answerForm, err := usecases.Unpack(respBytes, mediaType)
+	if err != nil {
+		return forms.ServiceRecordList_v1{}, nil, err
+	}
+	answer, ok := answerForm.(*forms.AuthorizationGrantList_v1)
+	if !ok {
+		return forms.ServiceRecordList_v1{}, nil, fmt.Errorf("the authorizer answered with %T, not a grant list", answerForm)
+	}
+
+	for _, refusal := range answer.Refusals {
+		log.Printf("orchestrator: %q refused %s: %s\n", subject, refusal.ServiceNode, refusal.Reason)
+	}
+
+	// An unnamed subject is refused everything by Decide's empty-subject check,
+	// and the refusal then reads as "no policy permits this" — which sends an
+	// operator to the policy file for a problem that is not in it.
+	if subject == "" && len(answer.Grants) == 0 && len(answer.Refusals) > 0 {
+		log.Printf("orchestrator: the consumer presented no verified certificate, so no policy can name it — this quest reached the authorizer over a connection with no client certificate\n")
+	}
+
+	var permitted forms.ServiceRecordList_v1
+	permitted.NewForm()
+	tokens := make(map[string]string, len(answer.Grants))
+	for _, grant := range answer.Grants {
+		permitted.List = append(permitted.List, grant.Record)
+		tokens[grant.Record.ServiceNode] = grant.Token
+	}
+	return permitted, tokens, nil
 }

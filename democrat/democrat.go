@@ -64,7 +64,7 @@ func main() {
 		Description: "bridges the Arrowhead local cloud knowledge graph to FA³ST Asset Administration Shells",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20195, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30195, "http": 20195, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/democrat",
 		DName: pkix.Name{
 			CommonName:         sys.Name,

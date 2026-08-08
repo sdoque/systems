@@ -107,6 +107,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "certification",
+		Mission: components.MissionCore,
 		Details: map[string][]string{"PKI": {"X.509"}, "Location": {"LocalCloud"}},
 		ServicesMap: map[string]*components.Service{
 			certify.SubPath:   &certify,
@@ -280,7 +281,7 @@ func (t *Traits) certifying(w http.ResponseWriter, r *http.Request) {
 		// development and isolated testing, but it leaves the CA in a
 		// "trust everything" mode that bypasses the security model
 		// described in the paper. Log every such issuance so a post-incident
-		// review can identify deauthorised binaries that nevertheless
+		// review can identify deauthorized binaries that nevertheless
 		// obtained certs because attestation was disabled.
 		log.Printf("WARNING: certify: attestation disabled (maitreDPort=0); signing CN=%q from %q without verification",
 			csr.Subject.CommonName, clientIP)

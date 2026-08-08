@@ -16,7 +16,7 @@
 
 // thing.go contains the unit-asset logic for the sailor system:
 //
-//   - NMEAConfig / SignalConf   — JSON-serialisable configuration types
+//   - NMEAConfig / SignalConf   — JSON-serializable configuration types
 //   - Traits                    — per-signal runtime state (one instance per signal)
 //   - initTemplate              — default config used to generate systemconfig.json
 //   - newResource               — opens the CAN socket and creates all unit assets
@@ -52,7 +52,7 @@ import (
 	"github.com/sdoque/mbaigo/usecases"
 )
 
-// ── Configuration types (JSON-serialisable) ───────────────────────────────────
+// ── Configuration types (JSON-serializable) ───────────────────────────────────
 
 // NMEAConfig is the traits block for a NMEA 2000 bus entry in systemconfig.json.
 type NMEAConfig struct {
@@ -113,7 +113,7 @@ func initTemplate() *components.UnitAsset {
 	}
 	return &components.UnitAsset{
 		Name:    "Vessel",
-		Mission: "monitor_vessel",
+		Mission: components.MissionMeasurement,
 		Details: map[string][]string{"FunctionalLocation": {"Boat"}},
 		ServicesMap: components.Services{
 			access.SubPath: &access,

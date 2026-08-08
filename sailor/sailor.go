@@ -51,7 +51,7 @@ func main() {
 		Description: "NMEA 2000 gateway — exposes vessel signals as Arrowhead services",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20194, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30194, "http": 20194, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/sailor",
 		DName: pkix.Name{
 			CommonName:         sys.Name,

@@ -43,10 +43,18 @@ type StationsDataResponse struct {
 
 // serviceSpec describes one service offered by a module asset.
 type serviceSpec struct {
-	definition  string
-	subPath     string
-	unit        string
-	description string
+	definition string
+	subPath    string
+	// unit is a QUDT IRI wherever the framework knows one, so a consumer asking
+	// for °F gets a converted reading rather than a refusal. Where it does not —
+	// ppm, km/h, mm — the plain symbol stays: an invented IRI would resolve to
+	// nothing and read as a promise the conversion cannot keep.
+	unit string
+	// quantityKind is what the service is discovered by. A consumer asks for a
+	// temperature, not for Celsius; leaving this blank leaves the service
+	// findable only by a consumer naming the same unit string.
+	quantityKind string
+	description  string
 }
 
 // moduleInfo maps a Netatmo module type to a stable mbaigo asset name and its services.
@@ -64,43 +72,43 @@ var moduleTypeMap = map[string]moduleInfo{
 	"NAMain": {
 		assetName: "IndoorModule",
 		services: []serviceSpec{
-			{"temperature", "temperature", "Celsius", "indoor temperature (GET)"},
-			{"humidity", "humidity", "%", "indoor relative humidity (GET)"},
-			{"co2", "co2", "ppm", "indoor CO2 concentration (GET)"},
-			{"pressure", "pressure", "mbar", "atmospheric pressure (GET)"},
-			{"noise", "noise", "dB", "indoor noise level (GET)"},
+			{"temperature", "temperature", "<http://qudt.org/vocab/unit/DEG_C>", "<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>", "indoor temperature (GET)"},
+			{"humidity", "humidity", "<http://qudt.org/vocab/unit/PERCENT>", "<http://qudt.org/vocab/quantitykind/RelativeHumidity>", "indoor relative humidity (GET)"},
+			{"co2", "co2", "ppm", "", "indoor CO2 concentration (GET)"},
+			{"pressure", "pressure", "<http://qudt.org/vocab/unit/MilliBAR>", "<http://qudt.org/vocab/quantitykind/Pressure>", "atmospheric pressure (GET)"},
+			{"noise", "noise", "<http://qudt.org/vocab/unit/DeciB>", "<http://qudt.org/vocab/quantitykind/SoundPressureLevel>", "indoor noise level (GET)"},
 		},
 	},
 	"NAModule1": {
 		assetName: "OutdoorModule",
 		services: []serviceSpec{
-			{"temperature", "temperature", "Celsius", "outdoor temperature (GET)"},
-			{"humidity", "humidity", "%", "outdoor relative humidity (GET)"},
+			{"temperature", "temperature", "<http://qudt.org/vocab/unit/DEG_C>", "<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>", "outdoor temperature (GET)"},
+			{"humidity", "humidity", "<http://qudt.org/vocab/unit/PERCENT>", "<http://qudt.org/vocab/quantitykind/RelativeHumidity>", "outdoor relative humidity (GET)"},
 		},
 	},
 	"NAModule2": {
 		assetName: "WindModule",
 		services: []serviceSpec{
-			{"wind_speed", "wind_speed", "km/h", "wind speed (GET)"},
-			{"wind_angle", "wind_angle", "°", "wind direction in degrees (GET)"},
-			{"gust_speed", "gust_speed", "km/h", "gust speed (GET)"},
-			{"gust_angle", "gust_angle", "°", "gust direction in degrees (GET)"},
+			{"wind_speed", "wind_speed", "km/h", "", "wind speed (GET)"},
+			{"wind_angle", "wind_angle", "<http://qudt.org/vocab/unit/DEG>", "<http://qudt.org/vocab/quantitykind/Angle>", "wind direction in degrees (GET)"},
+			{"gust_speed", "gust_speed", "km/h", "", "gust speed (GET)"},
+			{"gust_angle", "gust_angle", "<http://qudt.org/vocab/unit/DEG>", "<http://qudt.org/vocab/quantitykind/Angle>", "gust direction in degrees (GET)"},
 		},
 	},
 	"NAModule3": {
 		assetName: "RainModule",
 		services: []serviceSpec{
-			{"rain", "rain", "mm/h", "rain accumulation in last hour (GET)"},
-			{"rain_24h", "rain_24h", "mm", "rain accumulation in last 24 hours (GET)"},
+			{"rain", "rain", "mm/h", "", "rain accumulation in last hour (GET)"},
+			{"rain_24h", "rain_24h", "mm", "", "rain accumulation in last 24 hours (GET)"},
 		},
 	},
 	"NAModule4": {
 		assetName:              "IndoorModule2",
 		locationFromModuleName: true, // publish ModuleName (e.g. "Bathroom") as FunctionalLocation
 		services: []serviceSpec{
-			{"temperature", "temperature", "Celsius", "indoor temperature, secondary module (GET)"},
-			{"humidity", "humidity", "%", "indoor relative humidity, secondary module (GET)"},
-			{"co2", "co2", "ppm", "indoor CO2 concentration, secondary module (GET)"},
+			{"temperature", "temperature", "<http://qudt.org/vocab/unit/DEG_C>", "<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>", "indoor temperature, secondary module (GET)"},
+			{"humidity", "humidity", "<http://qudt.org/vocab/unit/PERCENT>", "<http://qudt.org/vocab/quantitykind/RelativeHumidity>", "indoor relative humidity, secondary module (GET)"},
+			{"co2", "co2", "ppm", "", "indoor CO2 concentration, secondary module (GET)"},
 		},
 	},
 }

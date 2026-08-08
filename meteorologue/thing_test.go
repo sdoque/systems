@@ -22,6 +22,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/sdoque/mbaigo/usecases"
 )
 
 // TestInitTemplate verifies that initTemplate returns a UnitAsset with the
@@ -32,8 +34,8 @@ func TestInitTemplate(t *testing.T) {
 	if ua.Name != "MeteoStation" {
 		t.Errorf("expected Name %q, got %q", "MeteoStation", ua.Name)
 	}
-	if ua.Mission != "provide_weather_data" {
-		t.Errorf("expected Mission %q, got %q", "provide_weather_data", ua.Mission)
+	if ua.Mission != "measurement" {
+		t.Errorf("expected Mission %q, got %q", "measurement", ua.Mission)
 	}
 
 	creds, ok := ua.Traits.(*Credentials)
@@ -206,28 +208,35 @@ func TestModuleCache(t *testing.T) {
 	}
 }
 
-// TestServiceUnit verifies that serviceUnit returns the correct physical unit
-// for each known service subpath.
+// TestServiceUnit verifies that the unit a reading is stamped with is the unit
+// the service record declares.
+//
+// They used to be two lists, and a consumer converts using the record — so a
+// disagreement is a reading that means something other than what it says.
 func TestServiceUnit(t *testing.T) {
-	cases := map[string]string{
-		"temperature": "Celsius",
-		"humidity":    "%",
-		"co2":         "ppm",
-		"pressure":    "mbar",
-		"noise":       "dB",
-		"wind_speed":  "km/h",
-		"gust_speed":  "km/h",
-		"wind_angle":  "°",
-		"gust_angle":  "°",
-		"rain":        "mm/h",
-		"rain_24h":    "mm",
-		"unknown":     "",
-	}
-	for path, want := range cases {
-		got := serviceUnit(path)
-		if got != want {
-			t.Errorf("serviceUnit(%q) = %q, want %q", path, got, want)
+	for moduleType, info := range moduleTypeMap {
+		for _, spec := range info.services {
+			if got := serviceUnit(spec.subPath); got != spec.unit {
+				t.Errorf("%s: serviceUnit(%q) = %q, but the service declares %q",
+					moduleType, spec.subPath, got, spec.unit)
+			}
 		}
+	}
+
+	if got := serviceUnit("unknown"); got != "" {
+		t.Errorf("serviceUnit(\"unknown\") = %q, want \"\"", got)
+	}
+}
+
+// TestTemperatureIsConvertible checks that the temperature is published in a
+// unit the framework can convert, which is what lets a controller working in °F
+// consume this station at all. The others are exempt: ppm and mm/h have no QUDT
+// entry here, and stating an IRI that resolves to nothing would be worse than
+// stating the symbol.
+func TestTemperatureIsConvertible(t *testing.T) {
+	unit := serviceUnit("temperature")
+	if _, ok := usecases.LookupUnit(unit); !ok {
+		t.Errorf("temperature is published in %q, which no consumer can convert from", unit)
 	}
 }
 

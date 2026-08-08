@@ -15,7 +15,12 @@
 
 package main
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/sdoque/mbaigo/components"
+)
 
 // DeconzLight is the REST API representation of a light or plug device.
 type DeconzLight struct {
@@ -99,6 +104,46 @@ var sensorServices = map[string][]string{
 	"ZHAOpenClose":   {"open"},
 	"ZHALightLevel":  {"light_level"},
 	"ZHAVibration":   {"vibration"},
+}
+
+// serviceMissions gives each ZigBee service its mission.
+//
+// The gateway is an interface, not a thing, and a single physical device is
+// often both: a smart plug appears in deCONZ as a light with an on_off service
+// and as sensors reporting power and energy. Classifying the whole asset as
+// actuation would make its metering readable only to whoever may switch it,
+// while classifying it as measurement would hide that it can be switched at all.
+// So the mission belongs to the service.
+//
+// A service absent from this map is a programming error rather than a
+// configuration one — it means a device type was given a service that was never
+// classified — and missionForService reports it so startup fails loudly.
+var serviceMissions = map[string]string{
+	// Drivable.
+	"on_off":     components.MissionActuation,
+	"brightness": components.MissionActuation,
+
+	// Sampled quantities.
+	"temperature": components.MissionMeasurement,
+	"humidity":    components.MissionMeasurement,
+	"pressure":    components.MissionMeasurement,
+	"power":       components.MissionMeasurement,
+	"energy":      components.MissionMeasurement,
+	"light_level": components.MissionMeasurement,
+
+	// Transitions rather than quantities: they report that something happened.
+	"button_event": components.MissionEvent,
+	"open":         components.MissionEvent,
+	"presence":     components.MissionEvent,
+	"vibration":    components.MissionEvent,
+}
+
+// missionForService returns the mission of a ZigBee service subpath.
+func missionForService(subPath string) (string, error) {
+	if mission, ok := serviceMissions[subPath]; ok {
+		return mission, nil
+	}
+	return "", fmt.Errorf("service %q has no mission: add it to serviceMissions", subPath)
 }
 
 // serviceSpec defines the Arrowhead service metadata for each service subpath.

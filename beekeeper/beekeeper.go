@@ -44,7 +44,7 @@ func main() {
 		Description: "exposes ZigBee devices paired to a RaspBee II / deCONZ gateway as Arrowhead services",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20185, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30185, "http": 20185, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/beekeeper",
 		DName: pkix.Name{
 			CommonName:         sys.Name,
@@ -171,7 +171,7 @@ func setLightState(cfg DeconzConfig, lightID string, on bool) error {
 	req.Header.Set("Content-Type", "application/json")
 	// Preserve the framework's TLS transport while imposing a timeout —
 	// http.DefaultClient itself has no timeout. Without Transport set the
-	// fresh client would lose mTLS configuration installed by enrolment.
+	// fresh client would lose mTLS configuration installed by enrollment.
 	resp, err := (&http.Client{Timeout: 5 * time.Second, Transport: http.DefaultClient.Transport}).Do(req)
 	if err != nil {
 		return err

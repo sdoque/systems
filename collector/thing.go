@@ -72,7 +72,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "demo",
-		Mission: "handle_timeseries",
+		Mission: components.MissionLogging,
 		Details: map[string][]string{"Database": {"InfluxDB"}},
 		ServicesMap: components.Services{
 			mqueryService.SubPath: &mqueryService,

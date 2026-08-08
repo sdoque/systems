@@ -17,11 +17,15 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/sdoque/mbaigo/forms"
+	"github.com/sdoque/mbaigo/usecases"
 )
 
 func TestPercentToRaw(t *testing.T) {
@@ -75,7 +79,7 @@ func TestAccess_GET(t *testing.T) {
 		var f forms.SignalA_v1a
 		f.NewForm()
 		f.Value = 42.0
-		f.Unit = "Percent"
+		f.Unit = "<http://qudt.org/vocab/unit/PERCENT>"
 		tray.SampledDatum <- f
 	}()
 
@@ -130,5 +134,120 @@ func TestServing_InvalidPath(t *testing.T) {
 	serving(tr, w, r, "unknown")
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+// TestConfiguredUnitIsConvertible checks that the level is declared in a unit
+// the framework can convert, which is what lets the leveler consume this channel
+// at all: the controller asks for its setpoint's unit, and a reading in a name
+// QUDT does not know is refused rather than converted.
+//
+// The payload itself is stamped from the same configured detail — see the unit
+// field newResource fills in — so the reading and the record cannot disagree.
+func TestConfiguredUnitIsConvertible(t *testing.T) {
+	ua := initTemplate()
+
+	declared := ua.Details["Unit"]
+	if len(declared) == 0 {
+		t.Fatal("the asset declares no unit, so a consumer has nothing to convert from")
+	}
+	if _, ok := usecases.LookupUnit(declared[0]); !ok {
+		t.Errorf("the level is published in %q, which no consumer can convert from", declared[0])
+	}
+
+	kinds := ua.Details["QuantityKind"]
+	if len(kinds) == 0 {
+		t.Error("the asset declares no quantity kind, so a consumer asking for a ratio never finds it")
+	}
+}
+
+// TestShutdownStopsTheLoopWithoutExiting is the defect this test was written
+// for: the reader goroutine called os.Exit(0) when the context was cancelled.
+// One channel of one unit asset shutting down took the whole system with it —
+// every other asset lost its shutdown, and the cleanup function newResource
+// returns never ran. That the test binary survives this test is half the
+// assertion; the other half is that sampleSignal actually returns.
+func TestShutdownStopsTheLoopWithoutExiting(t *testing.T) {
+	tr := &Traits{
+		name:           "LevelSensor_1",
+		Address:        "InputValue_1",
+		serviceChannel: make(chan ServiceTray),
+		outputChannel:  make(chan float64),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() {
+		tr.sampleSignal(ctx)
+		close(stopped)
+	}()
+
+	cancel()
+
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("sampleSignal did not return after the context was cancelled")
+	}
+}
+
+// TestAWriteFailureDoesNotStopTheLoop is the second half of the same defect: a
+// failed write to the process image returned from the loop, so the asset stopped
+// sampling and stopped answering every later request. On this machine piTest is
+// absent, so the write fails for real.
+func TestAWriteFailureDoesNotStopTheLoop(t *testing.T) {
+	tr := &Traits{
+		name:           "LevelSensor_1",
+		Address:        "OutputValue_1",
+		unit:           "<http://qudt.org/vocab/unit/PERCENT>",
+		Value:          42.0,
+		serviceChannel: make(chan ServiceTray),
+		outputChannel:  make(chan float64),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go tr.sampleSignal(ctx)
+
+	// A write the hardware cannot take.
+	body := `{"value":75.0,"unit":"<http://qudt.org/vocab/unit/PERCENT>","version":"SignalA_v1.0"}`
+	put := httptest.NewRequest(http.MethodPut, "/access", strings.NewReader(body))
+	put.Header.Set("Content-Type", "application/json")
+	tr.access(httptest.NewRecorder(), put)
+
+	// The loop must still be there to answer the next caller.
+	rec := httptest.NewRecorder()
+	tr.access(rec, httptest.NewRequest(http.MethodGet, "/access", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a GET after a failed write returned %d — the loop stopped serving", rec.Code)
+	}
+}
+
+// TestRequestsAreRefusedRatherThanHungWhenTheLoopIsGone checks the handoff is
+// bounded. The send to serviceChannel is unbuffered, so with no loop attending
+// it the handler blocked for the life of the process: a hung request rather than
+// a failed one, and one leaked goroutine per caller.
+func TestRequestsAreRefusedRatherThanHungWhenTheLoopIsGone(t *testing.T) {
+	tr := &Traits{
+		name:           "LevelSensor_1",
+		serviceChannel: make(chan ServiceTray),
+		outputChannel:  make(chan float64),
+	}
+
+	answered := make(chan int, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		tr.access(rec, httptest.NewRequest(http.MethodGet, "/access", nil))
+		answered <- rec.Code
+	}()
+
+	select {
+	case code := <-answered:
+		if code != http.StatusServiceUnavailable {
+			t.Errorf("expected 503 with no loop attending, got %d", code)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("the request never returned — the handler is blocked on an unattended channel")
 	}
 }

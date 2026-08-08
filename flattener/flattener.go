@@ -43,7 +43,7 @@ func main() {
 		Description: "adjusts the thermostat setpoint inversely to the electricity spot price to flatten energy peak demand.",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20182, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30182, "http": 20182, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/flattener",
 		DName: pkix.Name{
 			CommonName:         sys.Name,
@@ -87,7 +87,7 @@ func main() {
 // serving dispatches incoming HTTP requests to the appropriate handler.
 func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
-	case "setpoint":
+	case "recommendedsetpoint":
 		switch r.Method {
 		case http.MethodGet:
 			sp := t.getSetPoint()

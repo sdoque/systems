@@ -57,7 +57,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "product",
-		Mission: "track_orders",
+		Mission: components.MissionTransaction,
 		Details: map[string][]string{"Status": {"Evaluation"}},
 		ServicesMap: components.Services{
 			orderService.SubPath: &orderService,

@@ -152,7 +152,7 @@ func TestFetchFromCA(t *testing.T) {
 	})
 }
 
-// ── runSyncLoop bootstrap behaviour ───────────────────────────────────────────
+// ── runSyncLoop bootstrap behavior ───────────────────────────────────────────
 
 func TestRunSyncLoopFirstRun(t *testing.T) {
 	srv := fakeCA(t, 100, []string{"a", "b"})

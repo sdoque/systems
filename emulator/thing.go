@@ -69,7 +69,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "signal",
-		Mission: "replay_signal",
+		Mission: components.MissionMeasurement,
 		Details: map[string][]string{"Unit": {"Celsius"}, "FunctionalLocation": {"Kitchen"}},
 		ServicesMap: components.Services{
 			stream.SubPath: &stream,

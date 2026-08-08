@@ -43,7 +43,7 @@ func main() {
 		Description: "assembles the SysML v2 BDD/IBD models of all systems in a local cloud",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20106, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30106, "http": 20106, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/modeler",
 		DName: pkix.Name{
 			CommonName:         sys.Name,

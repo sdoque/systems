@@ -22,7 +22,7 @@ func main() {
 	sys.Husk = &components.Husk{
 		Description: "is a logging system that receives log messages from other systems.",
 		Details:     map[string][]string{"Developer": {"alex"}},
-		ProtoPort:   map[string]int{"https": 0, "http": 20106, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30106, "http": 20106, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/messenger",
 		DName: pkix.Name{
 			CommonName:         sys.Name,

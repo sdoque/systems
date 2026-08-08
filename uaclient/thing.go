@@ -94,6 +94,34 @@ func initTemplate() *components.UnitAsset {
 
 //-------------------------------------Instantiate unit asset(s) based on configuration
 
+// missionForAccess derives a node's mission from whether the OPC UA server
+// reports it as writable.
+//
+// The server is an interface, not a thing: each node is the asset behind it, and
+// the address space already states which nodes can be written. Deriving the
+// mission from the access level rather than configuring it means the two cannot
+// disagree — a node that the server refuses to write can never be classified as
+// an actuator.
+func missionForAccess(writable bool) string {
+	if writable {
+		return components.MissionActuation
+	}
+	return components.MissionMeasurement
+}
+
+// applyNodeMissions gives an asset's services their missions. The asset's own
+// mission covers `access`, which is what actually reads or drives the node.
+// `browse` only ever enumerates the address space, so it stays measurement even
+// on a writable node — otherwise a policy granting writes to actuation would also
+// grant the enumeration of every node behind this one.
+func applyNodeMissions(services components.Services) {
+	for _, serv := range services {
+		if serv.Definition == "browse" {
+			serv.Mission = components.MissionMeasurement
+		}
+	}
+}
+
 // newResource creates the unit asset with its pointers and channels based on the configuration using the uaConfig structs
 func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) ([]*components.UnitAsset, func()) {
 	var plcConfig Traits
@@ -136,12 +164,15 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		log.Fatalf("invalid node id: %s", err)
 	}
 	rootUA := &components.UnitAsset{
-		Name:        "ObjectsFolder",
+		Name: "ObjectsFolder",
+		// The browse root is the address space itself, never a writable node.
+		Mission:     missionForAccess(false),
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
 		Traits:      rootTraits,
 	}
+	applyNodeMissions(rootUA.ServicesMap)
 	rootUA.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
 		serving(rootTraits, w, r, servicePath)
 	}
@@ -179,11 +210,13 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			t.Writable = nodeList[0].Writable
 			newUA := &components.UnitAsset{
 				Name:        t.NodeName,
+				Mission:     missionForAccess(t.Writable),
 				Owner:       sys,
 				Details:     configuredAsset.Details,
 				ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
 				Traits:      t,
 			}
+			applyNodeMissions(newUA.ServicesMap)
 			newUA.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
 				serving(t, w, r, servicePath)
 			}

@@ -45,7 +45,7 @@ func main() {
 		Certificate: "ABCD",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20152, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30152, "http": 20152, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/thermostat",
 		DName: pkix.Name{
 			CommonName:         sys.Name,
@@ -99,7 +99,7 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 	switch servicePath {
 	case "setpoint":
 		t.setpt(w, r)
-	case "thermalerror":
+	case "deviation":
 		t.diff(w, r)
 	case "jitter":
 		t.variations(w, r)

@@ -31,8 +31,9 @@ Each entry in the `policies` array is an allow rule:
 {
   "subject":              "thermostat",
   "missions":             ["actuation", "measurement"],
+  "services":             ["signal"],
   "actions":              ["read", "write"],
-  "must_match_attribute": "functional_location",
+  "must_match_attribute": "FunctionalLocation",
   "ttl":                  "10m"
 }
 ```
@@ -40,12 +41,48 @@ Each entry in the `policies` array is an allow rule:
 | Field | Type | Required | Meaning |
 |-------|------|----------|---------|
 | `subject` | string | yes | The CN of the consumer's mTLS certificate. `"*"` matches any authenticated subject. |
-| `missions` | string[] | yes | Mission names from MISSIONS.md the policy authorises. `["*"]` matches any mission. |
+| `missions` | string[] | yes | Mission names from MISSIONS.md the policy authorizes. `["*"]` matches any mission. |
+| `services` | string[] | no | Service definitions the policy authorizes. Omitted or `["*"]` means every service of a matching asset. |
 | `actions` | string[] | yes | One or more of `read`, `write`, `invoke`, or `*`. |
 | `must_match_attribute` | string | no | If set, an additional ABAC constraint: the named attribute must match between subject and asset (see *Pairing semantics* below). |
-| `ttl` | duration string | no | Token lifetime if this policy authorises the request. Defaults to `5m`. |
+| `ttl` | duration string | no | Token lifetime if this policy authorizes the request. Defaults to `5m`. |
 
-A request is authorised iff at least one policy entry matches AND no `denials`
+### `ttl` and which one applies
+
+The TTL is how long the issued token stays valid — how long the consumer may
+keep calling the provider on the strength of one authorization. It is the only
+bound on revocation: edit `policies.json` to withdraw a permission and tokens
+already issued keep working until they expire. Short TTLs mean fast revocation
+and more orchestration traffic; long ones mean the opposite.
+
+More than one rule can authorize the same request, and they may set different
+lifetimes. **The shortest TTL among the matching rules applies.** Revocation
+latency should follow the most cautious rule an operator wrote, not the order
+the rules happen to appear in — a broad `"*"` rule with a generous lifetime must
+not lengthen the leash a narrow rule deliberately kept short.
+
+### Why `services` is needed
+
+Mission is a property of the *unit asset*; the permission boundary is frequently
+inside a single service. `modboss` — the Wago PLC — has one unit asset and one
+service, `signal`, whose handler serves both GET and PUT
+(`systems/modboss/thing.go:179-182`). The parallax `position` service has the same
+shape.
+
+So in "the thermostat may set the valve position, the collector may only read it",
+both consumers face the same asset, the same mission and the same service. Mission
+separates nothing there; the `actions` field does all the work. Mission earns its
+keep one level up, by keeping a controller away from an entire *class* of asset
+(`logging`, `core`, `aggregation`) whatever the action.
+
+`services` covers the remaining case: two services on one asset, same mission,
+same action. If the PLC later exposes `firmware` alongside `signal`, both are
+`write` on mission `actuation`, and without a service selector no policy can
+permit one and refuse the other. The `denials` list keys on `(subject, asset)`,
+not on service, and the issued token carries a `service` claim that no policy
+field would otherwise constrain.
+
+A request is authorized iff at least one policy entry matches AND no `denials`
 entry matches.
 
 ## Denials (the escape hatch)
@@ -76,10 +113,30 @@ Three abstract actions, each mapped to mbaigo cervice modes and HTTP semantics:
 
 `*` matches any of the three.
 
+**`invoke` is specified ahead of the framework.** Only `get` (7 uses) and `set`
+(6 uses) appear as cervice modes anywhere in the codebase; there is no `do` mode
+in `components.Cervice`. Either add it when the first genuine event-publishing
+consumer appears, or drop `invoke` from the first implementation. It should not
+be treated as working until a cervice can express it.
+
 ## Pairing semantics (`must_match_attribute`)
 
 A policy may declare `must_match_attribute` to require that the named attribute
-match between the subject and the asset. The match algorithm:
+match between the subject and the asset.
+
+**The name is the registration detail key, exactly as spelled there** —
+`FunctionalLocation`, not `functional_location`. Details travel from the unit
+asset into every service record verbatim
+(`usecases/registration.go:235-237`), and the lookup is a plain map access, so a
+policy naming a key that differs by so much as a capital letter pairs with
+nothing and silently refuses every request it governs.
+
+The spelling is not free to change either: `usecases/kgraphing.go:269` keys on
+the literal `"FunctionalLocation"` to emit `afo:hasFunctionalLocation` rather
+than a local `alc:has…` term. Renaming the detail to suit a policy file would
+quietly drop the asset out of the AFO-IDO/DEXPI/STEP alignment.
+
+The match algorithm:
 
 1. Look up the named attribute on the subject (from its registration record).
 2. Look up the named attribute on the asset (from the service-registrar entry).
@@ -98,16 +155,23 @@ Rationale for step 4: a subject *with* a defined location/zone consuming an
 asset *with* a defined location/zone is the security-relevant case; a missing
 subject side is an operator misconfiguration that should fail closed.
 
+That last claim is only true because of the framework invariant in MISSIONS.md:
+every system provides at least one service, therefore every system has a
+registration record, therefore every subject has attributes to look up. Without
+the invariant a missing subject side could equally be a legitimate
+consume-only system, and failing closed would be wrong. The two documents are
+coupled here.
+
 ## Worked examples
 
 The eThermostat scenario, expressed in policy form. Setup:
 
-- Asset `bathroom-sensor` has mission `measurement`, attribute `functional_location: ["Bathroom"]`.
-- Asset `bathroom-heater` has mission `actuation`, attribute `functional_location: ["Bathroom"]`.
-- Asset `cloud-aggregator` has mission `aggregation`, no `functional_location`.
-- Subject `thermostat-bathroom` has attribute `functional_location: ["Bathroom"]`.
-- Subject `thermostat-kitchen` has attribute `functional_location: ["Kitchen"]`.
-- Subject `collector` has no `functional_location`.
+- Asset `bathroom-sensor` has mission `measurement`, attribute `FunctionalLocation: ["Bathroom"]`.
+- Asset `bathroom-heater` has mission `actuation`, attribute `FunctionalLocation: ["Bathroom"]`.
+- Asset `cloud-aggregator` has mission `aggregation`, no `FunctionalLocation`.
+- Subject `thermostat-bathroom` has attribute `FunctionalLocation: ["Bathroom"]`.
+- Subject `thermostat-kitchen` has attribute `FunctionalLocation: ["Kitchen"]`.
+- Subject `collector` has no `FunctionalLocation`.
 
 Policies:
 
@@ -118,7 +182,7 @@ Policies:
       "subject": "thermostat-*",
       "missions": ["measurement", "actuation"],
       "actions": ["read", "write"],
-      "must_match_attribute": "functional_location"
+      "must_match_attribute": "FunctionalLocation"
     },
     {
       "subject": "collector",
@@ -140,9 +204,88 @@ Resolution:
 | `collector` reads `bathroom-sensor` | allow | no `must_match_attribute`; mission and action allowed |
 | `collector` writes `bathroom-heater` | deny | `write` not in collector's actions |
 
+## Subject identity
+
+The `subject` of every decision is the Common Name of the **verified client
+certificate** on the incoming TLS connection. It is never
+`ServiceQuest_v1.RequesterName`, which is filled from `sys.Name`
+(`usecases/service_discovery.go:109`) and is therefore self-asserted — any system
+can claim to be the thermostat. A policy engine fed a self-asserted subject is
+decoration.
+
+This has a hard prerequisite: the connection must be mTLS. The HTTPS server is
+configured with `tls.RequireAndVerifyClientCert` against the CA pool
+(`usecases/servers_handlers.go:128-133`), so identity is available and verified
+there. On the plain-HTTP server — the same handler, since both bind the default
+mux — `r.TLS` is nil and there is no identity at all.
+
+**A request carrying no verified subject is refused before any rule is
+consulted**, including a rule whose subject is `"*"`. The wildcard means "any
+*authenticated* subject", never "no subject required": a policy file written to
+be permissive during commissioning must not become an open door on the plain-HTTP
+port, where nothing identifies the caller. Refusing first also keeps the two
+failures distinguishable in the audit trail — "nobody may do this" reads very
+differently from "we do not know who asked".
+
+## Enforcement model
+
+Two distinct mechanisms, both required:
+
+1. **Filtering, at the Orchestrator.** The Authorizer prunes the provider list
+   before the Orchestrator selects from it, so a consumer never learns the URL of
+   a service it may not use. This is least privilege applied to *discovery*.
+2. **Verification, at the provider.** The provider checks the token's signature,
+   expiry, and claims against the request actually being served. This is the only
+   mechanism that *enforces* anything.
+
+Filtering alone is advisory. `stateHandler` caches provider URLs in `cer.Nodes`
+and re-orchestrates only when that cache is empty
+(`usecases/consumption.go:51-56`), and nothing compels a client to consult the
+Orchestrator at all. A hand-written consumer can call any provider URL directly.
+
+### Token delivery
+
+The token travels back to the consumer inside the orchestration response:
+`forms.ServicePoint_v1` already carries a `Token string` field
+(`forms/servicequest_forms.go:62`) that is currently set and read nowhere. No new
+form is required for delivery, and the consumer needs no extra round trip.
+
+The Authorizer is consulted once per orchestration with the whole candidate list,
+not once per candidate. That call needs a new request/response form pair; the
+candidate list itself reuses `ServiceRecordList_v1`.
+
+### Token renewal
+
+Renewal already works, by accident. `sendHTTPReq` returns an error for any
+non-2xx response (`usecases/utilities.go:192-194`), and `stateHandler` clears
+`cer.Nodes` whenever a request errors (`usecases/consumption.go:68`), which forces
+a fresh `Search4Services` — and therefore a fresh token — on the next call. A
+provider answering 403 to an expired token self-heals. It is coarse, discarding
+every cached node rather than the stale one, but no separate renewal loop is
+needed.
+
+## Deployment constraints
+
+**One functional location per system.** The subject is a certificate CN, which
+identifies a *system*; attributes such as `FunctionalLocation` are declared on
+*unit assets*. A system whose assets sit in different locations therefore has no
+well-defined subject attribute. This is not hypothetical: `telegrapher` ships
+`Bathroom/temperature` and `Kitchen/temperature` in one system under one CN, and
+`emulator` likewise has two assets.
+
+As a provider this is harmless — each service record carries its own asset's
+details. As a *consumer* it is not: the Authorizer cannot tell which asset is
+asking, and the kitchen-must-not-control-the-bathroom rule silently degrades to
+system-level. The worked examples above already assume this constraint by naming
+subjects `thermostat-bathroom` and `thermostat-kitchen`.
+
+The alternative — letting the consumer declare which asset it acts for — makes
+the attribute self-asserted, and a self-asserted location is not a security
+control. Left as a deployment rule until there is a reason to do otherwise.
+
 ## Token format (issued by the authorizer)
 
-When a request is authorised, the authorizer returns a signed token the consumer
+When a request is authorized, the authorizer returns a signed token the consumer
 attaches to its provider request. JWT-style payload:
 
 ```json
@@ -167,7 +310,7 @@ being made. No network round-trip to the authorizer is required at request time.
 ## Revocation
 
 Revocation latency is bounded by token TTL. The authorizer will not issue a new
-token for a deauthorised request the moment `policies.json` is edited; existing
+token for a deauthorized request the moment `policies.json` is edited; existing
 tokens remain valid until they expire (default 5 minutes; tunable per policy).
 
 For revocation-sensitive deployments, set short TTLs (1–5 min). For low-frequency
@@ -184,7 +327,7 @@ The authorizer is the *second* gate in a two-gate chain:
    issue tokens for specific (provider, asset, service, action). The system
    *acts* in the cloud.
 
-A binary that is whitelisted but not policy-authorised has cryptographic identity
+A binary that is whitelisted but not policy-authorized has cryptographic identity
 but no permissions. A binary that has a token but whose certificate is revoked
 fails at the mTLS handshake before any policy check runs. Both files,
 operator-edited, version-controlled, fail-closed.
@@ -194,3 +337,5 @@ operator-edited, version-controlled, fail-closed.
 | Date | Change |
 |------|--------|
 | 2026-04-30 | Initial schema: subject, missions, actions, must_match_attribute, ttl, denials |
+| 2026-07-28 | Added optional `services` selector; specified subject identity as the verified certificate CN; separated filtering from enforcement; recorded token delivery via the existing `ServicePoint_v1.Token` field and the accidental renewal path; added deployment constraints; flagged `invoke` as ahead of the framework |
+| 2026-07-28 | Settled three points the engine forced: `must_match_attribute` names the exact registration detail key (`FunctionalLocation`); the shortest TTL among matching rules applies; a request with no verified subject is refused before any rule, wildcard included |

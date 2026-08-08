@@ -129,7 +129,7 @@ negligible.
 ## Compilation
 
 After cloning the *Systems* repository, navigate to the `esr` directory and
-initialise the module (once only):
+initialize the module (once only):
 
 ```bash
 go mod init github.com/sdoque/systems/esr

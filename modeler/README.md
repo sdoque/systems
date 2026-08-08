@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The *Modeler* assembles a complete **SysML v2** structural and behavioural
+The *Modeler* assembles a complete **SysML v2** structural and behavioral
 model of an Arrowhead local cloud — a distributed system of systems — by
 collecting the per-system model fragment from each registered system and
 merging them into a single, coherent SysML v2 package. The result is what
@@ -24,7 +24,7 @@ The output covers:
   specialisation of `LocalCloud` listing the hosts and systems.
 - **Internal Block Diagram (IBD)** — the instantiated parts with host
   metadata and live service connections resolved at request time.
-- **Behaviour Definitions** — per-asset action sequences derived from
+- **Behavior Definitions** — per-asset action sequences derived from
   each unit asset's consumed services when those cervices carry a
   `Mode` (`"get"` or `"set"`).
 
@@ -57,7 +57,7 @@ two complementary angles:
 | Property chains, inverses       | Yes             | No                               |
 | Structural composition          | Weak            | First-class (`part def`, `part`) |
 | Ports, items, data flows        | No              | First-class                      |
-| Behaviour (action sequences)    | No              | First-class (`action def`)       |
+| Behavior (action sequences)    | No              | First-class (`action def`)       |
 | Connections between parts       | Derivable       | First-class (`connect`)          |
 
 The kgrapher emits AFO instances; the modeler emits mAF-specialised
@@ -80,10 +80,10 @@ sequenceDiagram
 
     loop for each system
         M->>S: GET /{sys}/smodel
-        S-->>M: SysML v2 fragment (port defs, part defs, IBD part, behaviour defs)
+        S-->>M: SysML v2 fragment (port defs, part defs, IBD part, behavior defs)
     end
 
-    M->>M: merge — dedupe port and abstract action defs,<br/>collect block defs, IBD parts, behaviour defs
+    M->>M: merge — dedupe port and abstract action defs,<br/>collect block defs, IBD parts, behavior defs
     M-->>User: SysML v2 package localCloud (merged)
 ```
 
@@ -101,7 +101,7 @@ generates a SysML v2 fragment with:
 - **IBD part** — the instantiated system with its host metadata,
   provided service URLs as comments, and `@connect` annotations for any
   already-resolved service providers.
-- **behaviour defs** — one `action def` per unit asset whose cervices
+- **behavior defs** — one `action def` per unit asset whose cervices
   carry a `Mode`, with a linear `first X then Y;` sequence referencing
   mAF's abstract `GetState` / `SetState` / `Compute` action defs.
 
@@ -136,6 +136,7 @@ in the same assembly pass.
     "unit_assets": [
         {
             "name": "assembler",
+            "mission": "aggregation",
             "details": { "Type": ["Interactive"] },
             "services": [
                 {
@@ -150,7 +151,7 @@ in the same assembly pass.
             ]
         }
     ],
-    "protocolsNports": { "coap": 0, "http": 20106, "https": 0 },
+    "protocolsNports": { "coap": 0, "http": 20106, "https": 30106 },
     "coreSystems": [ /* serviceregistrar, orchestrator, ca, maitreD */ ]
 }
 ```
@@ -161,9 +162,9 @@ in the same assembly pass.
 |-------|------|---------|-------------|
 | `cloudName` | string | `"localCloud"` | Name used for the merged SysML v2 package and for the concrete `<cloudName>Def :> LocalCloud` type |
 
-## Behaviour generation
+## Behavior generation
 
-A behaviour block is emitted for a unit asset when at least one of its
+A behavior block is emitted for a unit asset when at least one of its
 consumed services (cervices) carries a `Mode` field set to `"get"` or
 `"set"`. The sequence is always linear:
 
@@ -254,7 +255,7 @@ package 'AlphaCloud' {
     part def 'thermostat_controller_1UnitAsset' :> UnitAsset {
         attribute redefines mission : String = "control_heater";
         out port 'setpoint'     : 'Setpoint';      // provided
-        out port 'thermalerror' : 'Thermalerror';  // provided
+        out port 'deviation' : 'Deviation';  // provided
         in port  'temperature'  : 'Temperature';   // consumed
         in port  'rotation'     : 'Rotation';      // consumed
         perform action behave : 'thermostat_controller_1Behavior';
@@ -270,7 +271,7 @@ package 'AlphaCloud' {
         // …
     }
 
-    // ── Behaviour Definitions ────────────────────────────────────────────────
+    // ── Behavior Definitions ────────────────────────────────────────────────
     action def 'thermostat_controller_1Behavior' {
         action 'get_temperature' : GetState;
         action compute           : Compute;

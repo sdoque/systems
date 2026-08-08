@@ -90,7 +90,7 @@ func capitalise(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
-// systemRecordListJSON serialises a SystemRecordList_v1 whose List contains the
+// systemRecordListJSON serializes a SystemRecordList_v1 whose List contains the
 // given URLs and returns the JSON bytes.
 func systemRecordListJSON(urls []string) []byte {
 	var sl forms.SystemRecordList_v1

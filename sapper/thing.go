@@ -261,6 +261,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "SAPSimulator",
+		Mission: components.MissionTransaction,
 		Details: map[string][]string{"Plant": {"1000"}},
 		ServicesMap: components.Services{
 			ordersService.SubPath:       &ordersService,
@@ -345,7 +346,7 @@ func (t *Traits) nextOrderID() string {
 // highest existing ID in the workorders graph. Silently no-ops if the graph
 // is unconfigured, unreachable, empty, or returns garbage — in any of those
 // cases the counter stays at 0 and the next order will be 400000001 (the
-// previous, restart-resetting behaviour).
+// previous, restart-resetting behavior).
 func (t *Traits) primeCounterFromGraph() {
 	if t.GraphDBURL == "" {
 		return
@@ -571,7 +572,7 @@ func (t *Traits) enrichAndRelease(orderID string, enrichment json.RawMessage) (*
 		log.Printf("enrichAndRelease: order %s enrichment is not structured (%v); TECO will use fallback template", o.ID, err)
 	}
 	t.mu.Unlock()
-	log.Printf("order %s → REL (planner authorised)\n", o.ID)
+	log.Printf("order %s → REL (planner authorized)\n", o.ID)
 
 	go t.insertReleaseToGraphDB(o)
 	go t.notifyEnrichment(o)
@@ -806,6 +807,13 @@ func (t *Traits) notifyEnrichment(o *Order) {
 		return
 	}
 
+	// Read under the lock. The status is written there — completeOrder takes
+	// t.mu to move an order to TECO — but was read here without it, so the lock
+	// guarded one side of the pair and the notification raced the completion.
+	t.mu.Lock()
+	status, releasedAt, enrichment := o.Status, o.ReleasedAt, o.Enrichment
+	t.mu.Unlock()
+
 	// The body bundles the order ID with the planner's payload so the nurse
 	// can correlate without parsing the URL.
 	envelope, err := json.Marshal(struct {
@@ -813,7 +821,7 @@ func (t *Traits) notifyEnrichment(o *Order) {
 		Status     string          `json:"status"`
 		ReleasedAt time.Time       `json:"releasedAt"`
 		Enrichment json.RawMessage `json:"enrichment"`
-	}{o.ID, o.Status, o.ReleasedAt, o.Enrichment})
+	}{o.ID, status, releasedAt, enrichment})
 	if err != nil {
 		log.Printf("notifyEnrichment: marshal error: %v\n", err)
 		return

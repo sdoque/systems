@@ -22,34 +22,40 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sdoque/mbaigo/components"
 	"github.com/sdoque/mbaigo/forms"
+	"github.com/sdoque/mbaigo/usecases"
 )
 
 // TestGetSetPoint verifies that getSetPoint returns a form with the correct
-// Value and Unit fields.
+// Value and Unit fields. The unit is whatever the configuration declared, not a
+// constant: that is what lets one controller be commissioned in °C and another
+// in °F without touching the code.
 func TestGetSetPoint(t *testing.T) {
-	tr := &Traits{SetPt: 22.5}
+	tr := &Traits{SetPt: 22.5, setpointUnit: "<http://qudt.org/vocab/unit/DEG_C>"}
 	f := tr.getSetPoint()
 
 	if f.Value != 22.5 {
 		t.Errorf("expected Value 22.5, got %f", f.Value)
 	}
-	if f.Unit != "Celsius" {
-		t.Errorf("expected Unit \"Celsius\", got %q", f.Unit)
+	if f.Unit != "<http://qudt.org/vocab/unit/DEG_C>" {
+		t.Errorf("expected the configured unit, got %q", f.Unit)
 	}
 }
 
 // TestSetSetPoint verifies that setSetPoint updates the SetPt field.
 func TestSetSetPoint(t *testing.T) {
-	tr := &Traits{SetPt: 20.0}
+	tr := &Traits{SetPt: 20.0, setpointUnit: "<http://qudt.org/vocab/unit/DEG_C>"}
 
 	var f forms.SignalA_v1a
 	f.NewForm()
 	f.Value = 24.0
-	f.Unit = "Celsius"
+	f.Unit = "<http://qudt.org/vocab/unit/DEG_C>"
 	f.Timestamp = time.Now()
 
-	tr.setSetPoint(f)
+	if err := tr.setSetPoint(f); err != nil {
+		t.Fatalf("setSetPoint: %v", err)
+	}
 
 	if tr.SetPt != 24.0 {
 		t.Errorf("expected SetPt 24.0, got %f", tr.SetPt)
@@ -59,25 +65,25 @@ func TestSetSetPoint(t *testing.T) {
 // TestGetError verifies that getError returns a form with the correct Value
 // and Unit fields.
 func TestGetError(t *testing.T) {
-	tr := &Traits{deviation: -1.5}
+	tr := &Traits{deviation: -1.5, errorUnit: "<http://qudt.org/vocab/unit/DEG_C>"}
 	f := tr.getError()
 
 	if f.Value != -1.5 {
 		t.Errorf("expected Value -1.5, got %f", f.Value)
 	}
-	if f.Unit != "Celsius" {
-		t.Errorf("expected Unit \"Celsius\", got %q", f.Unit)
+	if f.Unit != "<http://qudt.org/vocab/unit/DEG_C>" {
+		t.Errorf("expected the setpoint's unit, got %q", f.Unit)
 	}
 }
 
-// TestGetJitter verifies that getJitter returns a form whose Unit is
-// "millisecond".
+// TestGetJitter verifies that getJitter returns a form carrying the unit its
+// service was configured with.
 func TestGetJitter(t *testing.T) {
-	tr := &Traits{jitter: 42 * time.Millisecond}
+	tr := &Traits{jitter: 42 * time.Millisecond, jitterUnit: "<http://qudt.org/vocab/unit/MilliSEC>"}
 	f := tr.getJitter()
 
-	if f.Unit != "millisecond" {
-		t.Errorf("expected Unit \"millisecond\", got %q", f.Unit)
+	if f.Unit != "<http://qudt.org/vocab/unit/MilliSEC>" {
+		t.Errorf("expected the configured unit, got %q", f.Unit)
 	}
 	if f.Value != 42.0 {
 		t.Errorf("expected Value 42, got %f", f.Value)
@@ -143,7 +149,7 @@ func TestSetpt(t *testing.T) {
 func TestDiff(t *testing.T) {
 	t.Run("GET returns 200", func(t *testing.T) {
 		tr := &Traits{deviation: 0.5}
-		req := httptest.NewRequest(http.MethodGet, "/thermalerror", nil)
+		req := httptest.NewRequest(http.MethodGet, "/deviation", nil)
 		w := httptest.NewRecorder()
 		tr.diff(w, req)
 
@@ -154,7 +160,7 @@ func TestDiff(t *testing.T) {
 
 	t.Run("DELETE returns 404", func(t *testing.T) {
 		tr := &Traits{}
-		req := httptest.NewRequest(http.MethodDelete, "/thermalerror", nil)
+		req := httptest.NewRequest(http.MethodDelete, "/deviation", nil)
 		w := httptest.NewRecorder()
 		tr.diff(w, req)
 
@@ -188,4 +194,171 @@ func TestVariations(t *testing.T) {
 			t.Errorf("expected 404, got %d", w.Result().StatusCode)
 		}
 	})
+}
+
+// The mission the authorizer evaluates is the service's, not the asset's. A
+// controller is one asset whose services differ in kind: writing the setpoint
+// reconfigures the loop, while the error and jitter readings only observe it.
+// Collapsing them onto the asset's "control" would mean any policy letting a
+// consumer move a setpoint also let it write everything else here.
+func TestInitTemplateServiceMissions(t *testing.T) {
+	ua := initTemplate()
+
+	if ua.Mission != "control" {
+		t.Errorf("asset mission = %q; want %q", ua.Mission, "control")
+	}
+
+	want := map[string]string{
+		"setpoint":  "state",
+		"deviation": "measurement",
+		"jitter":    "measurement",
+	}
+
+	for subPath, mission := range want {
+		serv, ok := ua.ServicesMap[subPath]
+		if !ok {
+			t.Errorf("service %q missing from the template", subPath)
+			continue
+		}
+		if got := components.EffectiveMission(ua, serv); got != mission {
+			t.Errorf("service %q effective mission = %q; want %q", subPath, got, mission)
+		}
+	}
+}
+
+// The thermal error is the difference between the setpoint and the measurement,
+// so it must be reported in the setpoint's unit. Configuring the two separately
+// would let them disagree, and a °C error against a °F setpoint would look
+// plausible for a long time before anyone noticed the valve behaving oddly.
+func TestThermalErrorFollowsTheSetpointUnit(t *testing.T) {
+	for _, unit := range []string{
+		"<http://qudt.org/vocab/unit/DEG_C>",
+		"<http://qudt.org/vocab/unit/DEG_F>",
+		"Celsius", // a deployment that has not migrated
+	} {
+		services := components.Services{
+			"setpoint":  {Definition: "setpoint", Details: map[string][]string{"Unit": {unit}}},
+			"deviation": {Definition: "deviation", Details: map[string][]string{"Measure": {"interval"}}},
+			"jitter":    {Definition: "jitter", Details: map[string][]string{"Unit": {"<http://qudt.org/vocab/unit/MilliSEC>"}}},
+		}
+
+		tr := &Traits{}
+		tr.adoptUnits(services)
+
+		if tr.errorUnit != unit {
+			t.Errorf("setpoint in %q gave an error unit of %q", unit, tr.errorUnit)
+		}
+		// And it must be advertised, or a consumer has nothing to convert from.
+		if got := services["deviation"].Details["Unit"]; len(got) != 1 || got[0] != unit {
+			t.Errorf("the registered error unit is %v; want %q", got, unit)
+		}
+		if tr.getError().Unit != unit {
+			t.Errorf("the reported error unit is %q; want %q", tr.getError().Unit, unit)
+		}
+		if tr.getSetPoint().Unit != unit {
+			t.Errorf("the reported setpoint unit is %q; want %q", tr.getSetPoint().Unit, unit)
+		}
+	}
+}
+
+// Everything this controller produces has to say what kind of quantity it is, or
+// no consumer asking by quantity kind will ever be paired with it — the same
+// requirement it places on the sensor it consumes.
+func TestProvidedServicesDeclareTheirQuantityKind(t *testing.T) {
+	ua := initTemplate()
+
+	for _, definition := range []string{"setpoint", "deviation", "jitter"} {
+		serv := findService(ua.GetServices(), definition)
+		if serv == nil {
+			t.Errorf("%s is missing from the template", definition)
+			continue
+		}
+		if kind := serv.Details["QuantityKind"]; len(kind) != 1 {
+			t.Errorf("%s declares QuantityKind %v; a provider without one is unfindable", definition, kind)
+		}
+	}
+
+	// The error is a difference, and saying so is what stops a consumer applying
+	// an offset to it.
+	thermalError := findService(ua.GetServices(), "deviation")
+	if measure := thermalError.Details["Measure"]; len(measure) != 1 || measure[0] != "interval" {
+		t.Errorf("deviation declares Measure %v; want [interval]", measure)
+	}
+	// And it declares no unit of its own: that is the setpoint's to give.
+	if unit := thermalError.Details["Unit"]; len(unit) != 0 {
+		t.Errorf("deviation declares its own unit %v; it must follow the setpoint", unit)
+	}
+}
+
+// The control loop subtracts the measurement from the setpoint, so the two must
+// be in one unit. Commissioning the setpoint in °F against a hardcoded °C
+// measurement gives 68 − 20 = 48, saturates the valve, and reports figures that
+// all look plausible.
+func TestMeasurementIsConvertedIntoTheSetpointUnit(t *testing.T) {
+	for _, unit := range []string{
+		"<http://qudt.org/vocab/unit/DEG_C>",
+		"<http://qudt.org/vocab/unit/DEG_F>",
+	} {
+		tr := &Traits{setpointUnit: unit}
+		cer := &components.Cervice{
+			Definition: "temperature",
+			Details:    map[string][]string{"Unit": {tr.setpointUnit}},
+		}
+
+		// A Fahrenheit sensor reporting a room at 20 °C.
+		var reading forms.SignalA_v1a
+		reading.NewForm()
+		reading.Value = 68
+		reading.Unit = "<http://qudt.org/vocab/unit/DEG_F>"
+
+		got, err := usecases.NormalizeUnits(cer, &reading)
+		if err != nil {
+			t.Fatalf("NormalizeUnits: %v", err)
+		}
+		sig := got.(*forms.SignalA_v1a)
+		if sig.Unit != unit {
+			t.Errorf("reading arrived as %q; want the setpoint's %q", sig.Unit, unit)
+		}
+		// 68 °F is 20 °C: the deviation from a 20-in-its-own-unit setpoint must
+		// be zero either way.
+		want := 20.0
+		if unit == "<http://qudt.org/vocab/unit/DEG_F>" {
+			want = 68.0
+		}
+		if diff := sig.Value - want; diff > 1e-9 || diff < -1e-9 {
+			t.Errorf("reading = %v in %s; want %v", sig.Value, unit, want)
+		}
+	}
+}
+
+// A setpoint arriving in someone else's unit is converted, and one that cannot
+// be reconciled is refused rather than written into the loop.
+func TestSetpointAdoptsTheConfiguredUnit(t *testing.T) {
+	tr := &Traits{setpointUnit: "<http://qudt.org/vocab/unit/DEG_C>"}
+
+	var f forms.SignalA_v1a
+	f.NewForm()
+	f.Value = 68
+	f.Unit = "<http://qudt.org/vocab/unit/DEG_F>"
+	if err := tr.setSetPoint(f); err != nil {
+		t.Fatalf("setSetPoint: %v", err)
+	}
+	if diff := tr.SetPt - 20.0; diff > 1e-9 || diff < -1e-9 {
+		t.Errorf("SetPt = %v; want 68 °F expressed as 20 °C", tr.SetPt)
+	}
+
+	var wrong forms.SignalA_v1a
+	wrong.NewForm()
+	wrong.Value = 50
+	wrong.Unit = "<http://qudt.org/vocab/unit/PERCENT>"
+	if err := tr.setSetPoint(wrong); err == nil {
+		t.Error("a percentage was accepted as a temperature setpoint")
+	}
+
+	var unnamed forms.SignalA_v1a
+	unnamed.NewForm()
+	unnamed.Value = 22
+	if err := tr.setSetPoint(unnamed); err == nil {
+		t.Error("a setpoint with no unit was accepted by a controller that names one")
+	}
 }

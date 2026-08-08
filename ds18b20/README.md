@@ -13,10 +13,11 @@ This is done by adding the sensor's serial number (e.g., 28-0516d0bfd5ff) to the
 ```
    {
          "name": "28-0516d0bfd5ff",
+         "mission": "measurement",
          "details": {
-            "Location": [
-               "Kitchen"
-            ]
+            "FunctionalLocation": ["Kitchen"],
+            "Unit":         ["<http://qudt.org/vocab/unit/DEG_C>"],
+            "QuantityKind": ["<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"]
          }
       }
 ```

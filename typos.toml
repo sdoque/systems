@@ -10,6 +10,12 @@
 #     CorrectWord = "CorrectWord"
 #
 # Matching is case-insensitive, so one entry covers every casing.
+#
+# A key containing anything outside A-Za-z0-9_- must be quoted — TOML rejects
+# an unquoted "Zubehör" with a parse error, and typos then fails the whole run
+# on the configuration rather than on the code:
+#
+#     "Zubehör" = "Zubehör"
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -44,3 +50,36 @@ OT = "OT"
 # changing our prose to disagree with `go doc encoding/json` would be more
 # confusing than the spellchecker's preference.
 unmarshaling = "unmarshaling"
+
+# Märklin CAN protocol terms, quoted from the German specification in
+# hobbyist/marklin.go. The command names are how the document identifies each
+# frame — "Lok Geschwindigkeit (0x04)" — so translating them in the comments
+# would leave a reader unable to find the section being cited.
+#
+# Every German word in those files is listed, not only the two the dictionary
+# happens to flag today, so a later release of typos does not reopen this.
+Lok = "Lok"
+Geschwindigkeit = "Geschwindigkeit"
+Konfiguration = "Konfiguration"
+Statusdaten = "Statusdaten"
+Nothalt = "Nothalt"
+Zyklus = "Zyklus"
+Gleisbox = "Gleisbox"
+"Zubehör" = "Zubehör"
+"Neuanmeldezähler" = "Neuanmeldezähler"
+Protokoll = "Protokoll"
+Kommunikationsprotokoll = "Kommunikationsprotokoll"
+"über" = "über"
+
+# Place names and proper nouns that appear in certificate subjects, functional
+# locations and prose.
+"Luleå" = "Luleå"
+"Malmö" = "Malmö"
+"Märklin" = "Märklin"
+"Kälkholmen" = "Kälkholmen"
+"Källkälchen" = "Källkälchen"
+
+# météorologue — French for meteorologist, and the system's name. Netatmo is a
+# French company, which is the joke.
+"météorologue" = "météorologue"
+

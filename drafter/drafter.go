@@ -20,7 +20,7 @@
 //
 //   - hello  – returns "Hello Integrated World!" (stateless, no goroutines needed)
 //   - metric – samples the Go runtime goroutine count every second via a
-//              channel-based goroutine; concurrent HTTP requests are serialised
+//              channel-based goroutine; concurrent HTTP requests are serialized
 //              through the channel so no mutex is required.
 //
 // Students should start here (main, serving) and in thing.go (Traits, logic).
@@ -54,7 +54,7 @@ func main() {
 		Description: "skeleton system for learning the mbaigo architecture",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20192, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30192, "http": 20192, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/Drafter",
 		DName: pkix.Name{
 			CommonName:         sys.Name,

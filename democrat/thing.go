@@ -16,7 +16,7 @@
 
 // thing.go contains the unit-asset logic for the democrat system:
 //
-//   - DemocratConfig  — JSON-serialisable configuration (GraphDB + FA³ST URLs)
+//   - DemocratConfig  — JSON-serializable configuration (GraphDB + FA³ST URLs)
 //   - Traits          — runtime state: last sync result + trigger channel
 //   - initTemplate    — default config for systemconfig.json generation
 //   - newResource     — creates the unit asset and starts the sync loop
@@ -116,7 +116,7 @@ func initTemplate() *components.UnitAsset {
 	}
 	return &components.UnitAsset{
 		Name:    "assembler",
-		Mission: "sync_aas",
+		Mission: components.MissionAggregation,
 		Details: map[string][]string{"Type": {"AAS Bridge"}},
 		ServicesMap: components.Services{
 			syncSvc.SubPath:   &syncSvc,
@@ -265,7 +265,7 @@ func (t *Traits) syncLoop(ctx context.Context) {
 //  2. Build the AASEnv (one AAS per Arrowhead system).
 //  3. Upsert every AAS shell and submodel into FA³ST.
 //
-// It returns a SyncResult summarising what happened.
+// It returns a SyncResult summarizing what happened.
 func (t *Traits) runSync() SyncResult {
 	start := time.Now()
 	result := SyncResult{Time: start}

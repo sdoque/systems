@@ -67,7 +67,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "YOLOv8",
-		Mission: "object_detection",
+		Mission: components.MissionAggregation,
 		Details: map[string][]string{"Model": {"Ultralytics_YOLOv8"}},
 		ServicesMap: components.Services{
 			recognizeSvc.SubPath: &recognizeSvc,

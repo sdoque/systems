@@ -29,8 +29,8 @@ func TestInitTemplate(t *testing.T) {
 		t.Errorf("expected Name %q, got %q", "PiCam", ua.Name)
 	}
 
-	if ua.Mission != "capture_photographe" {
-		t.Errorf("expected Mission %q, got %q", "capture_photographe", ua.Mission)
+	if ua.Mission != "measurement" {
+		t.Errorf("expected Mission %q, got %q", "measurement", ua.Mission)
 	}
 
 	if _, ok := ua.ServicesMap["photograph"]; !ok {

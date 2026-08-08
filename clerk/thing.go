@@ -83,7 +83,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "product",
-		Mission: "take_orders",
+		Mission: components.MissionTransaction,
 		Details: map[string][]string{"Collection": {"PenHolder"}},
 		ServicesMap: components.Services{
 			ordersService.SubPath: &ordersService,
@@ -209,19 +209,17 @@ func (t *Traits) submitOrder(w http.ResponseWriter, r *http.Request) {
 func (t *Traits) lookupFromTracker(w http.ResponseWriter, id, email string) {
 	cer := t.cervices["order"]
 
-	if len(cer.Nodes) == 0 {
-		if err := usecases.Search4Services(cer, t.owner); err != nil {
+	// This cervice is used both ways: placing an order is a POST through
+	// SetState, looking one up is this GET. A token names the action it permits,
+	// so the read has to be discovered for itself — the nodes left behind by an
+	// order carry a write token, which the tracker refuses on a GET.
+	baseURL, token := orderNodeFor(cer, "read")
+	if baseURL == "" {
+		if err := usecases.Search4ServicesAs(cer, t.owner, "read"); err != nil {
 			http.Error(w, "could not discover order service: "+err.Error(), http.StatusBadGateway)
 			return
 		}
-	}
-
-	var baseURL string
-	for _, nodes := range cer.Nodes {
-		if len(nodes) > 0 {
-			baseURL = nodes[0].URL
-			break
-		}
+		baseURL, token = orderNodeFor(cer, "read")
 	}
 	if baseURL == "" {
 		http.Error(w, "order service not found", http.StatusBadGateway)
@@ -229,8 +227,19 @@ func (t *Traits) lookupFromTracker(w http.ResponseWriter, id, email string) {
 	}
 
 	targetURL := baseURL + "?id=" + url.QueryEscape(id) + "&email=" + url.QueryEscape(email)
+	req, err := http.NewRequest(http.MethodGet, targetURL, nil)
+	if err != nil {
+		http.Error(w, "building the tracker request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// The query string is built here rather than by GetState, so the token has to
+	// be attached here too. Without it an authorized tracker refuses the lookup
+	// while the order that created the record went through.
+	if token != "" {
+		req.Header.Set(usecases.TokenHeader, token)
+	}
 	// Preserve framework-installed TLS so this works against an HTTPS-only tracker.
-	resp, err := (&http.Client{Timeout: 10 * time.Second, Transport: http.DefaultClient.Transport}).Get(targetURL)
+	resp, err := (&http.Client{Timeout: 10 * time.Second, Transport: http.DefaultClient.Transport}).Do(req)
 	if err != nil {
 		cer.Nodes = make(map[string][]components.NodeInfo)
 		http.Error(w, "tracker error: "+err.Error(), http.StatusBadGateway)
@@ -247,6 +256,19 @@ func (t *Traits) lookupFromTracker(w http.ResponseWriter, id, email string) {
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.WriteHeader(resp.StatusCode)
 	w.Write(body) //nolint:errcheck
+}
+
+// orderNodeFor returns the first node discovered for one action, and the token
+// minted for it. An empty URL means no node has been discovered for that action.
+func orderNodeFor(cer *components.Cervice, action string) (url, token string) {
+	for _, nodes := range cer.Nodes {
+		for _, ni := range nodes {
+			if tok, discovered := ni.TokenFor(action); discovered {
+				return ni.URL, tok
+			}
+		}
+	}
+	return "", ""
 }
 
 //-------------------------------------Embedded page

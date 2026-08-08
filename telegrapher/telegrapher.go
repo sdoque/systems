@@ -44,7 +44,7 @@ func main() {
 		Description: " subscribes and publishes to an MQTT broker",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20172, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30172, "http": 20172, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/telegrapher",
 		DName: pkix.Name{
 			CommonName:         sys.Name,

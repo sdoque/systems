@@ -53,6 +53,10 @@ type Traits struct {
 	serviceChannel chan ServiceTray `json:"-"`
 	outputChannel  chan float64     `json:"-"`
 	name           string           `json:"-"`
+	// The unit the channel's readings are reported in, taken from the configured
+	// asset so the payload and the record a consumer converts from cannot
+	// disagree.
+	unit string `json:"-"`
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -68,10 +72,22 @@ func initTemplate() *components.UnitAsset {
 		Description: "reads the input (GET) or changes the output (POST) of the channel",
 	}
 
+	// Each configured unit asset is one RevPi process-image channel, so the
+	// mission is declared per asset rather than derived: unlike a Modbus
+	// register's rights or an OPC UA node's access level, the process image name
+	// passed to piTest states nothing about direction, and the same address is
+	// used for both reading and writing here. A channel wired to an output
+	// declares "actuation".
 	return &components.UnitAsset{
 		Name:    "LevelSensor_1",
-		Mission: "measure_level",
-		Details: map[string][]string{"Unit": {"Percent"}, "FunctionalLocation": {"UpperTank"}, "Description": {"level"}},
+		Mission: components.MissionMeasurement,
+		Details: map[string][]string{
+			"Unit":         {"<http://qudt.org/vocab/unit/PERCENT>"},
+			"QuantityKind": {"<http://qudt.org/vocab/quantitykind/DimensionlessRatio>"},
+
+			"FunctionalLocation": {"UpperTank"},
+			"Description":        {"level"},
+		},
 		ServicesMap: components.Services{
 			access.SubPath: &access,
 		},
@@ -106,6 +122,10 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
 		Traits:      t,
 	}
+	if u := configuredAsset.Details["Unit"]; len(u) > 0 {
+		t.unit = u[0]
+	}
+
 	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
 		serving(t, w, r, servicePath)
 	}
@@ -128,7 +148,18 @@ func (t *Traits) access(w http.ResponseWriter, r *http.Request) {
 			SampledDatum: make(chan forms.SignalA_v1a),
 			Error:        make(chan error),
 		}
-		t.serviceChannel <- requestTray
+		// The handoff is bounded as well as the answer. The channel is
+		// unbuffered, so an unattended loop left this send blocked for the life
+		// of the process — a hung request rather than a failed one, and one
+		// leaked goroutine per caller.
+		select {
+		case t.serviceChannel <- requestTray:
+		case <-time.After(5 * time.Second):
+			log.Printf("%s: the sampling loop is not accepting requests\n", t.name)
+			http.Error(w, "Service unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
 		select {
 		case err := <-requestTray.Error:
 			log.Printf("Logic error in getting measurement: %v", err)
@@ -172,8 +203,13 @@ func (t *Traits) access(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		t.outputChannel <- outputForm.Value // Send the value to the output channel for processing
-		w.WriteHeader(http.StatusOK)        // Respond with 200 OK if the write is successful
+		select {
+		case t.outputChannel <- outputForm.Value:
+			w.WriteHeader(http.StatusOK)
+		case <-time.After(5 * time.Second):
+			log.Printf("%s: the sampling loop is not accepting output requests\n", t.name)
+			http.Error(w, "Service unavailable", http.StatusServiceUnavailable)
+		}
 
 	default:
 		http.Error(w, "Method not supported", http.StatusMethodNotAllowed)
@@ -196,7 +232,10 @@ func (t *Traits) sampleSignal(ctx context.Context) {
 		for {
 			select {
 			case <-ctx.Done(): // Stop when the context is canceled
-				os.Exit(0)
+				// Returning, not exiting. This goroutine belongs to one channel
+				// of one unit asset; calling os.Exit here took the whole system
+				// down with it, so every other asset lost its shutdown and the
+				// cleanup function newResource returns never ran.
 				return
 
 			case <-ticker.C: // sample the signal at regular intervals
@@ -221,6 +260,11 @@ func (t *Traits) sampleSignal(ctx context.Context) {
 
 	for {
 		select {
+		case <-ctx.Done():
+			// Without this the loop outlived the system: it kept answering
+			// requests after shutdown and never released, which is what the
+			// os.Exit in the reader goroutine was standing in for.
+			return
 		case sigValue := <-sigChan: // Update signal value and timestamp
 			t.Value = sigValue
 			t.tStamp = <-tStampChan
@@ -228,17 +272,19 @@ func (t *Traits) sampleSignal(ctx context.Context) {
 			var f forms.SignalA_v1a
 			f.NewForm()
 			f.Value = t.Value
-			f.Unit = "Percent"
+			f.Unit = t.unit
 			f.Timestamp = t.tStamp
 			order.SampledDatum <- f
 		case requestedOutput := <-t.outputChannel:
 			log.Printf("Received output request for %s: %.2f%%\n", t.name, requestedOutput)
 			rawValue := PercentToRaw(requestedOutput)
 			log.Printf("Converted output value to raw: %d\n", rawValue)
-			err := writeOutput(t.Address, rawValue)
-			if err != nil {
-				fmt.Printf("Error writing output: %v\n", err)
-				return
+			if err := writeOutput(t.Address, rawValue); err != nil {
+				// Reported, not fatal to the loop. Returning here stopped the
+				// sampling and the serving of every subsequent request because
+				// one write to the process image failed — a channel that is
+				// briefly unwritable is not a reason to stop reading it.
+				log.Printf("%s: writing the output failed: %v\n", t.name, err)
 			}
 		}
 	}

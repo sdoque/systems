@@ -21,7 +21,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -30,25 +32,32 @@ import (
 	"github.com/sdoque/mbaigo/usecases"
 )
 
-// Define your global variable
-var messageList map[string][]byte
-
-func init() {
-	// Initialize the map
-	messageList = make(map[string][]byte)
+// reading is one MQTT message and the moment it arrived.
+//
+// They are one observation and are swapped as one. Held as separate fields and
+// read separately, the HTTP handler could take the payload from message n and
+// the timestamp from message n+1, and serve a signal whose value and timestamp
+// never coexisted.
+type reading struct {
+	payload  []byte
+	received time.Time
 }
 
 // -------------------------------------Define the unit asset
 // Traits are Asset-specific configurable parameters and variables
 type Traits struct {
-	Broker   string              `json:"broker"`
-	mClient  mqtt.Client         `json:"-"`
-	Pattern  []string            `json:"pattern"`
-	Username string              `json:"username"`
-	Password string              `json:"password"`
-	Topic    string              `json:"-"`      // Topic is the MQTT topic to which the unit asset subscribes or publishes
-	Period   int                 `json:"period"` // Period is the time interval for periodic service consumption, e.g., 30 seconds
-	Message  []byte              `json:"-"`
+	Broker   string      `json:"broker"`
+	mClient  mqtt.Client `json:"-"`
+	Pattern  []string    `json:"pattern"`
+	Username string      `json:"username"`
+	Password string      `json:"password"`
+	Topic    string      `json:"-"`      // Topic is the MQTT topic to which the unit asset subscribes or publishes
+	Period   int         `json:"period"` // Period is the time interval for periodic service consumption, e.g., 30 seconds
+	// latest is the most recent message. Written by the Paho callback, which
+	// runs on the client's own goroutine, and read by the HTTP handler — so it
+	// is swapped atomically rather than assigned.
+	latest   atomic.Pointer[reading]
+	unit     string              `json:"-"` // the configured unit, empty for a topic served raw
 	owner    *components.System  `json:"-"`
 	cervices components.Cervices `json:"-"`
 }
@@ -57,17 +66,30 @@ type Traits struct {
 
 // initTemplate initializes a UnitAsset with default values.
 func initTemplate() *components.UnitAsset {
+	// The mission is declared per service, not on the unit asset: the telegrapher
+	// is a bridge to an MQTT broker rather than a thing, and a topic path
+	// discloses nothing about whether what sits behind it is observed or driven.
+	// Only whoever configures the topic knows, so only they can say.
 	access := components.Service{
-		Definition:  "temperature",
-		SubPath:     "access",
-		Details:     map[string][]string{"forms": {"payload"}},
+		Definition: "temperature",
+		SubPath:    "access",
+		Mission:    components.MissionMeasurement,
+		// Most MQTT topics in a plant carry an analog signal — a temperature or a
+		// pressure from an ESP32 — so that is what the template assumes. Declaring
+		// a Unit is what says so: with one, the topic is served as a SignalA_v1a
+		// and a consumer can convert it; without one it is passed through raw, as
+		// a topic carrying something else must be.
+		Details: map[string][]string{
+			"Forms":        {"SignalA_v1a"},
+			"Unit":         {"<http://qudt.org/vocab/unit/DEG_C>"},
+			"QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"},
+		},
 		RegPeriod:   30,
 		Description: "Read the current topic message (GET) or publish to it (PUT)",
 	}
 
 	return &components.UnitAsset{
 		Name:    "Kitchen/temperature",
-		Mission: "passon_message",
 		Details: map[string][]string{"mqtt": {"home"}},
 		ServicesMap: components.Services{
 			access.SubPath: &access,
@@ -76,7 +98,7 @@ func initTemplate() *components.UnitAsset {
 			Broker:   "tcp://localhost:1883",
 			Username: "user",
 			Password: "password",
-			Pattern:  []string{"Room"},
+			Pattern:  []string{"FunctionalLocation"},
 			Period:   -1,
 		},
 	}
@@ -112,16 +134,18 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		log.Fatal("Error: UnitAsset must have at least one pattern defined in Traits")
 	}
 
-	// Fill Details from pattern and topic
-	metaDetails := strings.Split(asset, "/")
-	topicDetrails := make(map[string][]string)
-	for i := 0; i < len(t.Pattern) && i < len(metaDetails); i++ {
-		topicDetrails[t.Pattern[i]] = append(configuredAsset.Details[t.Pattern[i]], metaDetails[i])
-	}
 	if configuredAsset.Details == nil {
 		configuredAsset.Details = make(map[string][]string)
 	}
-	configuredAsset.Details = components.MergeDetails(configuredAsset.Details, topicDetrails)
+	for _, serv := range configuredAsset.Services {
+		if values := serv.Details["Unit"]; len(values) > 0 {
+			t.unit = values[0]
+			break
+		}
+	}
+
+	topicDetails := detailsFromTopic(t.Pattern, asset)
+	configuredAsset.Details = components.MergeDetails(configuredAsset.Details, topicDetails)
 
 	ua := &components.UnitAsset{
 		Name:    assetName,
@@ -132,14 +156,22 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 
 	// Make the topic an Arrowhead service (since we are subscribing to it)
 	if t.Period < 0 {
-		access := components.Service{
-			Definition:  service,
-			SubPath:     "access",
-			Details:     map[string][]string{"forms": {"mqttPayload"}},
-			RegPeriod:   30,
-			Description: "Read the current topic message (GET) or publish to it (PUT)",
+		// Use what was configured. Rebuilding the service here would discard the
+		// unit and quantity kind the topic was commissioned with, leaving the
+		// record undiscoverable by a consumer that asks for a temperature — and
+		// the payload would still carry a unit the registration never mentioned.
+		if len(configuredAsset.Services) > 0 {
+			ua.ServicesMap = usecases.MakeServiceMap(configuredAsset.Services)
+		} else {
+			access := components.Service{
+				Definition:  service,
+				SubPath:     "access",
+				Details:     map[string][]string{"Forms": {"mqttPayload"}},
+				RegPeriod:   30,
+				Description: "Read the current topic message (GET) or publish to it (PUT)",
+			}
+			ua.ServicesMap = components.Services{access.SubPath: &access}
 		}
-		ua.ServicesMap = components.Services{access.SubPath: &access}
 	}
 
 	// Make the topic a consumed service to be published (since we are consuming it)
@@ -151,7 +183,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			Nodes:      make(map[string][]components.NodeInfo),
 			Mode:       "get",
 		}
-		newCervice.Details = topicDetrails
+		newCervice.Details = topicDetails
 		cervMap := components.Cervices{newCervice.Definition: newCervice}
 		t.cervices = cervMap
 		ua.CervicesMap = cervMap
@@ -196,10 +228,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		messageHandler := func(client mqtt.Client, msg mqtt.Message) {
 			fmt.Printf("Received message: %s from topic: %s\n", msg.Payload(), msg.Topic())
 
-			if messageList == nil {
-				messageList = make(map[string][]byte)
-			}
-			t.Message = msg.Payload()
+			t.latest.Store(&reading{payload: msg.Payload(), received: time.Now()})
 		}
 
 		if token := t.mClient.Subscribe(topic, 0, messageHandler); token.Wait() && token.Error() != nil {
@@ -255,14 +284,33 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 func (t *Traits) access(w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch r.Method {
 	case "GET":
-		msg := t.Message
-		if len(msg) > 0 {
+		// One load, so the payload and its timestamp are from the same message.
+		last := t.latest.Load()
+		if last == nil || len(last.payload) == 0 {
+			http.Error(w, "The subscribed topic is not being published", http.StatusBadRequest)
+			return
+		}
+		msg := last.payload
+		if t.unit == "" {
+			// No unit declared: the topic carries something this system does not
+			// interpret, so it is passed through as it arrived.
 			w.WriteHeader(http.StatusOK)
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(msg)
-		} else {
-			http.Error(w, "The subscribed topic is not being published", http.StatusBadRequest)
+			return
 		}
+		value, err := analogValue(msg)
+		if err != nil {
+			log.Printf("%s: %v", t.Topic, err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var f forms.SignalA_v1a
+		f.NewForm()
+		f.Value = value
+		f.Unit = t.unit
+		f.Timestamp = last.received
+		usecases.HTTPProcessGetRequest(w, r, &f)
 	case "PUT":
 		log.Printf("MQTT client is connected: %v", t.mClient.IsConnected())
 
@@ -343,4 +391,76 @@ func (t *Traits) publishRaw(data []byte) error {
 	}()
 
 	return nil
+}
+
+// detailsFromTopic maps the segments of a topic onto the detail keys the pattern
+// names, so that "Bathroom/temperature" under a pattern of FunctionalLocation
+// registers the room rather than leaving it in the asset's name.
+//
+// The key matters more than it looks. The authorizer's pairing rule and the
+// knowledge graph both look up the literal string FunctionalLocation, so a topic
+// filed under any other key is an asset with no location at all — and an asset
+// with no location is universally reachable, which is the permissive answer
+// arrived at silently.
+func detailsFromTopic(pattern []string, asset string) map[string][]string {
+	segments := strings.Split(asset, "/")
+	details := make(map[string][]string)
+	for i := 0; i < len(pattern) && i < len(segments); i++ {
+		if pattern[i] == "" || segments[i] == "" {
+			continue
+		}
+		details[pattern[i]] = append(details[pattern[i]], segments[i])
+	}
+	return details
+}
+
+// analogValue reads a number out of an MQTT payload.
+//
+// Devices publish a reading in whichever of two shapes their firmware author
+// preferred: a bare number, or a small JSON object with the reading under some
+// key. Both are accepted, because a plant will contain both and neither is
+// wrong.
+//
+// A payload that yields no number is an error rather than a zero. Zero is a
+// plausible temperature, so guessing it would put a fabricated reading into a
+// control loop.
+func analogValue(payload []byte) (float64, error) {
+	text := strings.TrimSpace(string(payload))
+
+	if v, err := strconv.ParseFloat(text, 64); err == nil {
+		return v, nil
+	}
+
+	var object map[string]any
+	if err := json.Unmarshal(payload, &object); err == nil {
+		// Only fields that plausibly carry the reading. Taking any number would
+		// serve a humidity as a temperature: {"humidity":45,"temperature":21.5}
+		// has no order that makes 45 the right answer, and the service is
+		// registered as a temperature in degrees Celsius.
+		for _, key := range []string{"value", "temperature", "temp", "pressure", "level"} {
+			if v, ok := numberFrom(object[key]); ok {
+				return v, nil
+			}
+		}
+		return 0, fmt.Errorf("payload %q carries no reading under a name this system recognizes", truncate(text))
+	}
+	return 0, fmt.Errorf("no number in the payload %q", truncate(text))
+}
+
+func numberFrom(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(n), 64)
+		return f, err == nil
+	}
+	return 0, false
+}
+
+func truncate(s string) string {
+	if len(s) > 60 {
+		return s[:60] + "..."
+	}
+	return s
 }

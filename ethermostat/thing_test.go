@@ -28,25 +28,27 @@ import (
 
 // TestGetSetPoint verifies that getSetPoint returns a form with the correct Value and Unit.
 func TestGetSetPoint(t *testing.T) {
-	tr := &Traits{SetPt: 21.5}
+	tr := &Traits{SetPt: 21.5, setpointUnit: "<http://qudt.org/vocab/unit/DEG_C>"}
 	f := tr.getSetPoint()
 	if f.Value != 21.5 {
 		t.Errorf("expected Value 21.5, got %f", f.Value)
 	}
-	if f.Unit != "Celsius" {
-		t.Errorf("expected Unit \"Celsius\", got %q", f.Unit)
+	if f.Unit != "<http://qudt.org/vocab/unit/DEG_C>" {
+		t.Errorf("expected Unit %q, got %q", "<http://qudt.org/vocab/unit/DEG_C>", f.Unit)
 	}
 }
 
 // TestSetSetPoint verifies that setSetPoint updates SetPt.
 func TestSetSetPoint(t *testing.T) {
-	tr := &Traits{SetPt: 20.0, name: "KitchenHeater"}
+	tr := &Traits{SetPt: 20.0, name: "KitchenHeater", setpointUnit: "<http://qudt.org/vocab/unit/DEG_C>"}
 	var f forms.SignalA_v1a
 	f.NewForm()
 	f.Value = 22.0
-	f.Unit = "Celsius"
+	f.Unit = "<http://qudt.org/vocab/unit/DEG_C>"
 	f.Timestamp = time.Now()
-	tr.setSetPoint(f)
+	if err := tr.setSetPoint(f); err != nil {
+		t.Fatalf("setSetPoint: %v", err)
+	}
 	if tr.SetPt != 22.0 {
 		t.Errorf("expected SetPt 22.0, got %f", tr.SetPt)
 	}
@@ -54,25 +56,25 @@ func TestSetSetPoint(t *testing.T) {
 
 // TestGetError verifies that getError returns a form with the correct deviation.
 func TestGetError(t *testing.T) {
-	tr := &Traits{deviation: -2.0}
+	tr := &Traits{deviation: -2.0, errorUnit: "<http://qudt.org/vocab/unit/DEG_C>"}
 	f := tr.getError()
 	if f.Value != -2.0 {
 		t.Errorf("expected Value -2.0, got %f", f.Value)
 	}
-	if f.Unit != "Celsius" {
-		t.Errorf("expected Unit \"Celsius\", got %q", f.Unit)
+	if f.Unit != "<http://qudt.org/vocab/unit/DEG_C>" {
+		t.Errorf("expected Unit %q, got %q", "<http://qudt.org/vocab/unit/DEG_C>", f.Unit)
 	}
 }
 
 // TestGetJitter verifies that getJitter returns the jitter in milliseconds.
 func TestGetJitter(t *testing.T) {
-	tr := &Traits{jitter: 37 * time.Millisecond}
+	tr := &Traits{jitter: 37 * time.Millisecond, jitterUnit: "<http://qudt.org/vocab/unit/MilliSEC>"}
 	f := tr.getJitter()
 	if f.Value != 37.0 {
 		t.Errorf("expected Value 37.0, got %f", f.Value)
 	}
-	if f.Unit != "millisecond" {
-		t.Errorf("expected Unit \"millisecond\", got %q", f.Unit)
+	if f.Unit != "<http://qudt.org/vocab/unit/MilliSEC>" {
+		t.Errorf("expected Unit %q, got %q", "<http://qudt.org/vocab/unit/MilliSEC>", f.Unit)
 	}
 }
 
@@ -250,10 +252,10 @@ func TestSetpt_InvalidMethod(t *testing.T) {
 	}
 }
 
-// TestDiff_GET verifies the thermalerror handler returns 200 for GET.
+// TestDiff_GET verifies the deviation handler returns 200 for GET.
 func TestDiff_GET(t *testing.T) {
 	tr := &Traits{deviation: 1.0}
-	req := httptest.NewRequest(http.MethodGet, "/thermalerror", nil)
+	req := httptest.NewRequest(http.MethodGet, "/deviation", nil)
 	w := httptest.NewRecorder()
 	tr.diff(w, req)
 	if w.Result().StatusCode != http.StatusOK {
@@ -261,10 +263,10 @@ func TestDiff_GET(t *testing.T) {
 	}
 }
 
-// TestDiff_InvalidMethod verifies the thermalerror handler returns 405 for POST.
+// TestDiff_InvalidMethod verifies the deviation handler returns 405 for POST.
 func TestDiff_InvalidMethod(t *testing.T) {
 	tr := &Traits{}
-	req := httptest.NewRequest(http.MethodPost, "/thermalerror", nil)
+	req := httptest.NewRequest(http.MethodPost, "/deviation", nil)
 	w := httptest.NewRecorder()
 	tr.diff(w, req)
 	if w.Result().StatusCode != http.StatusMethodNotAllowed {
@@ -302,5 +304,93 @@ func TestServing_InvalidPath(t *testing.T) {
 	serving(tr, w, req, "unknown")
 	if w.Result().StatusCode != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Result().StatusCode)
+	}
+}
+
+// The mission the authorizer evaluates is the service's, not the asset's. A
+// controller is one asset whose services differ in kind: writing the setpoint
+// reconfigures the loop, while the error and jitter readings only observe it.
+// Collapsing them onto the asset's "control" would mean any policy letting a
+// consumer move a setpoint also let it write everything else here.
+func TestInitTemplateServiceMissions(t *testing.T) {
+	ua := initTemplate()
+
+	if ua.Mission != "control" {
+		t.Errorf("asset mission = %q; want %q", ua.Mission, "control")
+	}
+
+	want := map[string]string{
+		"setpoint":  "state",
+		"deviation": "measurement",
+		"jitter":    "measurement",
+	}
+
+	for subPath, mission := range want {
+		serv, ok := ua.ServicesMap[subPath]
+		if !ok {
+			t.Errorf("service %q missing from the template", subPath)
+			continue
+		}
+		if got := components.EffectiveMission(ua, serv); got != mission {
+			t.Errorf("service %q effective mission = %q; want %q", subPath, got, mission)
+		}
+	}
+}
+
+// TestSetpointAdoptsTheConfiguredUnit is the defect this test was written for:
+// setSetPoint wrote f.Value into the control loop without ever reading f.Unit,
+// so a Fahrenheit target became a Celsius one. This controller switches real
+// heaters, and 68 taken for °C is a room held at 68 °C.
+func TestSetpointAdoptsTheConfiguredUnit(t *testing.T) {
+	degC := "<http://qudt.org/vocab/unit/DEG_C>"
+	tr := &Traits{SetPt: 20, name: "KitchenHeater", setpointUnit: degC}
+
+	var f forms.SignalA_v1a
+	f.NewForm()
+	f.Value = 68
+	f.Unit = "<http://qudt.org/vocab/unit/DEG_F>"
+	if err := tr.setSetPoint(f); err != nil {
+		t.Fatalf("setSetPoint: %v", err)
+	}
+	if tr.SetPt < 19.99 || tr.SetPt > 20.01 {
+		t.Errorf("68 °F is 20 °C, got %v", tr.SetPt)
+	}
+
+	// A percentage is not a temperature.
+	var wrong forms.SignalA_v1a
+	wrong.NewForm()
+	wrong.Value = 50
+	wrong.Unit = "<http://qudt.org/vocab/unit/PERCENT>"
+	if err := tr.setSetPoint(wrong); err == nil {
+		t.Errorf("a percentage was accepted as a temperature: SetPt = %v", tr.SetPt)
+	}
+
+	// A bare number says nothing, and this loop switches a heater.
+	var silent forms.SignalA_v1a
+	silent.NewForm()
+	silent.Value = 22
+	if err := tr.setSetPoint(silent); err == nil {
+		t.Errorf("a setpoint with no unit was accepted: SetPt = %v", tr.SetPt)
+	}
+}
+
+// TestSetpointHandlerRefusesAWrongUnit checks the refusal reaches the caller.
+// The handler used to discard the error and answer 200, so a sender had no way
+// to learn its setpoint had not been taken.
+func TestSetpointHandlerRefusesAWrongUnit(t *testing.T) {
+	tr := &Traits{SetPt: 20, name: "KitchenHeater", setpointUnit: "<http://qudt.org/vocab/unit/DEG_C>"}
+
+	body := `{"value":50,"unit":"<http://qudt.org/vocab/unit/PERCENT>","version":"SignalA_v1.0"}`
+	req := httptest.NewRequest(http.MethodPut, "/ethermostat/KitchenHeater/setpoint", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	tr.setpt(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for a setpoint in the wrong unit, got %d", rec.Code)
+	}
+	if tr.SetPt != 20 {
+		t.Errorf("the refused setpoint was written anyway: SetPt = %v", tr.SetPt)
 	}
 }

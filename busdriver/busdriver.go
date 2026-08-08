@@ -51,7 +51,7 @@ func main() {
 		Description: "OBD-II CAN bus gateway — exposes vehicle signals as Arrowhead services",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20193, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30193, "http": 20193, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/busdriver",
 		DName: pkix.Name{
 			CommonName:         sys.Name,

@@ -77,13 +77,13 @@ type STray struct {
 // Traits holds all parameters and internal state for one unit asset instance.
 //
 // JSON-tagged fields are written to / read from systemconfig.json.
-// Fields tagged `json:"-"` are runtime-only and are never serialised.
+// Fields tagged `json:"-"` are runtime-only and are never serialized.
 type Traits struct {
 	// SampleRate is the interval (in seconds) between sensor reads.
 	// Adjust this in systemconfig.json to change the sampling frequency.
 	SampleRate int `json:"sampleRate"`
 
-	// ── runtime state (not serialised) ───────────────────────────────────────
+	// ── runtime state (not serialized) ───────────────────────────────────────
 	value    float64    `json:"-"` // most-recently sampled value
 	tStamp   time.Time  `json:"-"` // timestamp of that sample
 	trayChan chan STray `json:"-"` // channel connecting handlers ↔ sampleLoop
@@ -118,7 +118,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "DraftAsset",
-		Mission: "demonstrate_mbaigo_patterns",
+		Mission: components.MissionMeasurement,
 		Details: map[string][]string{"FunctionalLocation": {"Lab"}},
 		ServicesMap: components.Services{
 			helloSvc.SubPath:  &helloSvc,

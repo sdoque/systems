@@ -203,11 +203,27 @@ func sampleMetric() float64 {
 }
 ```
 
-**2. Change the unit string** in `sampleLoop`:
+**2. Declare the unit in the configuration**, not in the code. Put a QUDT unit
+and quantity kind in the service's `details`:
+
+```json
+"details": {
+    "Unit":         ["<http://qudt.org/vocab/unit/DEG_C>"],
+    "QuantityKind": ["<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"]
+}
+```
+
+and stamp the payload from it in `sampleLoop`:
 
 ```go
-f.Unit = "Celsius"   // was "goroutines"
+f.Unit = t.unit   // read from the configured service at construction
 ```
+
+Hardcoding the unit gives a system two sources of truth: a service record
+saying one thing and a reading saying another, with nothing to detect the
+disagreement. Declaring the quantity kind is what lets a consumer asking for a
+temperature be paired with this system even when the units differ — `GetState`
+converts the reading into whatever the consumer asked for.
 
 **3. Update `SampleRate`** in `systemconfig.json` if a different interval is needed.
 

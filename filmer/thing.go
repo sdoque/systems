@@ -47,7 +47,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:    "PiCam",
-		Mission: "capture_video",
+		Mission: components.MissionMeasurement,
 		Details: map[string][]string{"Model": {"PiCam v3 NoIR"}},
 		ServicesMap: components.Services{
 			stream.SubPath: &stream,

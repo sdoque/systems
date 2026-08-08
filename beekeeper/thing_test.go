@@ -312,3 +312,48 @@ func TestSensorServices(t *testing.T) {
 		}
 	}
 }
+
+// Every service any supported device type can expose must have a mission.
+// A gap here is a programming error, not a configuration one: the device would
+// register a service the authorizer cannot classify.
+func TestEveryDeviceServiceHasAMission(t *testing.T) {
+	for typ, svcs := range lightServices {
+		for _, svc := range svcs {
+			if _, err := missionForService(svc); err != nil {
+				t.Errorf("light type %q: %v", typ, err)
+			}
+		}
+	}
+	for typ, svcs := range sensorServices {
+		for _, svc := range svcs {
+			if _, err := missionForService(svc); err != nil {
+				t.Errorf("sensor type %q: %v", typ, err)
+			}
+		}
+	}
+	if _, err := missionForService("no_such_service"); err == nil {
+		t.Error("missionForService accepted an unknown service; it must fail loudly")
+	}
+}
+
+// A smart plug is one physical device that both switches and meters. Its on_off
+// service must be actuation while its power and energy services stay
+// measurement, or metering becomes readable only by whoever may switch the plug.
+func TestSmartPlugSplitsActuationFromMetering(t *testing.T) {
+	want := map[string]string{
+		"on_off":     "actuation",
+		"power":      "measurement",
+		"energy":     "measurement",
+		"brightness": "actuation",
+	}
+	for svc, mission := range want {
+		got, err := missionForService(svc)
+		if err != nil {
+			t.Errorf("missionForService(%q): %v", svc, err)
+			continue
+		}
+		if got != mission {
+			t.Errorf("missionForService(%q) = %q; want %q", svc, got, mission)
+		}
+	}
+}

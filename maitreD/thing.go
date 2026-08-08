@@ -20,8 +20,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -55,6 +57,34 @@ var resolveExecutable = func(pid int) (string, error) {
 	return os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 }
 
+// describeResolutionFailure turns a failure to read /proc/<pid>/exe into
+// something an operator can act on.
+//
+// The interesting case is permission. Linux lets a process read another's exe
+// link only if it could trace it, so a maitreD running as one user cannot see a
+// system started with sudo — which is how a system that needs GPIO is usually
+// started. Every other system on the host attests and that one never does.
+//
+// The remedy given here is to drop the privilege rather than to raise maitreD's.
+// A maitreD running as root to inspect everything is a larger thing to trust
+// than the systems it is attesting, and requiring it would put root in the path
+// of every deployment.
+// It returns the explanation and whether maitreD is certain enough to refuse
+// rather than report a fault of its own.
+func describeResolutionFailure(pid int, err error) (reason string, refused bool) {
+	switch {
+	case errors.Is(err, fs.ErrPermission):
+		return fmt.Sprintf("cannot read /proc/%d/exe: the process belongs to another user, "+
+			"so this maitreD cannot see what it is running. Start that system as the same user as maitreD — "+
+			"a system needing GPIO usually wants group membership (gpio, dialout) rather than sudo — "+
+			"or run maitreD as the user that owns it", pid), true
+	case errors.Is(err, fs.ErrNotExist):
+		return fmt.Sprintf("no process %d: it exited before it could be attested", pid), true
+	default:
+		return fmt.Sprintf("cannot read /proc/%d/exe: %v", pid, err), false
+	}
+}
+
 //-------------------------------------Instantiate a unit asset template
 
 // initTemplate initializes a UnitAsset with default values.
@@ -69,6 +99,7 @@ func initTemplate() *components.UnitAsset {
 
 	return &components.UnitAsset{
 		Name:        "maitreD",
+		Mission:     components.MissionCore,
 		Details:     map[string][]string{"Role": {"host-attestation"}},
 		ServicesMap: map[string]*components.Service{attest.SubPath: &attest},
 		Traits:      &Traits{},
@@ -137,7 +168,21 @@ func (t *Traits) attest(w http.ResponseWriter, r *http.Request) {
 
 	exePath, err := resolveExecutable(req.PID)
 	if err != nil {
-		http.Error(w, "Cannot resolve executable for PID", http.StatusInternalServerError)
+		// Say which failure it is. The two look identical from outside and want
+		// opposite responses: a process that has exited is nothing to worry
+		// about, while one this maitreD cannot see is a system that will never
+		// be certified, retrying once a minute for as long as it runs.
+		reason, refused := describeResolutionFailure(req.PID, err)
+		log.Printf("attestation impossible: pid=%d: %s\n", req.PID, reason)
+		// A refusal where maitreD is certain, an error where it is not. It
+		// cannot see a process belonging to another user and never will, so
+		// retrying is pointless and 403 says so; an unexpected failure might be
+		// transient and 500 leaves that open.
+		status := http.StatusInternalServerError
+		if refused {
+			status = http.StatusForbidden
+		}
+		http.Error(w, reason, status)
 		return
 	}
 

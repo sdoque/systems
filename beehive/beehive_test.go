@@ -15,8 +15,8 @@ func TestInitTemplate(t *testing.T) {
 	if ua.Name != "BeehiveDashboard" {
 		t.Errorf("Name: got %q, want %q", ua.Name, "BeehiveDashboard")
 	}
-	if ua.Mission != "web_dashboard" {
-		t.Errorf("Mission: got %q, want %q", ua.Mission, "web_dashboard")
+	if ua.Mission != "aggregation" {
+		t.Errorf("Mission: got %q, want %q", ua.Mission, "aggregation")
 	}
 	tr, ok := ua.Traits.(*Traits)
 	if !ok {
@@ -89,7 +89,7 @@ func TestServing_Dashboard_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-// TestServing_UnknownService verifies 404 for an unrecognised service subpath.
+// TestServing_UnknownService verifies 404 for an unrecognized service subpath.
 func TestServing_UnknownService(t *testing.T) {
 	tr := &Traits{}
 	w := httptest.NewRecorder()

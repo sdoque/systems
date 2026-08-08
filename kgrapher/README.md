@@ -97,6 +97,7 @@ isn't an mbaigo system.
     "unit_assets": [
         {
             "name": "assembler",
+            "mission": "aggregation",
             "details": { "Type": ["Interactive"] },
             "services": [
                 {
@@ -122,7 +123,7 @@ isn't an mbaigo system.
             ]
         }
     ],
-    "protocolsNports": { "coap": 0, "http": 20105, "https": 0 },
+    "protocolsNports": { "coap": 0, "http": 20105, "https": 30105 },
     "coreSystems": [ /* serviceregistrar, orchestrator, ca, maitreD */ ]
 }
 ```

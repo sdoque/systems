@@ -96,7 +96,7 @@ type Traits struct {
 func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:        "VantagePro2",
-		Mission:     "provide_weather_data",
+		Mission:     components.MissionMeasurement,
 		Details:     map[string][]string{},
 		ServicesMap: components.Services{},
 		Traits: &StationConfig{
@@ -286,7 +286,7 @@ func drainUntilQuiet(port serial.Port, quietTime, maxTotal time.Duration) {
 
 // readACK reads a single byte expecting the Davis <ACK> (0x06), tolerating
 // a small number of leading line-ending bytes (\n, \r) left over from a
-// wake-up or ESC acknowledgement. Any other non-ACK byte is a genuine
+// wake-up or ESC acknowledgment. Any other non-ACK byte is a genuine
 // protocol error.
 func readACK(port serial.Port) error {
 	b := make([]byte, 1)

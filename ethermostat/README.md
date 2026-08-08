@@ -25,7 +25,7 @@ One unit asset (and one feedback loop goroutine) is created per matched heater p
 | Service        | Sub-path       | Methods   | Description                                      |
 |----------------|----------------|-----------|--------------------------------------------------|
 | `setpoint`     | `setpoint`     | GET, PUT  | Read or update the thermal setpoint (°C)         |
-| `thermalerror` | `thermalerror` | GET       | Current difference between setpoint and temperature |
+| `deviation` | `deviation` | GET       | Current difference between setpoint and temperature |
 | `jitter`       | `jitter`       | GET       | Control loop execution jitter (ms)               |
 
 ## Heater and temperature matching
@@ -65,19 +65,19 @@ eThermostat registers its `setpoint` services with the Arrowhead service mesh. [
   "unit_assets": [
     {
       "name": "KitchenHeater",
-      "mission": "electric_heating",
+      "mission": "control",
       "details": { "FunctionalLocation": ["Kitchen"] },
       "traits": [
         { "setPoint": 20.0, "samplingPeriod": 10, "kp": 5.0 }
       ],
       "services": [
         { "definition": "setpoint",     "subpath": "setpoint",     "registrationPeriod": 120 },
-        { "definition": "thermalerror", "subpath": "thermalerror", "registrationPeriod": 120 },
+        { "definition": "deviation", "subpath": "deviation", "registrationPeriod": 120 },
         { "definition": "jitter",       "subpath": "jitter",       "registrationPeriod": 120 }
       ]
     }
   ],
-  "protocolsNports": { "coap": 0, "http": 20196, "https": 0 },
+  "protocolsNports": { "coap": 0, "http": 20196, "https": 30196 },
   "coreSystems": [
     { "coreSystem": "serviceregistrar", "url": "http://127.0.0.1:20102/serviceregistrar/registry" },
     { "coreSystem": "orchestrator",     "url": "http://127.0.0.1:20103/orchestrator/orchestration" },
@@ -100,12 +100,24 @@ curl -s http://localhost:20196/ethermostat/KitchenHeater/setpoint
 ```bash
 curl -s -X PUT http://localhost:20196/ethermostat/KitchenHeater/setpoint \
   -H "Content-Type: application/json" \
-  -d '{"value": 22.0, "unit": "Celsius", "version": "SignalA_v1a"}'
+  -d '{"value": 22.0, "unit": "<http://qudt.org/vocab/unit/DEG_C>", "version": "SignalA_v1a"}'
 ```
+
+The unit is read, not assumed. Send the same target in °F and it is converted:
+
+```bash
+curl -s -X PUT http://localhost:20196/ethermostat/KitchenHeater/setpoint \
+  -H "Content-Type: application/json" \
+  -d '{"value": 71.6, "unit": "<http://qudt.org/vocab/unit/DEG_F>", "version": "SignalA_v1a"}'
+```
+
+A unit that is not a temperature — or no unit at all — is refused with 400 rather
+than written into the loop. This controller switches a real heater, and a number
+taken for the wrong unit looks plausible for a long time.
 
 **Read the current thermal error:**
 ```bash
-curl -s http://localhost:20196/ethermostat/KitchenHeater/thermalerror
+curl -s http://localhost:20196/ethermostat/KitchenHeater/deviation
 ```
 
 **Read the control loop jitter:**

@@ -16,7 +16,7 @@
 
 // thing.go contains the unit-asset logic for the busdriver system:
 //
-//   - BusConfig / SignalConf  — JSON-serialisable configuration types
+//   - BusConfig / SignalConf  — JSON-serializable configuration types
 //   - Traits                  — per-signal runtime state (one instance per PID)
 //   - initTemplate            — default config used to generate systemconfig.json
 //   - newResource             — creates all unit assets from a config entry,
@@ -51,7 +51,7 @@ import (
 	"github.com/sdoque/mbaigo/usecases"
 )
 
-// ── Configuration types (JSON-serialisable) ───────────────────────────────────
+// ── Configuration types (JSON-serializable) ───────────────────────────────────
 
 // BusConfig is the traits block for one CAN bus entry in systemconfig.json.
 // A single entry describes the interface and all signals to expose.
@@ -111,7 +111,7 @@ func initTemplate() *components.UnitAsset {
 	}
 	return &components.UnitAsset{
 		Name:    "Vehicle",
-		Mission: "monitor_vehicle",
+		Mission: components.MissionMeasurement,
 		Details: map[string][]string{"FunctionalLocation": {"Car"}},
 		ServicesMap: components.Services{
 			access.SubPath: &access,

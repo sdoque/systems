@@ -310,7 +310,7 @@ func TestServing(t *testing.T) {
 		}
 		go tr.emulateAsset(ctx, map[string][]string{"Unit": {"kPa"}})
 
-		// give the goroutine a moment to initialise
+		// give the goroutine a moment to initialize
 		time.Sleep(20 * time.Millisecond)
 
 		req := httptest.NewRequest(http.MethodGet, "/emulator/testSignal/access", nil)

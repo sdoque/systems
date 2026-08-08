@@ -95,7 +95,7 @@ Clerk stores the Peppol ID in the order record it forwards to Tracker. Downstrea
   "unit_assets": [
     {
       "name": "product",
-      "mission": "take_orders",
+      "mission": "transaction",
       "details": { "Collection": ["PenHolder"] },
       "services": [
         {
@@ -107,7 +107,7 @@ Clerk stores the Peppol ID in the order record it forwards to Tracker. Downstrea
       ]
     }
   ],
-  "protocolsNports": { "coap": 0, "http": 20190, "https": 0 },
+  "protocolsNports": { "coap": 0, "http": 20190, "https": 30190 },
   "coreSystems": [
     { "coreSystem": "serviceregistrar", "url": "http://127.0.0.1:20102/serviceregistrar/registry" },
     { "coreSystem": "orchestrator",     "url": "http://127.0.0.1:20103/orchestrator/orchestration" },

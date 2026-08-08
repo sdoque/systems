@@ -44,7 +44,7 @@ func main() {
 		Description: "web dashboard with on/off toggle switches for all ZigBee devices in the local cloud",
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 0, "http": 20186, "coap": 0},
+		ProtoPort:   map[string]int{"https": 30186, "http": 20186, "coap": 0},
 		InfoLink:    "https://github.com/sdoque/systems/tree/main/beehive",
 		DName: pkix.Name{
 			CommonName:         sys.Name,

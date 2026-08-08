@@ -31,3 +31,47 @@ serviceRegistry.db
 *.pdf
 *.xlsx
 
+# A `go build` run inside a system directory writes a binary named after that
+# directory: no suffix, so none of the patterns above catch it. Thirty-eight of
+# them once reached a commit that way — 393 MB — because the build had been run
+# for verification and `git add -A` does not ask what a file is.
+#
+# Listed from the Makefile's SYSTEMS, so the two cannot drift apart.
+/authorizer/authorizer
+/beehive/beehive
+/beekeeper/beekeeper
+/busdriver/busdriver
+/ca/ca
+/clerk/clerk
+/collector/collector
+/democrat/democrat
+/drafter/drafter
+/ds18b20/ds18b20
+/ds18b20F/ds18b20F
+/emulator/emulator
+/esr/esr
+/ethermostat/ethermostat
+/filmer/filmer
+/flattener/flattener
+/hobbyist/hobbyist
+/kgrapher/kgrapher
+/leveler/leveler
+/maitreD/maitreD
+/messenger/messenger
+/meteorologue/meteorologue
+/modboss/modboss
+/modeler/modeler
+/nurse/nurse
+/orchestrator/orchestrator
+/parallax/parallax
+/photographer/photographer
+/recognizer/recognizer
+/revolutionary/revolutionary
+/sailor/sailor
+/sapper/sapper
+/telegrapher/telegrapher
+/thermostat/thermostat
+/tracker/tracker
+/uaclient/uaclient
+/weatherman/weatherman
+/telegrapher/mqttGen/mqttGen

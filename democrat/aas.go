@@ -41,7 +41,7 @@ import (
 	"strings"
 )
 
-// ── AAS data types (AAS Part 2 v3 JSON serialisation) ─────────────────────────
+// ── AAS data types (AAS Part 2 v3 JSON serialization) ─────────────────────────
 
 type AASEnv struct {
 	AssetAdministrationShells []AAS         `json:"assetAdministrationShells"`
@@ -322,7 +322,7 @@ WHERE {
 
 // ── AAS model generation ──────────────────────────────────────────────────────
 
-// buildAASEnv converts a SystemInfo map into an AASEnv that can be serialised
+// buildAASEnv converts a SystemInfo map into an AASEnv that can be serialized
 // to JSON and uploaded to FA³ST.  Each Arrowhead system becomes one AAS with
 // up to three submodels: Identity, Host (when host data is available), and
 // Services.

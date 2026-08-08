@@ -30,8 +30,36 @@ sequenceDiagram
     end
 
     C->>T: GET /telegrapher/Kitchen_temperature/access
-    T-->>C: 200 OK (cached payload)
+    T-->>C: 200 OK (SignalA_v1a: value, unit, arrival time)
 ```
+
+### What the service returns
+
+Most MQTT topics in a plant carry an analog reading — a temperature or a
+pressure from an ESP32 — so that is what the configuration assumes by default.
+
+**Declaring a `Unit` is what says the topic is a signal.** With one, the payload
+is parsed and served as a `SignalA_v1a`, which a consumer can unpack and
+`GetState` can convert into whatever unit that consumer asked for. Without one,
+the payload is passed through exactly as it arrived, because a topic carrying
+something other than a reading must still work.
+
+The reading is taken from either shape firmware authors publish:
+
+| Payload | Value |
+|---------|-------|
+| `21.5` | 21.5 |
+| `{"value": 21.5}` | 21.5 |
+| `{"unit":"C","value":19.75,"rssi":-58}` | 19.75 |
+| `{"temperature": 18.5}` | 18.5 — any field holding a number |
+| `{"status":"ok"}` | **error** — a payload with no number is refused |
+
+A payload with no number in it fails rather than defaulting to zero: zero is a
+plausible temperature, and a fabricated reading in a control loop would look
+entirely normal.
+
+The signal's timestamp is **when the message arrived**, not when it was
+requested, so a consumer can tell a stale topic from a live one.
 
 ---
 
@@ -82,9 +110,33 @@ Example `systemconfig.json` excerpt:
         "username": "user",
         "password": "password",
         "period": 2
+    }],
+    "services": [{
+        "definition": "temperature",
+        "subpath": "access",
+        "mission": "measurement",
+        "details": {
+            "Forms":        ["SignalA_v1a"],
+            "Unit":         ["<http://qudt.org/vocab/unit/DEG_C>"],
+            "QuantityKind": ["<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"]
+        }
     }]
 }
 ```
+
+`pattern` names the detail keys the topic's segments are filed under, and the
+key matters: the authorizer's pairing rule and the knowledge graph both read the
+literal string `FunctionalLocation`. A topic filed under any other key is an
+asset with *no* location — and an asset with no location is universally
+reachable, so the wrong key is the permissive answer rather than a broken one.
+
+`mission` is declared per service rather than on the asset, because a topic path
+discloses nothing about whether what sits behind it is observed or driven. Only
+whoever configures the topic knows.
+
+`QuantityKind` is what a consumer is matched on, so a topic can stand in for a
+sensor reporting the same quantity in a different unit; `Unit` is what the
+reading is converted from.
 
 ---
 

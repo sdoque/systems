@@ -460,7 +460,7 @@ func TestServiceRegistryHandlerDelete(t *testing.T) {
 }
 
 // ------------------------------------------------------------------------ //
-// Help functions and structs to test FilterByServiceDefinitionAndDetails()
+// Help functions and structs to test FilterRecords()
 // ------------------------------------------------------------------------ //
 
 // Creates an asset multiple services in its registry
@@ -511,7 +511,10 @@ func TestFilterByServiceDefAndDetails(t *testing.T) {
 			t.Errorf("Failed during setup in '%s'", c.testCase)
 		}
 		checkLoc := map[string][]string{"Location": {"Livingroom"}}
-		lst := ua.FilterByServiceDefinitionAndDetails("testDef", checkLoc)
+		lst := ua.FilterRecords(forms.ServiceQuest_v1{
+			ServiceDefinition: "testDef",
+			Details:           checkLoc,
+		})
 		if (c.expectMatch == true) && (len(lst) < 1) {
 			t.Errorf("Expected atleast 1 service")
 		}
@@ -646,5 +649,83 @@ func TestGetUniqueSystems(t *testing.T) {
 		if c.expectError == true && err == nil {
 			t.Errorf("Expected errors in '%s'", c.testCase)
 		}
+	}
+}
+
+// ProviderName filters on whose records are wanted, which is how the authorizer
+// reads a system's own attributes: it asks what that system provides rather than
+// trusting anything the caller asserted about it.
+func TestFilterRecordsByProvider(t *testing.T) {
+	ua, err := createRegistryWithServices(false)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		quest forms.ServiceQuest_v1
+		want  int
+	}{
+		{
+			name:  "a provider on its own returns everything it provides",
+			quest: forms.ServiceQuest_v1{ProviderName: "testSystem1"},
+			want:  1,
+		},
+		{
+			name:  "a definition on its own still returns every provider's",
+			quest: forms.ServiceQuest_v1{ServiceDefinition: "testDef"},
+			want:  3,
+		},
+		{
+			name:  "both criteria narrow together",
+			quest: forms.ServiceQuest_v1{ServiceDefinition: "testDef", ProviderName: "testSystem2"},
+			want:  1,
+		},
+		{
+			name:  "an unknown provider matches nothing",
+			quest: forms.ServiceQuest_v1{ProviderName: "nosuchsystem"},
+			want:  0,
+		},
+		{
+			name:  "a mismatched definition still excludes a known provider",
+			quest: forms.ServiceQuest_v1{ServiceDefinition: "otherDef", ProviderName: "testSystem0"},
+			want:  0,
+		},
+		{
+			name: "details narrow a provider query too",
+			quest: forms.ServiceQuest_v1{
+				ProviderName: "testSystem0",
+				Details:      map[string][]string{"Location": {"Bathroom"}},
+			},
+			want: 0, // testSystem0 is in the Kitchen
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := len(ua.FilterRecords(tc.quest)); got != tc.want {
+				t.Errorf("FilterRecords returned %d records; want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// A quest narrowing nothing must not be answered with the whole registry: a
+// typo would otherwise become a disclosure of every service in the cloud.
+func TestFilterRecordsRefusesUnnarrowedQuests(t *testing.T) {
+	ua, err := createRegistryWithServices(false)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	if got := ua.FilterRecords(forms.ServiceQuest_v1{}); len(got) != 0 {
+		t.Errorf("an empty quest returned %d records; want none", len(got))
+	}
+
+	// Details alone do not count as narrowing: the guard is about naming either
+	// what is wanted or whose it is.
+	detailsOnly := forms.ServiceQuest_v1{Details: map[string][]string{"Location": {"Kitchen"}}}
+	if got := ua.FilterRecords(detailsOnly); len(got) != 0 {
+		t.Errorf("a details-only quest returned %d records; want none", len(got))
 	}
 }

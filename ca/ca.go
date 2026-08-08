@@ -84,11 +84,11 @@ func main() {
 	// Register the (system) and its services
 	usecases.RegisterServices(&sys)
 
-	// The CA does not enrol with itself: its self-signed root cert was loaded
+	// The CA does not enroll with itself: its self-signed root cert was loaded
 	// (or created) by newResource via ensureCertificate. Close the CertReady
 	// channel that mbaigo's SetoutServers waits on, so the HTTPS goroutine
 	// can bind without going through RequestCertificate (which would
-	// nonsensically attempt CA-to-itself enrolment).
+	// nonsensically attempt CA-to-itself enrollment).
 	close(usecases.EnsureCertReady(&sys))
 
 	// start the http handler and server

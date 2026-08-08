@@ -379,7 +379,7 @@ go test ./...
 | `TestServing_InvalidPath` | Unknown path → 400 |
 | `TestStatusHandler_MethodNotAllowed` | POST → 405 |
 | `TestSyncHandler_MethodNotAllowed` | PUT → 405 |
-| `TestStatusHandler_ReturnsJSON` | Stored result serialised correctly |
+| `TestStatusHandler_ReturnsJSON` | Stored result serialized correctly |
 | `TestSyncLoop_TriggerChanDelivery` | Full trigger → runSync → result reply round-trip |
 | `TestSyncLoop_ContextCancel` | Goroutine exits cleanly on cancel |
 

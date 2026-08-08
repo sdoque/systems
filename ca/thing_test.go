@@ -138,7 +138,7 @@ func TestInitTemplate(t *testing.T) {
 	}
 }
 
-// ── Traits serialisation ──────────────────────────────────────────────────────
+// ── Traits serialization ──────────────────────────────────────────────────────
 
 func TestTraitsSerialization(t *testing.T) {
 	original := Traits{SafeSWare: true}

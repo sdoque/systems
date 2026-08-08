@@ -311,9 +311,9 @@ func TestMeasurementIsConvertedIntoTheSetpointUnit(t *testing.T) {
 		reading.Value = 68
 		reading.Unit = "<http://qudt.org/vocab/unit/DEG_F>"
 
-		got, err := usecases.NormaliseUnits(cer, &reading)
+		got, err := usecases.NormalizeUnits(cer, &reading)
 		if err != nil {
-			t.Fatalf("NormaliseUnits: %v", err)
+			t.Fatalf("NormalizeUnits: %v", err)
 		}
 		sig := got.(*forms.SignalA_v1a)
 		if sig.Unit != unit {

@@ -17,6 +17,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -61,7 +62,7 @@ type Traits struct {
 	// which registrar a whole cloud talks to.
 	role        atomic.Pointer[registrarRole]
 	mu          sync.Mutex
-	subscribers map[int]chan struct{} // SSE listeners, keyed by connection ID
+	subscribers map[int]*subscriber // SSE listeners, keyed by connection ID
 	subMu       sync.Mutex
 	subSeq      int
 }
@@ -80,6 +81,28 @@ func (t *Traits) leads() bool {
 	r := t.role.Load()
 	return r != nil && r.leading
 }
+
+// subscriber is one open SSE connection.
+//
+// The channel is buffered and the registry never blocks on it: a slow consumer
+// must not be able to stall a registration. What it may not do is silently lose
+// an event, which a bare drop would — a subscriber that missed a registration
+// would be wrong about the cloud until something else happened to wake it. So a
+// drop sets resync instead, and the subscriber answers by re-reading everything
+// rather than by trusting the events it did receive.
+type subscriber struct {
+	events chan forms.RegistryEvent_v1
+	// resync says events were dropped and the stream no longer describes the
+	// registry. Read and cleared by the subscriber, set by the registry.
+	resync atomic.Bool
+}
+
+// subscriberBuffer is how many events a subscriber may fall behind before the
+// registry gives up on describing the changes and tells it to re-read. Large
+// enough that a whole cloud starting at once does not trip it — 37 systems of a
+// few services each — and small enough to bound what one stalled connection
+// costs in memory.
+const subscriberBuffer = 256
 
 //-------------------------------------Instantiate a unit asset template
 
@@ -134,7 +157,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		recCount:        1, // 0 is used for non-registered services
 		sched:           cleaningScheduler,
 		requests:        make(chan ServiceRegistryRequest),
-		subscribers:     make(map[int]chan struct{}),
+		subscribers:     make(map[int]*subscriber),
 	}
 
 	ua := &components.UnitAsset{
@@ -180,6 +203,12 @@ func (t *Traits) serviceRegistryHandler() {
 			if _, exists := t.serviceRegistry[rec.Id]; !exists {
 				rec.Id = 0
 			}
+
+			// A zero Id means the registry has never seen this service. Anything
+			// else is the periodic re-registration that only extends the
+			// validity window — the same service, still there, saying so. That
+			// is not a change and subscribers are not told about it.
+			newRegistration := rec.Id == 0
 
 			if rec.Id == 0 {
 				for {
@@ -232,7 +261,9 @@ func (t *Traits) serviceRegistryHandler() {
 			t.serviceRegistry[rec.Id] = *rec
 			request.Record = rec
 			t.mu.Unlock()
-			t.notify()
+			if newRegistration {
+				t.notify(forms.RegistryRegistered, *rec)
+			}
 			request.Error <- nil
 
 		case "read":
@@ -257,12 +288,18 @@ func (t *Traits) serviceRegistryHandler() {
 		case "delete":
 			t.mu.Lock()
 			t.sched.RemoveTask(int(request.Id))
+			// Kept before the delete: the event carries the record as it last
+			// stood, so a subscriber can act on what left without having held
+			// its own copy of the registry.
+			gone, existed := t.serviceRegistry[int(request.Id)]
 			delete(t.serviceRegistry, int(request.Id))
 			if _, exists := t.serviceRegistry[int(request.Id)]; !exists {
 				log.Printf("The service with ID %d has been deleted.", request.Id)
 			}
 			t.mu.Unlock()
-			t.notify()
+			if existed {
+				t.notify(forms.RegistryDeregistered, gone)
+			}
 			request.Error <- nil
 		}
 	}
@@ -341,18 +378,37 @@ func checkExpiration(t *Traits, servId int) {
 	}
 	t.mu.Unlock()
 	if deleted {
-		t.notify()
+		// A lapsed registration is a deregistration as far as a subscriber is
+		// concerned: the service is not available, and whether it withdrew or
+		// simply stopped saying it was there is the registry'''s business, not
+		// the subscriber'''s.
+		t.notify(forms.RegistryDeregistered, dbRec)
 	}
 }
 
-// notify wakes all active SSE subscribers with a non-blocking send.
-func (t *Traits) notify() {
+// notify tells every subscriber what changed.
+//
+// Called only for a registration or a deregistration. A service re-registers
+// every RegPeriod seconds to confirm it is still there, and waking subscribers
+// for that meant more than one full snapshot a second across a cloud of this
+// size, every one identical to the last.
+func (t *Traits) notify(change string, rec forms.ServiceRecord_v1) {
+	event := forms.RegistryEvent_v1{
+		Change:    change,
+		Record:    rec,
+		Timestamp: time.Now().Format(time.RFC3339),
+	}
+	event.NewForm()
+
 	t.subMu.Lock()
 	defer t.subMu.Unlock()
-	for _, ch := range t.subscribers {
+	for _, sub := range t.subscribers {
 		select {
-		case ch <- struct{}{}:
-		default: // subscriber goroutine is busy; it will catch up on the next event
+		case sub.events <- event:
+		default:
+			// Never block the registry on a consumer. The subscriber will be
+			// told to re-read rather than left believing a stale stream.
+			sub.resync.Store(true)
 		}
 	}
 }
@@ -604,6 +660,14 @@ func (t *Traits) startRole(sys *components.System) {
 func (t *Traits) systemList(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
+		// Same resource, two representations: ask for the list and you get it
+		// once; ask for a stream and you get it once and then every change to
+		// it. A subscriber wanting to know when the cloud's shape moves is
+		// asking about this resource, so it is the honest place to subscribe.
+		if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+			t.systemListStream(w, r)
+			return
+		}
 		systemsList, err := getUniqueSystems(t)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("System list error: %s", err), http.StatusInternalServerError)
@@ -615,30 +679,113 @@ func (t *Traits) systemList(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// sseHandler keeps the connection open and pushes a fresh list whenever the registry changes.
-func (t *Traits) sseHandler(w http.ResponseWriter, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
+// systemListStream is the machine subscription: a snapshot of what is
+// registered, then one event per registration or deregistration.
+//
+// The snapshot comes first so a subscriber that reconnects — SSE drops and
+// retries on any network hiccup, and events emitted during the gap are gone —
+// re-synchronizes rather than carrying on from a state it can no longer trust.
+// The same snapshot is re-sent if the registry had to drop events for being too
+// far ahead of this connection.
+func (t *Traits) systemListStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := sseHeaders(w)
 	if !ok {
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
+	sub, remove := t.addSubscriber()
+	defer remove()
 
-	// Register this subscriber.
-	ch := make(chan struct{}, 1)
+	send := func(eventName string, payload any) bool {
+		body, err := json.Marshal(payload)
+		if err != nil {
+			log.Printf("registry stream: encoding %s: %v\n", eventName, err)
+			return false
+		}
+		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventName, body); err != nil {
+			return false // the subscriber has gone
+		}
+		flusher.Flush()
+		return true
+	}
+
+	sendSnapshot := func() bool {
+		list, err := getUniqueSystems(t)
+		if err != nil {
+			log.Printf("registry stream: reading the registry: %v\n", err)
+			return false
+		}
+		return send("snapshot", list)
+	}
+
+	if !sendSnapshot() {
+		return
+	}
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case event := <-sub.events:
+			if sub.resync.Swap(false) {
+				// Events were dropped, so the ones still queued describe an
+				// incomplete story. A snapshot supersedes all of them.
+				drainEvents(sub.events)
+				if !sendSnapshot() {
+					return
+				}
+				continue
+			}
+			if !send("change", event) {
+				return
+			}
+		}
+	}
+}
+
+// addSubscriber registers one open connection and returns it with the function
+// that removes it again.
+func (t *Traits) addSubscriber() (*subscriber, func()) {
+	sub := &subscriber{events: make(chan forms.RegistryEvent_v1, subscriberBuffer)}
 	t.subMu.Lock()
 	t.subSeq++
 	id := t.subSeq
-	t.subscribers[id] = ch
+	t.subscribers[id] = sub
 	t.subMu.Unlock()
-	defer func() {
+	return sub, func() {
 		t.subMu.Lock()
 		delete(t.subscribers, id)
 		t.subMu.Unlock()
-	}()
+	}
+}
+
+// sseHeaders prepares a response for server-sent events and returns the flusher
+// each event must be pushed through.
+func sseHeaders(w http.ResponseWriter) (http.Flusher, bool) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return nil, false
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	return flusher, true
+}
+
+// sseHandler keeps the connection open and pushes a fresh list whenever the registry changes.
+//
+// This is the browser view: it re-renders the whole list on any change rather
+// than following the events, because a page showing what is available wants the
+// list, not the deltas. The events only tell it when to look.
+func (t *Traits) sseHandler(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := sseHeaders(w)
+	if !ok {
+		return
+	}
+
+	sub, remove := t.addSubscriber()
+	defer remove()
 
 	// sendSnapshot fetches the current registry and pushes one SSE event.
 	sendSnapshot := func() {
@@ -665,8 +812,25 @@ func (t *Traits) sseHandler(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
-		case <-ch:
+		case <-sub.events:
+			// The event itself is ignored here and resync needs no special
+			// handling: a fresh snapshot is the answer to any number of changes,
+			// dropped or delivered.
+			sub.resync.Store(false)
+			drainEvents(sub.events)
 			sendSnapshot()
+		}
+	}
+}
+
+// drainEvents empties a subscriber's backlog without blocking. Used where a
+// single snapshot supersedes whatever was queued.
+func drainEvents(ch <-chan forms.RegistryEvent_v1) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
 		}
 	}
 }

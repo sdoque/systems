@@ -545,34 +545,60 @@ func TestRenderListItemsProtocols(t *testing.T) {
 // ----------------------------------------------- //
 
 func TestNotify(t *testing.T) {
-	t.Run("wakes subscriber", func(t *testing.T) {
-		tr := &Traits{subscribers: make(map[int]chan struct{})}
-		ch := make(chan struct{}, 1)
-		tr.subscribers[1] = ch
-		tr.notify()
+	record := func() forms.ServiceRecord_v1 {
+		var rec forms.ServiceRecord_v1
+		rec.NewForm()
+		rec.SystemName = "ds18b20"
+		rec.ServiceDefinition = "temperature"
+		return rec
+	}
+
+	t.Run("delivers the event", func(t *testing.T) {
+		tr := &Traits{subscribers: make(map[int]*subscriber)}
+		sub := &subscriber{events: make(chan forms.RegistryEvent_v1, 1)}
+		tr.subscribers[1] = sub
+
+		tr.notify(forms.RegistryRegistered, record())
+
 		select {
-		case <-ch:
+		case got := <-sub.events:
+			if got.Change != forms.RegistryRegistered {
+				t.Errorf("change = %q, want %q", got.Change, forms.RegistryRegistered)
+			}
+			if got.Record.SystemName != "ds18b20" {
+				t.Errorf("the event does not say what changed: %+v", got.Record)
+			}
+			if got.Timestamp == "" {
+				t.Error("the event carries no timestamp")
+			}
 		default:
-			t.Error("Expected subscriber channel to be notified")
+			t.Error("the subscriber was not told")
 		}
 	})
 
 	t.Run("no subscribers is a no-op", func(t *testing.T) {
-		tr := &Traits{subscribers: make(map[int]chan struct{})}
-		tr.notify() // must not panic
+		tr := &Traits{subscribers: make(map[int]*subscriber)}
+		tr.notify(forms.RegistryRegistered, record()) // must not panic
 	})
 
-	t.Run("non-blocking when channel is full", func(t *testing.T) {
-		tr := &Traits{subscribers: make(map[int]chan struct{})}
-		ch := make(chan struct{}, 1)
-		ch <- struct{}{} // pre-fill
-		tr.subscribers[1] = ch
+	t.Run("a full subscriber is told to resync rather than blocking the registry", func(t *testing.T) {
+		tr := &Traits{subscribers: make(map[int]*subscriber)}
+		sub := &subscriber{events: make(chan forms.RegistryEvent_v1, 1)}
+		sub.events <- forms.RegistryEvent_v1{} // pre-fill
+		tr.subscribers[1] = sub
+
 		done := make(chan struct{})
-		go func() { tr.notify(); close(done) }()
+		go func() { tr.notify(forms.RegistryRegistered, record()); close(done) }()
 		select {
 		case <-done:
 		case <-time.After(time.Second):
-			t.Error("notify() blocked on a full channel")
+			t.Fatal("notify blocked on a full subscriber; one slow consumer would stall every registration")
+		}
+
+		// The event could not be delivered, so it must not be silently lost:
+		// the subscriber is told its stream no longer describes the registry.
+		if !sub.resync.Load() {
+			t.Error("an undeliverable event was dropped without asking the subscriber to re-read")
 		}
 	})
 }

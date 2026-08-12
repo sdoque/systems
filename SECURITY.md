@@ -79,8 +79,9 @@ service on any other.
 
 Two hops stay in the clear at this level, by construction:
 
-- **Enrollment.** A system with no certificate cannot complete an mTLS handshake,
-  so the CSR goes to the CA over plain HTTP. This is exactly what maitreD is for:
+- **Enrollment.** A system with no certificate cannot complete a mutual
+  Transport Layer Security (mTLS) handshake, in which both ends present one, so
+  its certificate signing request (CSR) goes to the CA over plain HTTP. This is exactly what maitreD is for:
   the hop is not authenticated, so the *executable* is.
 - **The core hops.** Registration, orchestration and certification all use the
   `coreSystems` URLs, which are `http://` in the generated configuration. Point

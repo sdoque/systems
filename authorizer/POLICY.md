@@ -40,16 +40,16 @@ Each entry in the `policies` array is an allow rule:
 
 | Field | Type | Required | Meaning |
 |-------|------|----------|---------|
-| `subject` | string | yes | The CN of the consumer's mTLS certificate. `"*"` matches any authenticated subject. |
+| `subject` | string | yes | The common name (CN) of the consumer's mutual Transport Layer Security (mTLS) certificate. `"*"` matches any authenticated subject. |
 | `missions` | string[] | yes | Mission names from MISSIONS.md the policy authorizes. `["*"]` matches any mission. |
 | `services` | string[] | no | Service definitions the policy authorizes. Omitted or `["*"]` means every service of a matching asset. |
 | `actions` | string[] | yes | One or more of `read`, `write`, `invoke`, or `*`. |
-| `must_match_attribute` | string | no | If set, an additional ABAC constraint: the named attribute must match between subject and asset (see *Pairing semantics* below). |
+| `must_match_attribute` | string | no | If set, an additional attribute-based access control (ABAC) constraint: the named attribute must match between subject and asset (see *Pairing semantics* below). |
 | `ttl` | duration string | no | Token lifetime if this policy authorizes the request. Defaults to `5m`. |
 
 ### `ttl` and which one applies
 
-The TTL is how long the issued token stays valid — how long the consumer may
+The time to live (TTL) is how long the issued token stays valid — how long the consumer may
 keep calling the provider on the strength of one authorization. It is the only
 bound on revocation: edit `policies.json` to withdraw a permission and tokens
 already issued keep working until they expire. Short TTLs mean fast revocation
@@ -64,7 +64,7 @@ not lengthen the leash a narrow rule deliberately kept short.
 ### Why `services` is needed
 
 Mission is a property of the *unit asset*; the permission boundary is frequently
-inside a single service. `modboss` — the Wago PLC — has one unit asset and one
+inside a single service. `modboss` — the Wago programmable logic controller (PLC) — has one unit asset and one
 service, `signal`, whose handler serves both GET and PUT
 (`systems/modboss/thing.go:179-182`). The parallax `position` service has the same
 shape.
@@ -134,7 +134,8 @@ nothing and silently refuses every request it governs.
 The spelling is not free to change either: `usecases/kgraphing.go:269` keys on
 the literal `"FunctionalLocation"` to emit `afo:hasFunctionalLocation` rather
 than a local `alc:has…` term. Renaming the detail to suit a policy file would
-quietly drop the asset out of the AFO-IDO/DEXPI/STEP alignment.
+quietly drop the asset out of the alignment with the reference ontologies —
+AFO, IDO, DEXPI and STEP — that the graph is built to match.
 
 The match algorithm:
 
@@ -146,7 +147,7 @@ The match algorithm:
 5. Else: at least one of the subject's values must equal at least one of the
    asset's values (multi-valued match by intersection non-empty).
 
-Rationale for step 3: in OT plants, many sensors and actuators are not associated
+Rationale for step 3: in operational technology (OT) plants, many sensors and actuators are not associated
 with a specific location/zone — they're cloud-wide utilities (audit logs,
 aggregations, framework infrastructure). Forcing every consumer to declare a
 match key for these would be over-engineering.
@@ -286,7 +287,8 @@ control. Left as a deployment rule until there is a reason to do otherwise.
 ## Token format (issued by the authorizer)
 
 When a request is authorized, the authorizer returns a signed token the consumer
-attaches to its provider request. JWT-style payload:
+attaches to its provider request. A payload in the style of a JSON Web Token
+(JWT):
 
 ```json
 {

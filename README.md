@@ -132,6 +132,39 @@ level actually protects.
 
 ---
 
+## Abbreviations used above
+
+The tables name the technologies each system speaks to. In full, and in the
+sense meant here:
+
+| Abbreviation | In full |
+|---|---|
+| AAS | Asset Administration Shell — the Industry 4.0 digital-twin format |
+| BDD, IBD | Block definition diagram and internal block diagram, the two SysML v2 structure views |
+| CAN | Controller Area Network, the vehicle and machine bus |
+| GPIO | General-purpose input/output, the Raspberry Pi's pin header |
+| HAT | Hardware Attached on Top, the Raspberry Pi add-on board form factor |
+| MQTT | Message Queuing Telemetry Transport, the publish-subscribe protocol |
+| NMEA 2000 | The marine instrument network standard, carried over CAN |
+| OBD-II | On-Board Diagnostics, the vehicle diagnostic interface |
+| OPC UA | Open Platform Communications Unified Architecture, the industrial interoperability standard |
+| OWL, RDF | Web Ontology Language and Resource Description Framework, the knowledge-graph languages |
+| PGN | Parameter Group Number, an NMEA 2000 message identifier |
+| PID | Parameter Identifier, an OBD-II signal code — *not* the control algorithm of the same three letters |
+| PLC | Programmable logic controller |
+| PWM | Pulse-width modulation, how a servo is commanded |
+| REST | Representational State Transfer, the resource-oriented style these services follow |
+| RTU | Remote Terminal Unit, the serial form of Modbus |
+| SAP PM/MM | The Plant Maintenance and Materials Management modules of SAP |
+| SysML | Systems Modeling Language |
+
+`PID` is the one worth reading twice. In `busdriver` it is a Parameter
+Identifier, the code naming one vehicle signal. In control engineering the same
+letters mean proportional-integral-derivative, a control algorithm. The two are
+unrelated, and both senses appear in the tables above.
+
+---
+
 ## Background
 
 The design philosophy behind these systems — how unit assets, services, and the

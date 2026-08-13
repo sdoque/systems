@@ -135,7 +135,9 @@ The spelling is not free to change either: `usecases/kgraphing.go:269` keys on
 the literal `"FunctionalLocation"` to emit `afo:hasFunctionalLocation` rather
 than a local `alc:has…` term. Renaming the detail to suit a policy file would
 quietly drop the asset out of the alignment with the reference ontologies —
-AFO, IDO, DEXPI and STEP — that the graph is built to match.
+the Arrowhead Framework Ontology (AFO), the Industrial Data Ontology (IDO),
+Data Exchange in the Process Industry (DEXPI) and the Standard for the Exchange
+of Product model data (STEP) — that the graph is built to match.
 
 The match algorithm:
 

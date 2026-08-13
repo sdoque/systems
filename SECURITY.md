@@ -14,7 +14,7 @@ believe you are protected when you are not.
 | System | What it adds | Without it |
 |---|---|---|
 | [`ca`](ca/) | Issues the certificates that give every system a verifiable identity. | Nothing is identified. All traffic is in the clear. |
-| [`maitreD`](maitreD/) | Attests a requesting binary's SHA-256 hash against the CA-mastered whitelist before the CA signs for it. | The CA signs for any process that asks, so a certificate proves the host was reachable, not that the executable is the approved one. |
+| [`maitreD`](maitreD/) | Attests a requesting binary's SHA-256 hash — a fingerprint of its exact contents — against the CA-mastered whitelist before the CA signs for it. | The CA signs for any process that asks, so a certificate proves the host was reachable, not that the executable is the approved one. |
 | [`authorizer`](authorizer/) | Decides which system may use which service, and mints the access token that proves it. | Any identified system may call any service on any other. |
 
 Deploy them in that order. Each one is useful without the ones after it; none is

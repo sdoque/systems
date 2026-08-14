@@ -267,7 +267,11 @@ func (t *Traits) readTemperature(ctx context.Context) {
 			// so without this the asset would serve 0.000 for the life of the
 			// process while its own log said it was discarding bad readings.
 			if t.tStamp.IsZero() {
-				order.Error <- fmt.Errorf("%w from %s", errNoReading, t.name)
+				select {
+				case order.Error <- fmt.Errorf("%w from %s", errNoReading, t.name):
+				case <-ctx.Done():
+				case <-time.After(5 * time.Second):
+				}
 				continue
 			}
 			reading, err := usecases.Convert(t.temperature, celsius(), t.unit, false)
@@ -280,7 +284,18 @@ func (t *Traits) readTemperature(ctx context.Context) {
 			f.Value = reading
 			f.Unit = t.unit.IRI
 			f.Timestamp = t.tStamp
-			order.ValueP <- f
+			// Bounded, and abandoned at shutdown. The requesting handler stops
+			// waiting after five seconds; if this send is still blocked when it
+			// does, the loop is stuck on a channel nobody will ever read and
+			// every later request times out against a system that is up and
+			// answering nothing. Bounding the handoff made this the last
+			// unbounded step on that path.
+			select {
+			case order.ValueP <- f:
+			case <-ctx.Done():
+			case <-time.After(5 * time.Second):
+				log.Printf("%s: no one collected the reading; the caller had already given up\n", t.name)
+			}
 		}
 	}
 }

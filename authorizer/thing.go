@@ -256,7 +256,7 @@ func (t *Traits) authorize(w http.ResponseWriter, r *http.Request) {
 	// orchestration cloud-wide for a gap the cloud has not yet had the means to
 	// close.
 	asker, verified := usecases.PeerCN(r)
-	if verified && asker != t.owner.Name && asker != orchestratorCN {
+	if verified && asker != t.owner.Name && asker != t.orchestratorCN() {
 		log.Printf("authorizer: refusing an authorization quest from %q: only the orchestrator may ask\n", asker)
 		http.Error(w, "only the orchestrator may request authorization", http.StatusForbidden)
 		return
@@ -288,10 +288,22 @@ func (t *Traits) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// orchestratorCN is the common name the orchestrator enrolls under. The
-// authorize service has exactly one legitimate caller, so naming it is the whole
-// of the access rule.
-const orchestratorCN = "orchestrator"
+// orchestratorCN reports the common name the orchestrator enrolls under, which
+// this authorizer accepts as the one legitimate asker.
+//
+// Configurable, because sys.Name is: a system renamed in its configuration file
+// enrolls under that name, and two clouds sharing a host is a reason to rename
+// one. Hardcoding it meant such a cloud got 403 on every quest, and since
+// authorized() fails closed against a reachable-but-refusing authorizer, that
+// stopped orchestration cloud-wide.
+func (t *Traits) orchestratorCN() string {
+	if t.owner != nil {
+		if names := t.owner.Husk.Details["OrchestratorName"]; len(names) > 0 && names[0] != "" {
+			return names[0]
+		}
+	}
+	return usecases.OrchestratorName
+}
 
 // notePlaintextQuest reports, at most once a minute, that quests are arriving
 // with no verifiable asker.

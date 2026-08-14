@@ -22,6 +22,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
@@ -33,6 +34,13 @@ import (
 
 // Traits holds the configurable and runtime parameters for one electrical heater thermostat.
 type Traits struct {
+	// SetPt is written by the PUT handler on a net/http goroutine and read by
+	// the control loop; deviation and jitter are written by the loop and read by
+	// the diff and variations handlers. These run on Raspberry Pis, where a
+	// 32-bit build stores a float64 in two words — a setpoint moving 20 to 22
+	// while the loop reads it can yield a number that was never written, and
+	// calculateOutput turns that into a fully open or fully closed valve.
+	mu        sync.RWMutex
 	SetPt     float64       `json:"setPoint"`
 	Period    time.Duration `json:"samplingPeriod"`
 	Kp        float64       `json:"kp"`
@@ -44,7 +52,7 @@ type Traits struct {
 	cervices  components.Cervices
 	// Units the payloads report in, taken from the configured services so a
 	// reading and the record that describes it cannot disagree. errorUnit is
-	// not configured: it is the setpoint\'s.
+	// not configured: it is the setpoint's.
 	setpointUnit string `json:"-"`
 	errorUnit    string `json:"-"`
 	jitterUnit   string `json:"-"`
@@ -430,7 +438,9 @@ func (t *Traits) variations(w http.ResponseWriter, r *http.Request) {
 // getSetPoint fills out a signal form with the current thermal setpoint.
 func (t *Traits) getSetPoint() (f forms.SignalA_v1a) {
 	f.NewForm()
+	t.mu.RLock()
 	f.Value = t.SetPt
+	t.mu.RUnlock()
 	f.Unit = t.setpointUnit
 	f.Timestamp = time.Now()
 	return f
@@ -444,7 +454,9 @@ func (t *Traits) setSetPoint(f forms.SignalA_v1a) error {
 	if err := usecases.AdoptUnit(&f, t.setpointUnit, false); err != nil {
 		return fmt.Errorf("setpoint refused: %w", err)
 	}
+	t.mu.Lock()
 	t.SetPt = f.Value
+	t.mu.Unlock()
 	log.Printf("ethermostat %s: new setpoint %.1f %s\n", t.name, f.Value, t.setpointUnit)
 	return nil
 }
@@ -452,7 +464,9 @@ func (t *Traits) setSetPoint(f forms.SignalA_v1a) error {
 // getError fills out a signal form with the current thermal error.
 func (t *Traits) getError() (f forms.SignalA_v1a) {
 	f.NewForm()
+	t.mu.RLock()
 	f.Value = t.deviation
+	t.mu.RUnlock()
 	f.Unit = t.errorUnit
 	f.Timestamp = time.Now()
 	return f
@@ -461,7 +475,9 @@ func (t *Traits) getError() (f forms.SignalA_v1a) {
 // getJitter fills out a signal form with the control loop execution jitter.
 func (t *Traits) getJitter() (f forms.SignalA_v1a) {
 	f.NewForm()
+	t.mu.RLock()
 	f.Value = float64(t.jitter.Milliseconds())
+	t.mu.RUnlock()
 	f.Unit = t.jitterUnit
 	f.Timestamp = time.Now()
 	return f
@@ -500,8 +516,12 @@ func (t *Traits) processFeedbackLoop() {
 		return
 	}
 
+	t.mu.Lock()
 	t.deviation = t.SetPt - tup.Value
-	output := t.calculateOutput(t.deviation)
+	deviation := t.deviation
+	t.mu.Unlock()
+
+	output := t.calculateOutput(deviation)
 	plugOn := output > 50
 
 	if tup.Value != t.previousT {
@@ -509,13 +529,16 @@ func (t *Traits) processFeedbackLoop() {
 		if plugOn {
 			state = "ON"
 		}
-		log.Printf("ethermostat %s: temp=%.2f°C err=%.2f°C → plug %s\n",
-			t.name, tup.Value, t.deviation, state)
+		log.Printf("ethermostat %s: temp=%.2f %s err=%.2f %s → plug %s\n",
+			t.name, tup.Value, t.setpointUnit, deviation, t.errorUnit, state)
 		t.previousT = tup.Value
 	}
 
 	t.updatePlugState(plugOn)
+
+	t.mu.Lock()
 	t.jitter = time.Since(jitterStart)
+	t.mu.Unlock()
 }
 
 // calculateOutput is the P-controller: output = Kp × error + 50, clamped to [0, 100].

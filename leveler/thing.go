@@ -23,6 +23,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
@@ -34,6 +35,13 @@ import (
 
 // Traits are Asset-specific configurable parameters and variables
 type Traits struct {
+	// SetPt is written by the PUT handler on a net/http goroutine and read by
+	// the control loop; deviation and jitter are written by the loop and read by
+	// the diff and variations handlers. These run on Raspberry Pis, where a
+	// 32-bit build stores a float64 in two words — a setpoint moving 20 to 22
+	// while the loop reads it can yield a number that was never written, and
+	// calculateOutput turns that into a fully open or fully closed valve.
+	mu            sync.RWMutex
 	SetPt         float64       `json:"setPoint"`
 	Period        time.Duration `json:"samplingPeriod"`
 	Kp            float64       `json:"kp"`
@@ -235,7 +243,9 @@ func (t *Traits) variations(w http.ResponseWriter, r *http.Request) {
 // getSetPoint fills out a signal form with the current level set point
 func (t *Traits) getSetPoint() (f forms.SignalA_v1a) {
 	f.NewForm()
+	t.mu.RLock()
 	f.Value = t.SetPt
+	t.mu.RUnlock()
 	f.Unit = t.setpointUnit
 	f.Timestamp = time.Now()
 	return f
@@ -249,7 +259,9 @@ func (t *Traits) setSetPoint(f forms.SignalA_v1a) error {
 	if err := usecases.AdoptUnit(&f, t.setpointUnit, false); err != nil {
 		return fmt.Errorf("setpoint refused: %w", err)
 	}
+	t.mu.Lock()
 	t.SetPt = f.Value
+	t.mu.Unlock()
 	log.Printf("new set point: %.1f", f.Value)
 	return nil
 }
@@ -257,7 +269,9 @@ func (t *Traits) setSetPoint(f forms.SignalA_v1a) error {
 // getError fills out a signal form with the current level error
 func (t *Traits) getError() (f forms.SignalA_v1a) {
 	f.NewForm()
+	t.mu.RLock()
 	f.Value = t.deviation
+	t.mu.RUnlock()
 	f.Unit = t.errorUnit
 	f.Timestamp = time.Now()
 	return f
@@ -266,7 +280,9 @@ func (t *Traits) getError() (f forms.SignalA_v1a) {
 // getJitter fills out a signal form with the current jitter
 func (t *Traits) getJitter() (f forms.SignalA_v1a) {
 	f.NewForm()
+	t.mu.RLock()
 	f.Value = float64(t.jitter.Milliseconds())
+	t.mu.RUnlock()
 	f.Unit = t.jitterUnit
 	f.Timestamp = time.Now()
 	return f
@@ -302,8 +318,12 @@ func (t *Traits) processFeedbackLoop() {
 		return
 	}
 
+	t.mu.Lock()
 	t.deviation = t.SetPt - tup.Value
-	output := t.calculateOutput(t.deviation)
+	deviation := t.deviation
+	t.mu.Unlock()
+
+	output := t.calculateOutput(deviation)
 
 	var of forms.SignalA_v1a
 	of.NewForm()
@@ -322,11 +342,14 @@ func (t *Traits) processFeedbackLoop() {
 	}
 
 	if tup.Value != t.previousLevel {
-		log.Printf("the level is %.2f percent with an error %.2f percent and the pumpSpeed set at %.2f%%\n", tup.Value, t.deviation, output)
+		log.Printf("the level is %.2f %s with an error %.2f %s and the pumpSpeed set at %.2f%%\n",
+			tup.Value, t.setpointUnit, deviation, t.errorUnit, output)
 		t.previousLevel = tup.Value
 	}
 
+	t.mu.Lock()
 	t.jitter = time.Since(jitterStart)
+	t.mu.Unlock()
 }
 
 // calculateOutput is the actual PI controller

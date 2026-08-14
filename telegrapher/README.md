@@ -44,15 +44,25 @@ is parsed and served as a `SignalA_v1a`, which a consumer can unpack and
 the payload is passed through exactly as it arrived, because a topic carrying
 something other than a reading must still work.
 
-The reading is taken from either shape firmware authors publish:
+The reading is taken from either shape firmware authors publish. Where the
+payload is an object, the field read is **the one the topic is named after** —
+the part after the last slash, which is also the service definition the asset
+registers:
 
-| Payload | Value |
-|---------|-------|
-| `21.5` | 21.5 |
-| `{"value": 21.5}` | 21.5 |
-| `{"unit":"C","value":19.75,"rssi":-58}` | 19.75 |
-| `{"temperature": 18.5}` | 18.5 — any field holding a number |
-| `{"status":"ok"}` | **error** — a payload with no number is refused |
+| Topic | Payload | Value |
+|-------|---------|-------|
+| any | `21.5` | 21.5 — a bare number needs no name |
+| any | `{"value": 21.5}` | 21.5 |
+| any | `{"unit":"C","value":19.75,"rssi":-58}` | 19.75 |
+| `Kitchen/temperature` | `{"temperature":21.5,"humidity":45,"pressure":1013.2}` | 21.5 |
+| `Kitchen/pressure` | `{"temperature":21.5,"humidity":45,"pressure":1013.2}` | 1013.2 |
+| `Kitchen/temperature` | `{"humidity":45}` | **error** — the topic promises a temperature |
+| any | `{"status":"ok"}` | **error** — a payload with no number is refused |
+
+A sensor publishing several quantities in one object — a BME280, a Netatmo
+module — is therefore read correctly on each of its topics. `value` is still
+accepted whatever the topic, since it is the one name that means "the reading",
+and a field matching the topic in another casing is matched too.
 
 A payload with no number in it fails rather than defaulting to zero: zero is a
 plausible temperature, and a fabricated reading in a control loop would look

@@ -252,7 +252,7 @@ func TestAnalogValue(t *testing.T) {
 		{"an integer", "22", 22, false},
 		{"JSON naming the value", `{"value": 21.5}`, 21.5, false},
 		{"JSON with the reading among other fields", `{"unit":"C","value":19.75,"rssi":-58}`, 19.75, false},
-		{"JSON with a number under another name", `{"temperature": 18.5}`, 18.5, false},
+		{"JSON naming the service", `{"temperature": 18.5}`, 18.5, false},
 		{"a number sent as a string", `{"value": "20.25"}`, 20.25, false},
 		{"nothing numeric at all", `{"status":"ok"}`, 0, true},
 		{"not a reading", "hello", 0, true},
@@ -261,7 +261,7 @@ func TestAnalogValue(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := analogValue([]byte(tc.payload))
+			got, err := analogValue([]byte(tc.payload), "temperature")
 			if tc.wantErr != (err != nil) {
 				t.Fatalf("analogValue(%q) error = %v; wantErr %v", tc.payload, err, tc.wantErr)
 			}
@@ -275,7 +275,7 @@ func TestAnalogValue(t *testing.T) {
 // Zero is a plausible temperature, so a payload with no number must fail rather
 // than default — otherwise a fabricated reading reaches a control loop.
 func TestAnalogValueDoesNotInventAZero(t *testing.T) {
-	if v, err := analogValue([]byte(`{"status":"ok"}`)); err == nil {
+	if v, err := analogValue([]byte(`{"status":"ok"}`), "temperature"); err == nil {
 		t.Errorf("a payload with no reading produced %v", v)
 	}
 }
@@ -360,4 +360,61 @@ func TestAReadingIsServedWhole(t *testing.T) {
 	}
 	wg.Wait()
 	<-done
+}
+
+// TestAnalogValueServesTheFieldTheTopicNames is follow-up finding N9.
+//
+// A fixed order of plausible names cannot know what was asked for. The one it
+// used — value, temperature, temp, pressure, level — served a BME280's
+// temperature as its pressure, and refused any payload keyed by something not on
+// the list at all.
+func TestAnalogValueServesTheFieldTheTopicNames(t *testing.T) {
+	// One sensor, three readings, published to three topics.
+	bme280 := []byte(`{"temperature":21.5,"humidity":45,"pressure":1013.2}`)
+
+	for definition, want := range map[string]float64{
+		"temperature": 21.5,
+		"pressure":    1013.2,
+		"humidity":    45,
+	} {
+		got, err := analogValue(bme280, definition)
+		if err != nil {
+			t.Errorf("a topic ending in %q could not be served: %v", definition, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("a topic ending in %q served %v, want %v", definition, got, want)
+		}
+	}
+}
+
+// The quantities this repository's own meteorologue publishes were refused
+// outright by the fixed list, so a working topic began returning 500.
+func TestAnalogValueDoesNotRefuseQuantitiesItHasNoOpinionAbout(t *testing.T) {
+	for _, quantity := range []string{"humidity", "co2", "noise", "rain", "wind_speed", "power"} {
+		payload := []byte(`{"` + quantity + `":42.5}`)
+		got, err := analogValue(payload, quantity)
+		if err != nil {
+			t.Errorf("a topic ending in %q was refused: %v", quantity, err)
+			continue
+		}
+		if got != 42.5 {
+			t.Errorf("%q served %v, want 42.5", quantity, got)
+		}
+	}
+}
+
+// "value" still means the reading whatever the reading is, and the same name in
+// another casing is the same name rather than a guess.
+func TestAnalogValueAcceptsValueAndAnyCasing(t *testing.T) {
+	if got, err := analogValue([]byte(`{"value":7.5,"rssi":-58}`), "pressure"); err != nil || got != 7.5 {
+		t.Errorf(`"value" was not read for a pressure topic: %v, %v`, got, err)
+	}
+	if got, err := analogValue([]byte(`{"Temperature":21.5}`), "temperature"); err != nil || got != 21.5 {
+		t.Errorf("a capitalized field name was not matched: %v, %v", got, err)
+	}
+	// And it still refuses to invent one.
+	if v, err := analogValue([]byte(`{"humidity":45}`), "temperature"); err == nil {
+		t.Errorf("a temperature topic served the humidity %v", v)
+	}
 }

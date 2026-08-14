@@ -56,10 +56,14 @@ type Traits struct {
 	// latest is the most recent message. Written by the Paho callback, which
 	// runs on the client's own goroutine, and read by the HTTP handler — so it
 	// is swapped atomically rather than assigned.
-	latest   atomic.Pointer[reading]
-	unit     string              `json:"-"` // the configured unit, empty for a topic served raw
-	owner    *components.System  `json:"-"`
-	cervices components.Cervices `json:"-"`
+	latest atomic.Pointer[reading]
+	// definition is what this topic was commissioned as — the part of the topic
+	// after the last slash, which is also the service definition the asset
+	// registers. It is the key to look for in a JSON payload.
+	definition string              `json:"-"`
+	unit       string              `json:"-"` // the configured unit, empty for a topic served raw
+	owner      *components.System  `json:"-"`
+	cervices   components.Cervices `json:"-"`
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -119,7 +123,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	assetName := strings.ReplaceAll(asset, "/", "_")
 
 	t := &Traits{
-		owner: sys,
+		owner:      sys,
+		definition: service,
 	}
 
 	if len(configuredAsset.Traits) > 0 {
@@ -299,7 +304,7 @@ func (t *Traits) access(w http.ResponseWriter, r *http.Request, servicePath stri
 			w.Write(msg)
 			return
 		}
-		value, err := analogValue(msg)
+		value, err := analogValue(msg, t.definition)
 		if err != nil {
 			log.Printf("%s: %v", t.Topic, err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -424,27 +429,51 @@ func detailsFromTopic(pattern []string, asset string) map[string][]string {
 // A payload that yields no number is an error rather than a zero. Zero is a
 // plausible temperature, so guessing it would put a fabricated reading into a
 // control loop.
-func analogValue(payload []byte) (float64, error) {
+// analogValue reads the number this topic was commissioned to carry.
+//
+// definition is what the topic is called after its last slash, which is also the
+// service definition the asset registers. Looking for that key, rather than
+// working down a list of plausible ones, is what makes the answer belong to the
+// question: a BME280 publishing {"temperature":21.5,"humidity":45,
+// "pressure":1013.2} to Kitchen/pressure has three numbers in it, and only one
+// of them is the pressure this service promises.
+//
+// A fixed order was tried and was wrong for the same reason a fixed order is
+// always wrong here — it cannot know what was asked for. It also refused any
+// payload keyed by something not on the list, so a humidity, a CO2 reading or a
+// noise level, all of which this repository's own meteorologue publishes,
+// returned an error where they had previously worked.
+func analogValue(payload []byte, definition string) (float64, error) {
 	text := strings.TrimSpace(string(payload))
 
+	// A bare number needs no name.
 	if v, err := strconv.ParseFloat(text, 64); err == nil {
 		return v, nil
 	}
 
 	var object map[string]any
-	if err := json.Unmarshal(payload, &object); err == nil {
-		// Only fields that plausibly carry the reading. Taking any number would
-		// serve a humidity as a temperature: {"humidity":45,"temperature":21.5}
-		// has no order that makes 45 the right answer, and the service is
-		// registered as a temperature in degrees Celsius.
-		for _, key := range []string{"value", "temperature", "temp", "pressure", "level"} {
-			if v, ok := numberFrom(object[key]); ok {
+	if err := json.Unmarshal(payload, &object); err != nil {
+		return 0, fmt.Errorf("no number in the payload %q", truncate(text))
+	}
+
+	if v, ok := numberFrom(object[definition]); ok {
+		return v, nil
+	}
+	// The same name in another casing is the same name, not a guess.
+	for key, raw := range object {
+		if strings.EqualFold(key, definition) {
+			if v, ok := numberFrom(raw); ok {
 				return v, nil
 			}
 		}
-		return 0, fmt.Errorf("payload %q carries no reading under a name this system recognizes", truncate(text))
 	}
-	return 0, fmt.Errorf("no number in the payload %q", truncate(text))
+	// "value" is the one name that means "the reading" whatever the reading is.
+	if v, ok := numberFrom(object["value"]); ok {
+		return v, nil
+	}
+
+	return 0, fmt.Errorf("payload %q carries no %q and no \"value\"; a topic ending in %q is served from the field of that name",
+		truncate(text), definition, definition)
 }
 
 func numberFrom(v any) (float64, bool) {

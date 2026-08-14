@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -264,5 +268,62 @@ func TestAdjudicateRefusesBeforeItCanSign(t *testing.T) {
 	}
 	if len(answer.Refusals) != 1 || !strings.Contains(answer.Refusals[0].Reason, "signing key") {
 		t.Errorf("refusal does not explain the missing key: %+v", answer.Refusals)
+	}
+}
+
+// TestPlaintextQuestsAreRefusedOnceTLSIsServing is follow-up finding N1.
+//
+// The earlier reasoning was that refusing an unverified quest "would break every
+// default deployment to close a hole that only exists in deployments which have
+// not adopted TLS anyway". That premise was false: SetoutServers binds the HTTP
+// port unconditionally and never withdraws it, so a fully enrolled cloud still
+// answers on 20104 with no certificate to check. The hole was open in exactly
+// the deployments that believed they were protected, and behind it sat an
+// unauthenticated signing endpoint — any subject, any candidate, a signed token
+// back, plus the policy's reason for every refusal.
+func TestPlaintextQuestsAreRefusedOnceTLSIsServing(t *testing.T) {
+	quest := func() *http.Request {
+		var q forms.AuthorizationQuest_v1
+		q.NewForm()
+		q.Subject = "whatever-it-claims-to-be"
+		q.Action = "read"
+		body, err := json.Marshal(&q)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		r := httptest.NewRequest(http.MethodPost, "/authorizer/authorization/authorize", bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		return r // no TLS: PeerCN reports nothing
+	}
+
+	sys := components.NewSystem("authorizer", t.Context())
+	sys.Husk = &components.Husk{ProtoPort: map[string]int{"http": 20104, "https": 30104}}
+	tr := &Traits{owner: &sys}
+	tr.attributesOf = func(string) map[string][]string { return nil }
+
+	// Enrolling: the HTTP port is up, the TLS one is not. There is no better
+	// channel for the orchestrator to have used, so the quest is answered and
+	// the situation reported rather than refused — refusing here would stop
+	// orchestration cloud-wide for a gap the cloud has not yet had the means to
+	// close.
+	sys.Husk.Bound.Bind("http", 20104)
+	w := httptest.NewRecorder()
+	tr.authorize(w, quest())
+	if w.Code != http.StatusOK {
+		t.Errorf("a plain-HTTP quest was refused while TLS was not yet serving (status %d)", w.Code)
+	}
+
+	// Enrolled: TLS is serving, so a quest that did not come over it is refused.
+	sys.Husk.Bound.Bind("https", 30104)
+	w = httptest.NewRecorder()
+	tr.authorize(w, quest())
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("a plain-HTTP quest was answered while TLS was serving (status %d): "+
+			"this is the signing oracle", w.Code)
+	}
+	// The refusal has to say what to do about it, or an operator sees only that
+	// orchestration stopped.
+	if body := w.Body.String(); !strings.Contains(body, "https://") || !strings.Contains(body, "coreSystems") {
+		t.Errorf("the refusal does not name the remedy: %s", strings.TrimSpace(body))
 	}
 }

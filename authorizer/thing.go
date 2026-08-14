@@ -236,14 +236,25 @@ func (t *Traits) authorize(w http.ResponseWriter, r *http.Request) {
 	// the quest names a subject the peer is not. What the peer certificate
 	// establishes is that the *asker* is the orchestrator.
 	//
-	// Over plain HTTP there is no certificate to check. That is not a
-	// misconfiguration to refuse: the core-system URLs are http:// in the
-	// template, enrollment itself is plaintext, and a cloud is expected to run
-	// before it is protected. Refusing here would break every default
-	// deployment to close a hole that only exists in deployments which have not
-	// adopted TLS anyway. It is recorded instead — in the log line below, and in
-	// the security posture the knowledge graph carries — so a cloud that
-	// believes it is protected can be seen not to be.
+	// Over plain HTTP there is no certificate to check, and what to do about
+	// that depends on whether this authorizer is listening on TLS at all.
+	//
+	// The earlier reasoning here was wrong. It said refusing "would break every
+	// default deployment to close a hole that only exists in deployments which
+	// have not adopted TLS anyway". The premise does not hold: SetoutServers
+	// binds the HTTP port unconditionally and never withdraws it, so a fully
+	// enrolled cloud still answers on 20104. The hole was therefore open in
+	// exactly the deployments that believe they are protected, and what was
+	// reachable through it is an unauthenticated signing endpoint — anyone with
+	// network reach could post any subject and any candidate and receive a
+	// signed token plus the policy's reasons for every refusal.
+	//
+	// So: once this authorizer is serving on TLS, a quest that did not come
+	// over it is refused. Before that — during enrollment, or in a cloud with
+	// no HTTPS port — it is accepted and reported, because there is no better
+	// channel for the orchestrator to have used and refusing would stop
+	// orchestration cloud-wide for a gap the cloud has not yet had the means to
+	// close.
 	asker, verified := usecases.PeerCN(r)
 	if verified && asker != t.owner.Name && asker != orchestratorCN {
 		log.Printf("authorizer: refusing an authorization quest from %q: only the orchestrator may ask\n", asker)
@@ -251,6 +262,14 @@ func (t *Traits) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !verified {
+		if tlsPort := t.owner.Husk.Bound.Port("https"); tlsPort != 0 {
+			log.Printf("authorizer: refusing an authorization quest that arrived over plain HTTP while %d is serving TLS\n", tlsPort)
+			http.Error(w, fmt.Sprintf(
+				"this authorizer requires TLS: reach it at https://<host>:%d/%s/ and give that URL "+
+					"as the authorizer's coreSystems entry", tlsPort, t.owner.Name),
+				http.StatusForbidden)
+			return
+		}
 		t.notePlaintextQuest()
 	}
 
@@ -287,7 +306,7 @@ func (t *Traits) notePlaintextQuest() {
 		return
 	}
 	t.lastPlaintextNote = time.Now()
-	log.Printf("authorizer: authorization quests are arriving without a client certificate, so the asking system is unverified — this cloud reaches the authorizer over plain HTTP\n")
+	log.Printf("authorizer: authorization quests are arriving without a client certificate, so the asking system is unverified — this cloud reaches the authorizer over plain HTTP. Once this system is serving TLS, such quests are refused.\n")
 }
 
 //-------------------------------------Unit asset's functionalities

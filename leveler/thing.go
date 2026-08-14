@@ -170,7 +170,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	// deviation is arithmetic on unlike quantities, which still yields a number
 	// and still drives the pump.
 	if _, ok := usecases.LookupUnit(t.setpointUnit); !ok {
-		log.Fatalf("leveler: the setpoint is configured in %q, which is not a QUDT unit this framework can convert a measurement into\n", t.setpointUnit)
+		log.Fatalf("leveler: the setpoint is configured in %q, which is not a QUDT unit this framework can convert a measurement into. Write an identifier such as <http://qudt.org/vocab/unit/PERCENT> in the setpoint service's details.\n", t.setpointUnit)
 	}
 	ua.CervicesMap["level"].Details = components.MergeDetails(ua.Details, map[string][]string{
 		"QuantityKind":       {"<http://qudt.org/vocab/quantitykind/DimensionlessRatio>"},
@@ -391,6 +391,11 @@ func (t *Traits) adoptUnits(services components.Services) {
 	if setpoint != nil {
 		t.setpointUnit = firstDetail(setpoint.Details, "Unit")
 	}
+	if t.setpointUnit == "" {
+		t.setpointUnit = templateSetpointUnit()
+		log.Printf("%s: the setpoint service in systemconfig.json declares no unit; using %s from the template. Add a \"details\" block naming a Unit to state it explicitly.\n",
+			"leveler", t.setpointUnit)
+	}
 	if jitter != nil {
 		t.jitterUnit = firstDetail(jitter.Details, "Unit")
 	}
@@ -406,6 +411,28 @@ func (t *Traits) adoptUnits(services components.Services) {
 			deviation.Details["Unit"] = []string{t.errorUnit}
 		}
 	}
+}
+
+// templateSetpointUnit is the unit the shipped template declares for the
+// setpoint.
+//
+// Configure builds a unit asset entirely from systemconfig.json and never
+// merges the template into it, so a services array written without a details
+// block leaves the setpoint with no unit at all. The README documented exactly
+// such an array, so an operator following it got a system that refused to
+// start, saying the setpoint was configured in "".
+//
+// Falling back is the lesser of the two wrongs: a system that runs on the unit
+// its own template names, and says so, beats one that will not run. A unit that
+// is present but unresolvable is still fatal — that is a statement the operator
+// made and got wrong, rather than one they never made.
+func templateSetpointUnit() string {
+	for _, s := range initTemplate().GetServices() {
+		if s.Definition == "setpoint" {
+			return firstDetail(s.Details, "Unit")
+		}
+	}
+	return ""
 }
 
 // findService looks a service up by definition, since the subpath an operator

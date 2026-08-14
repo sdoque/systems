@@ -124,7 +124,7 @@ func newResources(uac usecases.ConfigurableAsset, sys *components.System) ([]*co
 	// minutes later, or on a quiet cloud never at all.
 	setpointUnit := configuredSetpointUnit(uac)
 	if _, ok := usecases.LookupUnit(setpointUnit); !ok {
-		log.Fatalf("ethermostat: the setpoint is configured in %q, which is not a QUDT unit this framework can convert a measurement into\n", setpointUnit)
+		log.Fatalf("ethermostat: the setpoint is configured in %q, which is not a QUDT unit this framework can convert a measurement into. Write an identifier such as <http://qudt.org/vocab/unit/DEG_C> in the setpoint service's details.\n", setpointUnit)
 	}
 
 	var assets []*components.UnitAsset
@@ -290,6 +290,32 @@ func buildHeaterAsset(name, location string, t *Traits, sys *components.System, 
 // before any asset exists to adopt it.
 func configuredSetpointUnit(uac usecases.ConfigurableAsset) string {
 	for _, s := range uac.Services {
+		if s.Definition == "setpoint" {
+			if unit := firstDetail(s.Details, "Unit"); unit != "" {
+				return unit
+			}
+		}
+	}
+	unit := templateSetpointUnit()
+	log.Printf("ethermostat: the setpoint service in systemconfig.json declares no unit; using %s from the template. Add a \"details\" block naming a Unit to state it explicitly.\n", unit)
+	return unit
+}
+
+// templateSetpointUnit is the unit the shipped template declares for the
+// setpoint.
+//
+// Configure builds a unit asset entirely from systemconfig.json and never
+// merges the template into it, so a services array written without a details
+// block leaves the setpoint with no unit at all. The README documented exactly
+// such an array, so an operator following it got a system that refused to
+// start, saying the setpoint was configured in "".
+//
+// Falling back is the lesser of the two wrongs: a system that runs on the unit
+// its own template names, and says so, beats one that will not run. A unit that
+// is present but unresolvable is still fatal — that is a statement the operator
+// made and got wrong, rather than one they never made.
+func templateSetpointUnit() string {
+	for _, s := range initTemplate().GetServices() {
 		if s.Definition == "setpoint" {
 			return firstDetail(s.Details, "Unit")
 		}

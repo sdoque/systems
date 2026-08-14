@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
@@ -45,6 +46,49 @@ type Traits struct {
 	LOntologies    map[string]string         `json:"localOntologies"` // map of ontology names to their file paths
 	owner          *components.System        `json:"-"`
 	name           string                    `json:"-"`
+
+	// graph is the assembled cloud, rebuilt when the registry reports a change
+	// rather than when somebody asks for it. Written by the subscriber's
+	// goroutine and read by every request handler, so it is swapped as a whole.
+	graph atomic.Pointer[assembled]
+
+	// rebuilding is what to do when the registry settles. A field so a test can
+	// count rebuilds without a registrar, a cloud, or a triple store.
+	rebuilding func()
+
+	// registry is where the subscription reads from, discovered like any other
+	// consumed service so the stream carries a token in an authorized cloud.
+	registry components.Cervice
+}
+
+// assembled is one build of the graph and the moment it was made.
+type assembled struct {
+	turtle string
+	at     time.Time
+}
+
+// store keeps a freshly assembled graph for readers.
+func (t *Traits) store(turtle string) {
+	t.graph.Store(&assembled{turtle: turtle, at: time.Now()})
+}
+
+// current returns the graph last assembled, and whether there is one.
+func (t *Traits) current() (*assembled, bool) {
+	a := t.graph.Load()
+	return a, a != nil
+}
+
+// registryToken returns the token to present on the subscription, if the cloud
+// issues one. An unauthorized cloud issues none and the stream carries none.
+func (t *Traits) registryToken() (string, bool) {
+	for _, nodes := range t.registry.Nodes {
+		for _, ni := range nodes {
+			if token, discovered := ni.TokenFor("read"); discovered {
+				return token, true
+			}
+		}
+	}
+	return "", false
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -117,6 +161,17 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		serving(t, w, r, servicePath)
 	}
 
+	// The registry is a consumed service like any other, so that in an
+	// authorized cloud the subscription carries a token minted for reading it.
+	t.registry = components.Cervice{
+		Definition: "syslist",
+		Protos:     components.SProtocols(sys.Husk.ProtoPort),
+		Nodes:      make(map[string][]components.NodeInfo),
+		Mode:       "get",
+	}
+
+	go t.follow(sys.Ctx)
+
 	return ua, func() {
 		log.Println("Disconnecting from GraphDB")
 	}
@@ -142,12 +197,30 @@ func resolveLocalOntologies(localOntologies map[string]string, dir string, baseU
 func (t *Traits) aggregate(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
+		// Served from the last build. The subscriber rebuilds when the registry
+		// reports a change, so this is the cloud as of that change rather than
+		// as of this request — and a reader costs nothing, where it used to cost
+		// one call to the registrar, one to every system, and an upload to the
+		// triple store.
+		if a, ok := t.current(); ok {
+			w.Header().Set("Content-Type", "text/turtle")
+			w.Header().Set("Last-Modified", a.at.UTC().Format(http.TimeFormat))
+			if _, err := w.Write([]byte(a.turtle)); err != nil {
+				log.Printf("kgrapher: writing the graph: %v\n", err)
+			}
+			return
+		}
+
+		// Nothing built yet: the subscriber has not had its first event, or the
+		// registry has never been reachable. Build once here rather than answer
+		// with nothing.
 		graph, err := t.assembleOntologies()
 		if err != nil {
 			log.Printf("kgrapher: %v\n", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
 		}
+		t.store(graph)
 		w.Header().Set("Content-Type", "text/turtle")
 		if _, err := w.Write([]byte(graph)); err != nil {
 			log.Printf("kgrapher: writing the graph: %v\n", err)

@@ -142,7 +142,18 @@ func resolveLocalOntologies(localOntologies map[string]string, dir string, baseU
 func (t *Traits) aggregate(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		t.assembleOntologies(w)
+		graph, err := t.assembleOntologies()
+		if err != nil {
+			log.Printf("kgrapher: %v\n", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/turtle")
+		if _, err := w.Write([]byte(graph)); err != nil {
+			log.Printf("kgrapher: writing the graph: %v\n", err)
+			return
+		}
+		t.publishToStore(graph)
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}
@@ -164,12 +175,19 @@ func (t *Traits) listOntologies(w http.ResponseWriter, r *http.Request) {
 // -------------------------------------Unit asset's function methods
 
 // assembleOntologies gets the list of systems from the lead registrar and then the ontology of each system
-func (t *Traits) assembleOntologies(w http.ResponseWriter) {
+// assembleOntologies fetches every registered system's ontology and returns the
+// assembled graph.
+//
+// It no longer writes the graph anywhere. Building it is expensive — one request
+// to the registrar and one to each system in the cloud — and doing that inside
+// the handler meant every reader paid for it, and every reader also triggered a
+// fresh upload to the triple store. Separating the two lets the graph be built
+// when the cloud changes and read as often as anyone likes.
+func (t *Traits) assembleOntologies() (string, error) {
 	leadingRegistrarURL, err := components.GetRunningCoreSystemURL(t.owner, "serviceregistrar")
 	if err != nil {
 		log.Printf("Error getting the leading service registrar URL: %s\n", err)
-		http.Error(w, "Internal Server Error: unable to get leading service registrar URL", http.StatusInternalServerError)
-		return
+		return "", fmt.Errorf("%s", "Internal Server Error: unable to get leading service registrar URL")
 	}
 	leadUrl := leadingRegistrarURL + "/syslist"
 
@@ -179,7 +197,7 @@ func (t *Traits) assembleOntologies(w http.ResponseWriter) {
 	req, err := http.NewRequest(http.MethodGet, leadUrl, nil)
 	if err != nil {
 		log.Printf("Error getting the systems list from service registrar, %s\n", err)
-		return
+		return "", err
 	}
 	req = req.WithContext(ctx)
 
@@ -189,32 +207,32 @@ func (t *Traits) assembleOntologies(w http.ResponseWriter) {
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("Error receiving the systems list from service registrar, %s\n", err)
-		return
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Printf("GetRValue-Error reading registration response body: %v", err)
-		return
+		return "", err
 	}
 
 	contentType := resp.Header.Get("Content-Type")
 	mediaType, _, err := mime.ParseMediaType(contentType)
 	if err != nil {
 		fmt.Println("Error parsing media type:", err)
-		return
+		return "", err
 	}
 	sL, err := usecases.Unpack(bodyBytes, mediaType)
 	if err != nil {
 		log.Printf("error extracting the systems list reply %v\n", err)
-		return
+		return "", err
 	}
 
 	systemsList, ok := sL.(*forms.SystemRecordList_v1)
 	if !ok {
 		fmt.Println("Problem unpacking the service registration reply")
-		return
+		return "", err
 	}
 
 	prefixes := make(map[string]bool)
@@ -276,16 +294,14 @@ func (t *Traits) assembleOntologies(w http.ResponseWriter) {
 				local[v] = struct{}{}
 			}
 			if len(local) > 1 {
-				http.Error(w, fmt.Sprintf("Bad Request: system %s has conflicting afo:isContainedIn values", extractSubject(blk)), http.StatusBadRequest)
-				return
+				return "", fmt.Errorf("%s", fmt.Sprintf("Bad Request: system %s has conflicting afo:isContainedIn values", extractSubject(blk)))
 			}
 			for k := range local {
 				seen[k] = struct{}{}
 			}
 		}
 		if len(seen) == 0 {
-			http.Error(w, "Bad Request: no afo:isContainedIn found; please declare a LocalCloud in at least one system", http.StatusBadRequest)
-			return
+			return "", fmt.Errorf("%s", "Bad Request: no afo:isContainedIn found; please declare a LocalCloud in at least one system")
 		}
 		if len(seen) > 1 {
 			var all []string
@@ -293,8 +309,7 @@ func (t *Traits) assembleOntologies(w http.ResponseWriter) {
 				all = append(all, k)
 			}
 			sort.Strings(all)
-			http.Error(w, fmt.Sprintf("Bad Request: multiple LocalClouds detected across systems: %v", all), http.StatusBadRequest)
-			return
+			return "", fmt.Errorf("%s", fmt.Sprintf("Bad Request: multiple LocalClouds detected across systems: %v", all))
 		}
 		for k := range seen {
 			cloudIRI = k
@@ -325,9 +340,12 @@ func (t *Traits) assembleOntologies(w http.ResponseWriter) {
 	for _, block := range uniqueIndividuals {
 		graph += block + "\n\n"
 	}
+	return graph, nil
+}
 
-	w.Header().Set("Content-Type", "text/turtle")
-	w.Write([]byte(graph))
+// publishToStore writes the assembled graph to the triple store, first as a
+// timestamped snapshot and then as the current graph.
+func (t *Traits) publishToStore(graph string) {
 
 	snapshotT := time.Now().UTC().Format(time.RFC3339)
 	snapshotIRI := "urn:snapshots:" + snapshotT
@@ -337,7 +355,7 @@ func (t *Traits) assembleOntologies(w http.ResponseWriter) {
 
 	gspURL := repoBase + "/rdf-graphs/service?graph=" + url.QueryEscape(snapshotIRI)
 
-	req, err = http.NewRequest(http.MethodPut, gspURL, bytes.NewBuffer([]byte(graph)))
+	req, err := http.NewRequest(http.MethodPut, gspURL, bytes.NewBuffer([]byte(graph)))
 	if err != nil {
 		log.Println("Error creating snapshot PUT:", err)
 		return
@@ -347,8 +365,8 @@ func (t *Traits) assembleOntologies(w http.ResponseWriter) {
 	// Triple-store endpoint is typically HTTP-only on localhost, but use the
 	// framework transport for consistency in case the deployment ever moves
 	// it to HTTPS.
-	client = &http.Client{Transport: http.DefaultClient.Transport}
-	resp, err = client.Do(req)
+	client := &http.Client{Transport: http.DefaultClient.Transport}
+	resp, err := client.Do(req)
 	if err != nil {
 		log.Println("Error PUTting snapshot:", err)
 		return

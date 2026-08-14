@@ -20,6 +20,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -153,5 +154,54 @@ func TestAGetDuringShutdownIsRefusedNotAPanic(t *testing.T) {
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("a GET during shutdown returned %d, want 503", w.Code)
+	}
+}
+
+// TestNoReadingIsNotZeroDegrees is follow-up finding N7: temperature and tStamp
+// stay at their zero values until the reader succeeds, and the tray handler
+// answered regardless. A thermostat given 0 °C computes an error of twenty and
+// holds the valve wide open, and nothing in the reading distinguishes that from
+// a genuinely cold room.
+//
+// The bounds check added earlier made it worse rather than better: a chip stuck
+// at its 85 °C power-on value is now refused on every tick, so the asset would
+// have served 0.000 for the life of the process while its own log said it was
+// discarding bad readings.
+func TestNoReadingIsNotZeroDegrees(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tr := &Traits{
+		trayChan: make(chan STray),
+		name:     "28-00000f030cef",
+		ctx:      ctx,
+		unit:     celsius(),
+	}
+	go tr.readTemperature(ctx)
+
+	// Nothing has been read: the reader is looking at a device file that is not
+	// there, so tStamp is still zero.
+	w := httptest.NewRecorder()
+	tr.readTemp(w, httptest.NewRequest(http.MethodGet, "/temperature", nil))
+
+	if w.Code == http.StatusOK {
+		t.Fatalf("a sensor that has never read served %q", strings.TrimSpace(w.Body.String()))
+	}
+	// Not ready, rather than broken: a control loop should come back.
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("status %d; want 503 so a consumer retries rather than gives up", w.Code)
+	}
+
+	// Once a reading lands, it is served.
+	tr.temperature = 21.5
+	tr.tStamp = time.Now()
+
+	w = httptest.NewRecorder()
+	tr.readTemp(w, httptest.NewRequest(http.MethodGet, "/temperature", nil))
+	if w.Code != http.StatusOK {
+		t.Errorf("a real reading was refused with %d: %s", w.Code, strings.TrimSpace(w.Body.String()))
+	}
+	if !strings.Contains(w.Body.String(), "21.5") {
+		t.Errorf("the reading did not reach the caller: %s", strings.TrimSpace(w.Body.String()))
 	}
 }

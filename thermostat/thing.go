@@ -364,10 +364,17 @@ func (t *Traits) updateValvePosition(position float64) {
 
 	op, err := usecases.Pack(&of, "application/json")
 	if err != nil {
+		log.Printf("cannot pack the valve position: %s\n", err)
 		return
 	}
-	_, err = usecases.SetState(t.cervices["rotation"], t.owner, op)
-	_ = err
+	// Reported, not discarded. With the servo unreachable, SetState resets the
+	// node cache and returns an error; saying nothing about it left the loop
+	// printing "valve set at 100.00%%" every ten seconds while nothing had been
+	// set at all — and made the discovery half of the same fault, which this
+	// controller was also carrying, impossible to notice from the log.
+	if _, err := usecases.SetState(t.cervices["rotation"], t.owner, op); err != nil {
+		log.Printf("cannot set the valve position: %s\n", err)
+	}
 }
 
 // adoptUnits takes the units this controller reports in from its configured

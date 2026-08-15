@@ -109,7 +109,13 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	setpointCervice := newSetpointCervice(sProtocols)
 
 	ua := &components.UnitAsset{
-		Name:        configuredAsset.Name,
+		Name: configuredAsset.Name,
+		// From the configuration, like the name beside it. Leaving this field out
+		// left the running asset with no mission whatever the file said, and the
+		// framework refuses to start a system whose assets do not classify
+		// themselves — so flattener could not start, on a machine where the
+		// configuration named "control" all along.
+		Mission:     configuredAsset.Mission,
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),

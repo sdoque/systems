@@ -177,8 +177,14 @@ func newModuleAsset(info moduleInfo, stationName string, sys *components.System,
 	}
 
 	ua := &components.UnitAsset{
-		Name:    info.assetName,
-		Mission: "provide_weather_data",
+		Name: info.assetName,
+		// The taxonomy's value, not a phrase. This field carried
+		// "provide_weather_data", which reads like a mission but is not one of
+		// them, and the framework validates every constructed asset before the
+		// system starts — so this system could not start at all. The template
+		// that seeds the configuration file has always said measurement, which
+		// is what these assets do: they report readings from a weather station.
+		Mission: components.MissionMeasurement,
 		Owner:   sys,
 		Details: map[string][]string{
 			"FunctionalLocation": {stationName},

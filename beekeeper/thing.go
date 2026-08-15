@@ -110,8 +110,15 @@ type assetEntry struct {
 // initTemplate returns a template UnitAsset that seeds systemconfig.json on first run.
 func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
-		Name:        "BeekeeperGateway",
-		Mission:     "expose_zigbee_devices",
+		Name: "BeekeeperGateway",
+		// A mission from the taxonomy rather than a description of the system.
+		// "expose_zigbee_devices" is neither, and this template is what seeds a
+		// systemconfig.json on a first run — so a fresh installation was written
+		// a value the framework would refuse. Actuation because driving a plug
+		// or a light is what distinguishes this gateway from a sensor; the
+		// assets it builds from device discovery decide for themselves, and a
+		// device it can only read declares measurement there.
+		Mission:     components.MissionActuation,
 		Details:     map[string][]string{},
 		ServicesMap: components.Services{},
 		Traits: &DeconzConfig{

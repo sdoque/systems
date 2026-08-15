@@ -100,9 +100,28 @@ func newResource(uac usecases.ConfigurableAsset, sys *components.System) (*compo
 		toggleHandler(t, w, r, sys.Ctx)
 	})
 
+	// Taken from the configuration, like every other system's asset, rather than
+	// written here. The literal that used to be in this field was
+	// "web_dashboard", which is not one of the missions — so the system refused
+	// to start, whatever its configuration file said. The template that seeds
+	// that file has always said aggregation, which is what this asset does: it
+	// collects the state of every discovered OnOff service and presents the set.
+	//
+	// The template is also the fallback, so a configuration written before this
+	// asset had a name or mission still starts.
+	name, mission := uac.Name, uac.Mission
+	if tmpl := initTemplate(); name == "" || mission == "" {
+		if name == "" {
+			name = tmpl.Name
+		}
+		if mission == "" {
+			mission = tmpl.Mission
+		}
+	}
+
 	ua := &components.UnitAsset{
-		Name:    "BeehiveDashboard",
-		Mission: "web_dashboard",
+		Name:    name,
+		Mission: mission,
 		Owner:   sys,
 		Details: map[string][]string{},
 		ServicesMap: components.Services{

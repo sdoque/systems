@@ -92,7 +92,19 @@ func (t *Traits) followOnce(ctx context.Context) error {
 	req.Header.Set("Accept", "text/event-stream")
 	// The stream is a continuous read of the registry, so it carries the token
 	// for a read like any other call. GetState builds the request itself and
-	// cannot hold a connection open, so the token is attached here.
+	// cannot hold a connection open, so both the discovery and the token are
+	// done here.
+	//
+	// Discovered on each attempt rather than once at startup: a token outlives
+	// neither the authorizer that minted it nor this connection, and a
+	// reconnection is exactly when the old one is most likely to have expired.
+	//
+	// A cloud with no authorizer mints nothing, and discovery there either
+	// returns a node without a token or fails outright. Neither is a reason not
+	// to subscribe — the registry will say whether it wants one.
+	if err := usecases.Search4ServicesAs(&t.registry, t.owner, "read"); err != nil {
+		log.Printf("kgrapher: no token for the registry subscription (%v); subscribing without one\n", err)
+	}
 	if token, ok := t.registryToken(); ok && token != "" {
 		req.Header.Set(usecases.TokenHeader, token)
 	}

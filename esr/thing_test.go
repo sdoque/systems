@@ -836,3 +836,32 @@ func TestDeregistrationIsReportedWithWhatLeft(t *testing.T) {
 		t.Errorf("the event does not say what left: %+v", gone[0].Record)
 	}
 }
+
+// TestTheRegistrarStreamsOnADeclaredService is about the difference between a
+// path that answers and a service the cloud knows about.
+//
+// /syslist answered for a while without being declared. That works only in a
+// cloud whose registrar has no authorizer to consult — where the framework lets
+// an unknown path through — and returns 404 in one that does, which is the case
+// the subscription exists for. Undeclared, it is also invisible to the
+// Orchestrator, so a subscriber cannot be told where it is or be given a token
+// to read it, and it appears nowhere in the knowledge graph.
+//
+// The configuration here has no services at all, which is what every registrar
+// deployed before this service existed has: a template is written only when
+// there is no systemconfig.json, and never merged into one that is already
+// there. So the declaration alone would have left those registrars 404ing.
+func TestTheRegistrarStreamsOnADeclaredService(t *testing.T) {
+	sys := createTestSystem()
+	ua, cleanup := newResource(createConfAssetMultipleTraits(), &sys)
+	defer cleanup()
+
+	serv, declared := ua.ServicesMap[systemListPath]
+	if !declared {
+		t.Fatalf("the registrar serves %q but does not declare it, so an authorized "+
+			"cloud answers 404 there and the Orchestrator cannot find it", systemListPath)
+	}
+	if serv.Definition == "" {
+		t.Error("the service has no definition, so the authorizer has no policy to apply to it")
+	}
+}

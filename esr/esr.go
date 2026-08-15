@@ -112,7 +112,7 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 		t.cleanDB(w, r)
 	case "status":
 		t.roleStatus(w, r)
-	case "syslist":
+	case systemListPath:
 		t.systemList(w, r)
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)

@@ -106,6 +106,13 @@ const subscriberBuffer = 256
 
 //-------------------------------------Instantiate a unit asset template
 
+// systemListPath is the sub-path the registrar lists and streams itself on. A
+// constant because it is named in three places — the declaration, the backfill
+// for configurations written before it existed, and the dispatch in esr.go — and
+// a path that answers but is not declared behaves differently depending on
+// whether the cloud has an authorizer.
+const systemListPath = "syslist"
+
 // initTemplate initializes a UnitAsset with default values.
 func initTemplate() *components.UnitAsset {
 	registerService := components.Service{
@@ -133,6 +140,19 @@ func initTemplate() *components.UnitAsset {
 		Description: "reports (GET) the role of the Service Registrar as leading or on stand by",
 	}
 
+	// Declared like the other four, and for the same reason. A path that answers
+	// without being declared is outside everything the cloud knows about itself:
+	// the authorizer has no policy to apply to it, the Orchestrator cannot tell a
+	// subscriber where it is, and it appears nowhere in the knowledge graph. It
+	// answered at all only in a cloud whose registrar had no authorizer to ask —
+	// where an undeclared path is let through — and returned 404 in one that did.
+	systemListService := components.Service{
+		Definition:  systemListPath,
+		SubPath:     systemListPath,
+		Details:     map[string][]string{"Forms": {"RegistryEvent_v1"}},
+		Description: "lists the registered systems (GET), as a page for a deployment technician or, when the request asks for text/event-stream, as a subscription that reports each registration and deregistration as it happens",
+	}
+
 	return &components.UnitAsset{
 		Name:    "registry",
 		Mission: components.MissionCore,
@@ -142,6 +162,7 @@ func initTemplate() *components.UnitAsset {
 			queryService.SubPath:      &queryService,
 			unregisterService.SubPath: &unregisterService,
 			statusService.SubPath:     &statusService,
+			systemListService.SubPath: &systemListService,
 		},
 	}
 }
@@ -168,6 +189,20 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
 		Traits:      t,
 	}
+	// Added if the configuration does not already have it, because a template is
+	// only ever written to a systemconfig.json that does not exist yet — it never
+	// merges into one that does. Every registrar deployed before this service
+	// existed has a configuration without it, and left to the file alone they
+	// would answer 404 on a path the framework itself depends on.
+	//
+	// Safe to add rather than to overwrite: an operator who has configured
+	// syslist keeps what they configured. This is the registrar describing how it
+	// exposes itself, not an asset anyone is expected to opt into.
+	if _, configured := ua.ServicesMap[systemListPath]; !configured {
+		s := initTemplate().ServicesMap[systemListPath]
+		ua.ServicesMap[systemListPath] = s
+	}
+
 	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
 		serving(t, w, r, servicePath)
 	}

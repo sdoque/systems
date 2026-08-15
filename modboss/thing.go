@@ -62,7 +62,13 @@ func initTemplate() *components.UnitAsset {
 	}
 
 	return &components.UnitAsset{
-		Name:    "PLC with Modbus slave",
+		Name: "PLC with Modbus slave",
+		// The fallback for a service that declares no mission of its own. Every
+		// service this system builds at runtime derives one from its register's
+		// access mode, so in practice this reaches the generated configuration
+		// rather than a running service — but without it there is nothing to
+		// fall back to, and the system refuses to start.
+		Mission: components.MissionMeasurement,
 		Details: map[string][]string{"PLC": {"Wago"}, "FunctionalLocation": {"A2307"}},
 		ServicesMap: components.Services{
 			access.SubPath: &access,

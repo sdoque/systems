@@ -93,7 +93,12 @@ func initTemplate() *components.UnitAsset {
 	}
 
 	return &components.UnitAsset{
-		Name:    "Kitchen/temperature",
+		Name: "Kitchen/temperature",
+		// A bridged topic carries a reading, which is what the template's own
+		// service beside this declares. Load-bearing rather than a fallback:
+		// the topic services this system builds declare no mission of their
+		// own, so every one of them takes this.
+		Mission: components.MissionMeasurement,
 		Details: map[string][]string{"mqtt": {"home"}},
 		ServicesMap: components.Services{
 			access.SubPath: &access,
@@ -153,7 +158,10 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	configuredAsset.Details = components.MergeDetails(configuredAsset.Details, topicDetails)
 
 	ua := &components.UnitAsset{
-		Name:    assetName,
+		Name: assetName,
+		// From the configuration, so a topic that carries something other than
+		// a reading can say so without this system being changed.
+		Mission: configuredAsset.Mission,
 		Owner:   sys,
 		Details: configuredAsset.Details,
 		Traits:  t,

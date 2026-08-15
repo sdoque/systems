@@ -54,7 +54,13 @@ func initTemplate() *components.UnitAsset {
 		Description: "stores a new message in the log database",
 	}
 	return &components.UnitAsset{
-		Name:        "log",
+		Name: "log",
+		// What this asset does: it takes messages from the systems of the cloud
+		// and keeps them. Declared because the framework refuses to start a
+		// system whose assets do not classify themselves, and no mission was
+		// declared here or on the service — so messenger could not start from
+		// the configuration it writes itself.
+		Mission:     components.MissionLogging,
 		Details:     map[string][]string{},
 		ServicesMap: components.Services{service.SubPath: &service},
 	}
@@ -71,7 +77,10 @@ func newResource(ca usecases.ConfigurableAsset, sys *components.System) (*compon
 		owner:    sys,
 	}
 	ua := &components.UnitAsset{
-		Name:        ca.Name,
+		Name: ca.Name,
+		// From the configuration, like the name beside it, so an operator who
+		// changes it is obeyed.
+		Mission:     ca.Mission,
 		Owner:       sys,
 		Details:     ca.Details,
 		ServicesMap: usecases.MakeServiceMap(ca.Services),

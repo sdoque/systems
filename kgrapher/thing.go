@@ -50,6 +50,12 @@ type Traits struct {
 	// goroutine and read by every request handler, so it is swapped as a whole.
 	graph atomic.Pointer[assembled]
 
+	// silenceFor overrides how long the stream may say nothing before it is
+	// treated as dead. Zero means silenceLimit. A field so a test can drive the
+	// watchdog itself rather than the context, which would pass whether or not
+	// the watchdog existed.
+	silenceFor time.Duration
+
 	// rebuilding is what to do when the registry settles. A field so a test can
 	// count rebuilds without a registrar, a cloud, or a triple store.
 	rebuilding func()

@@ -112,3 +112,82 @@ func TestTheGraphIsRebuiltAfterTheRegistrySettles(t *testing.T) {
 	}
 	t.Errorf("the registry went quiet but the graph was never rebuilt (%d rebuilds)", rebuilds.Load())
 }
+
+// TestASilentStreamIsTreatedAsDead is the failure "it never gives up" did not
+// cover.
+//
+// A NAT idle timeout, a partition, or a registrar killed without a FIN leaves
+// the subscriber blocked in a read that never returns. followOnce never returns,
+// so follow never reconnects, and the graph goes on describing a cloud this
+// system stopped watching — with no log line, because nothing failed. It is the
+// one shape of failure that produces no evidence.
+//
+// The registry writes a keep-alive comment on an idle stream, so silence past
+// the limit is a dead connection rather than a quiet cloud. This drives it with
+// a body that never ends and never says anything.
+func TestASilentStreamIsTreatedAsDead(t *testing.T) {
+	// A body that blocks until the test is done: the stream is open and mute.
+	done := make(chan struct{})
+	defer close(done)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(blockingReader{done}),
+	}
+
+	// A short limit so the watchdog itself is what fires. Driving this with the
+	// context instead would pass whether or not the watchdog existed, which is
+	// no test of it at all.
+	tr := &Traits{rebuilding: func() {}, silenceFor: 200 * time.Millisecond}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	read := make(chan error, 1)
+	go func() { read <- tr.read(ctx, resp) }()
+
+	select {
+	case err := <-read:
+		if err == nil {
+			t.Fatal("a silent stream ended without an error, so follow would not reconnect")
+		}
+		if !strings.Contains(err.Error(), "keep-alive") {
+			t.Errorf("the stream ended with %q; the watchdog is what should have ended "+
+				"it, and its reason is what tells an operator the connection died", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("read never returned on a stream that said nothing: the subscriber is " +
+			"stuck and the graph is stale with nothing in the log to say so")
+	}
+}
+
+// blockingReader is a stream that stays open and never speaks.
+type blockingReader struct{ done <-chan struct{} }
+
+func (b blockingReader) Read(p []byte) (int, error) {
+	<-b.done
+	return 0, io.EOF
+}
+
+// The watchdog has to be reset by the registry's keep-alive comments, or a
+// healthy but idle stream is torn down every silenceLimit — which is worse than
+// no watchdog, because a reconnection re-reads the whole registry and every
+// system's ontology with it.
+func TestAKeepAliveKeepsTheStreamOpen(t *testing.T) {
+	if silenceLimit <= keepAliveExpectation {
+		t.Errorf("silenceLimit is %s and the registry writes a keep-alive every %s; "+
+			"a healthy stream would be torn down between beats", silenceLimit, keepAliveExpectation)
+	}
+	// Room for a missed beat rather than exactly one interval, so a slow moment
+	// does not cost a reconnection and a full rebuild.
+	if silenceLimit < 2*keepAliveExpectation {
+		t.Errorf("silenceLimit is %s, less than two keep-alive intervals (%s): one "+
+			"missed beat reconnects the subscriber", silenceLimit, keepAliveExpectation)
+	}
+}
+
+// keepAliveExpectation is the registrar's keep-alive interval as this subscriber
+// assumes it. The registry defines it; stated here so a change to either one
+// that breaks the relationship fails a test rather than a deployment.
+const keepAliveExpectation = 20 * time.Second

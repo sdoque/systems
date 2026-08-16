@@ -50,6 +50,20 @@ const (
 	// events reconnect on any interruption, and a registrar that is restarting
 	// should not be hammered while it does.
 	retryAfter = 5 * time.Second
+
+	// silenceLimit is how long the stream may say nothing at all before it is
+	// treated as dead.
+	//
+	// The registry writes a keep-alive comment every 20 seconds, so silence past
+	// this is not a quiet cloud — it is a connection that no longer exists. Left
+	// to itself the read blocks forever: followOnce never returns, follow never
+	// reconnects, and the graph goes on describing a cloud it stopped watching,
+	// without a line in the log to say so. That is the one failure mode "it
+	// never gives up" did not cover.
+	//
+	// Three keep-alives, so a missed one or a slow moment does not cost a
+	// reconnection.
+	silenceLimit = 65 * time.Second
 )
 
 // follow keeps the graph current by watching the service registry.
@@ -66,15 +80,19 @@ const (
 // grapher that quietly stopped watching would keep serving a graph that looked
 // current.
 func (t *Traits) follow(ctx context.Context) {
+	attempt := 0
 	for {
 		if err := t.followOnce(ctx); err != nil && ctx.Err() == nil {
-			log.Printf("kgrapher: the registry subscription ended (%v); reconnecting in %s\n", err, retryAfter)
+			log.Printf("kgrapher: the registry subscription ended (%v); reconnecting shortly\n", err)
+		} else {
+			attempt = 0 // a connection that worked starts the backoff again
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(retryAfter):
+		case <-time.After(backoff(attempt)):
 		}
+		attempt++
 	}
 }
 
@@ -135,12 +153,27 @@ func (t *Traits) read(ctx context.Context, resp *http.Response) error {
 	events := make(chan string)
 	done := make(chan error, 1)
 
+	// alive carries "the connection said something", which includes the registry's
+	// keep-alive comments. Separate from events because a comment is not a change
+	// and must not start a rebuild, but it is exactly what tells us the stream is
+	// still there.
+	alive := make(chan struct{}, 1)
+
 	go func() {
 		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		// The snapshot is the whole system list on one line, so this bounds how
+		// large a cloud this subscriber can follow. Past the limit the scanner
+		// fails with bufio.ErrTooLong, followOnce returns and follow retries for
+		// ever — an error that does not obviously mean "your cloud outgrew a
+		// buffer". 8 MB is thousands of systems.
+		scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 		var kind string
 		for scanner.Scan() {
 			line := scanner.Text()
+			select {
+			case alive <- struct{}{}:
+			default: // already flagged; the watchdog only needs to know it is alive
+			}
 			switch {
 			case strings.HasPrefix(line, "event: "):
 				kind = strings.TrimPrefix(line, "event: ")
@@ -157,11 +190,34 @@ func (t *Traits) read(ctx context.Context, resp *http.Response) error {
 		done <- scanner.Err()
 	}()
 
+	limit := t.silenceFor
+	if limit == 0 {
+		limit = silenceLimit
+	}
+	silence := time.NewTimer(limit)
+	defer silence.Stop()
+
 	var settle <-chan time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-alive:
+			if !silence.Stop() {
+				select {
+				case <-silence.C:
+				default:
+				}
+			}
+			silence.Reset(limit)
+		case <-silence.C:
+			// Nothing at all, not even a keep-alive. Returning hands this to
+			// follow, which reconnects — and a reconnection re-reads the whole
+			// registry, so nothing missed during the silence stays missed.
+			if settle != nil {
+				t.settled()
+			}
+			return fmt.Errorf("the registry said nothing for %s, not even a keep-alive", limit)
 		case err := <-done:
 			if settle != nil {
 				// Events arrived and the connection dropped before the registry
@@ -218,4 +274,20 @@ func (t *Traits) rebuild() {
 	t.store(graph)
 	t.publishToStore(graph)
 	log.Printf("kgrapher: the graph now describes the cloud as of this change\n")
+}
+
+// backoff is how long to wait before the next attempt, growing with consecutive
+// failures and jittered.
+//
+// A fixed delay meant every subscriber in the cloud reconnected in lockstep
+// after a registrar restart, arriving together at the moment it is least able to
+// answer. Growing it means a registrar that is down for a while is not asked
+// every five seconds by everyone for the duration.
+func backoff(attempt int) time.Duration {
+	wait := retryAfter << min(attempt, 4) // 5s, 10s, 20s, 40s, 80s
+	// Jitter is what actually breaks the lockstep; the growth only bounds the
+	// cost. Derived from the attempt and the clock rather than a random source,
+	// which keeps this testable and needs no seeding.
+	jitter := time.Duration(time.Now().UnixNano()%int64(wait/2)) - wait/4
+	return wait + jitter
 }

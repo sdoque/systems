@@ -104,6 +104,28 @@ type subscriber struct {
 // costs in memory.
 const subscriberBuffer = 256
 
+// keepAlive is how often the registry writes a comment line to an idle stream.
+//
+// Without one, a subscriber cannot tell a cloud where nothing is happening from
+// a connection that no longer exists. A stream is idle most of the time by
+// design — registrations renew, and renewals are deliberately not events — so
+// the silent case is the normal case, and a NAT idle timeout, a partition or a
+// registrar killed without a FIN all leave the subscriber blocked on a read
+// that will never return. It keeps its stale graph and logs nothing.
+//
+// A comment line rather than an event: SSE parsers ignore lines beginning with
+// a colon, so this costs subscribers nothing to receive and nothing to handle.
+const keepAlive = 20 * time.Second
+
+// maxSubscribers bounds the open streams.
+//
+// Each holds a buffer of whole service records, and nothing stops a client in a
+// reconnect loop — or anyone at all in a cloud with no authorizer — from opening
+// them until the registrar runs out of memory. notify also walks every one of
+// them under a lock on each registration, so the cost of an idle subscriber is
+// paid by every system that registers.
+const maxSubscribers = 64
+
 //-------------------------------------Instantiate a unit asset template
 
 // systemListPath is the sub-path the registrar lists and streams itself on. A
@@ -723,13 +745,22 @@ func (t *Traits) systemList(w http.ResponseWriter, r *http.Request) {
 // The same snapshot is re-sent if the registry had to drop events for being too
 // far ahead of this connection.
 func (t *Traits) systemListStream(w http.ResponseWriter, r *http.Request) {
+	// Taken before the headers, so a refusal can still be a refusal. sseHeaders
+	// commits the response to 200 and text/event-stream, and http.Error after
+	// that writes its message into the stream body under a status the client has
+	// already been given.
+	sub, remove := t.addSubscriber()
+	if sub == nil {
+		log.Printf("registry stream: refusing a subscription; %d are already open\n", maxSubscribers)
+		http.Error(w, "too many subscriptions are open on this registrar", http.StatusServiceUnavailable)
+		return
+	}
+	defer remove()
+
 	flusher, ok := sseHeaders(w)
 	if !ok {
 		return
 	}
-
-	sub, remove := t.addSubscriber()
-	defer remove()
 
 	send := func(eventName string, payload any) bool {
 		body, err := json.Marshal(payload)
@@ -757,10 +788,21 @@ func (t *Traits) systemListStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Written to an idle stream so the subscriber can tell silence from death.
+	beat := time.NewTicker(keepAlive)
+	defer beat.Stop()
+
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-beat.C:
+			// A comment line: every SSE parser ignores it, and a write is what
+			// discovers that the connection has gone.
+			if _, err := fmt.Fprint(w, ": keep-alive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
 		case event := <-sub.events:
 			if sub.resync.Swap(false) {
 				// Events were dropped, so the ones still queued describe an
@@ -783,6 +825,10 @@ func (t *Traits) systemListStream(w http.ResponseWriter, r *http.Request) {
 func (t *Traits) addSubscriber() (*subscriber, func()) {
 	sub := &subscriber{events: make(chan forms.RegistryEvent_v1, subscriberBuffer)}
 	t.subMu.Lock()
+	if len(t.subscribers) >= maxSubscribers {
+		t.subMu.Unlock()
+		return nil, nil
+	}
 	t.subSeq++
 	id := t.subSeq
 	t.subscribers[id] = sub

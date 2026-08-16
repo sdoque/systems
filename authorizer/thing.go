@@ -530,7 +530,7 @@ func writePoliciesTemplate(path string) error {
 	starter := Policies{
 		Rules: []Rule{{
 			Subject:            "thermostat-*",
-			Missions:           []string{components.MissionMeasurement},
+			Missions:           []string{components.MissionMeasurement.String()},
 			Actions:            []string{ActionRead},
 			MustMatchAttribute: "FunctionalLocation",
 			TTL:                "5m",

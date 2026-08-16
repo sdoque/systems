@@ -358,7 +358,7 @@ func TestSmartPlugSplitsActuationFromMetering(t *testing.T) {
 			t.Errorf("missionForService(%q): %v", svc, err)
 			continue
 		}
-		if got != mission {
+		if got.String() != mission {
 			t.Errorf("missionForService(%q) = %q; want %q", svc, got, mission)
 		}
 	}

@@ -120,10 +120,10 @@ func TestServing_InvalidPath(t *testing.T) {
 // A node's mission follows the access level the OPC UA server reports, so the
 // classification cannot disagree with what the server will actually permit.
 func TestMissionForAccess(t *testing.T) {
-	if got := missionForAccess(true); got != "actuation" {
+	if got := missionForAccess(true); got.String() != "actuation" {
 		t.Errorf("missionForAccess(true) = %q; want %q", got, "actuation")
 	}
-	if got := missionForAccess(false); got != "measurement" {
+	if got := missionForAccess(false); got.String() != "measurement" {
 		t.Errorf("missionForAccess(false) = %q; want %q", got, "measurement")
 	}
 }
@@ -140,7 +140,7 @@ func TestApplyNodeMissionsLeavesBrowseReadOnly(t *testing.T) {
 	if !ok {
 		t.Fatal("template has no browse service")
 	}
-	if browseServ.Mission != "measurement" {
+	if browseServ.Mission.String() != "measurement" {
 		t.Errorf("browse mission = %q; want %q", browseServ.Mission, "measurement")
 	}
 
@@ -150,15 +150,15 @@ func TestApplyNodeMissionsLeavesBrowseReadOnly(t *testing.T) {
 	if !ok {
 		t.Fatal("template has no access service")
 	}
-	if accessServ.Mission != "" {
+	if accessServ.Mission.String() != "" {
 		t.Errorf("access mission = %q; want it to inherit the asset's", accessServ.Mission)
 	}
 
 	writable := &components.UnitAsset{Mission: missionForAccess(true), ServicesMap: services}
-	if got := components.EffectiveMission(writable, accessServ); got != "actuation" {
+	if got := components.EffectiveMission(writable, accessServ); got.String() != "actuation" {
 		t.Errorf("access effective mission on a writable node = %q; want %q", got, "actuation")
 	}
-	if got := components.EffectiveMission(writable, browseServ); got != "measurement" {
+	if got := components.EffectiveMission(writable, browseServ); got.String() != "measurement" {
 		t.Errorf("browse effective mission on a writable node = %q; want %q", got, "measurement")
 	}
 }

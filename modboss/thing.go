@@ -278,14 +278,14 @@ func registerLocation(parts []string) string {
 // batch counter, say, rather than a motor command) is not distinguishable from
 // the access mode alone. If that distinction is ever needed, the register map
 // entry can carry an explicit mission as a sixth field, after the location.
-func missionForRights(rights string) (string, error) {
+func missionForRights(rights string) (components.Mission, error) {
 	switch strings.ToLower(strings.TrimSpace(rights)) {
 	case "ro":
 		return components.MissionMeasurement, nil
 	case "rw", "wo":
 		return components.MissionActuation, nil
 	}
-	return "", fmt.Errorf("unknown access mode %q: expected ro, rw or wo", rights)
+	return components.Mission{}, fmt.Errorf("unknown access mode %q: expected ro, rw or wo", rights)
 }
 
 func typeOfIO(nameIO string) ioType {

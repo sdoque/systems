@@ -356,7 +356,7 @@ func TestNewResource(t *testing.T) {
 		}
 		cfgAsset := usecases.ConfigurableAsset{
 			Name:     "certification",
-			Mission:  "sign_csrs",
+			Mission:  components.MissionCore,
 			Details:  map[string][]string{"PKI": {"X.509"}},
 			Services: []components.Service{certifySvc},
 		}
@@ -367,8 +367,12 @@ func TestNewResource(t *testing.T) {
 		if ua.GetName() != "certification" {
 			t.Errorf("name = %q, want %q", ua.GetName(), "certification")
 		}
-		if ua.Mission != "sign_csrs" {
-			t.Errorf("mission = %q, want %q", ua.Mission, "sign_csrs")
+		// The taxonomy's value, not a description of the work. This asserted
+		// "sign_csrs", which reads like a mission and is not one — the same
+		// mistake four systems made in their own code, frozen here as an
+		// expectation. The certificate authority is framework infrastructure.
+		if ua.Mission != components.MissionCore {
+			t.Errorf("mission = %q, want %q", ua.Mission, components.MissionCore)
 		}
 		if ua.ServingFunc == nil {
 			t.Error("ServingFunc must be set")

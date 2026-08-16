@@ -34,7 +34,7 @@ func TestInitTemplate(t *testing.T) {
 	if ua.Name != "MeteoStation" {
 		t.Errorf("expected Name %q, got %q", "MeteoStation", ua.Name)
 	}
-	if ua.Mission != "measurement" {
+	if ua.Mission.String() != "measurement" {
 		t.Errorf("expected Mission %q, got %q", "measurement", ua.Mission)
 	}
 

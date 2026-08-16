@@ -204,7 +204,7 @@ func TestVariations(t *testing.T) {
 func TestInitTemplateServiceMissions(t *testing.T) {
 	ua := initTemplate()
 
-	if ua.Mission != "control" {
+	if ua.Mission.String() != "control" {
 		t.Errorf("asset mission = %q; want %q", ua.Mission, "control")
 	}
 
@@ -220,7 +220,7 @@ func TestInitTemplateServiceMissions(t *testing.T) {
 			t.Errorf("service %q missing from the template", subPath)
 			continue
 		}
-		if got := components.EffectiveMission(ua, serv); got != mission {
+		if got := components.EffectiveMission(ua, serv); got.String() != mission {
 			t.Errorf("service %q effective mission = %q; want %q", subPath, got, mission)
 		}
 	}

@@ -108,7 +108,7 @@ func initTemplate() *components.UnitAsset {
 // mission from the access level rather than configuring it means the two cannot
 // disagree — a node that the server refuses to write can never be classified as
 // an actuator.
-func missionForAccess(writable bool) string {
+func missionForAccess(writable bool) components.Mission {
 	if writable {
 		return components.MissionActuation
 	}

@@ -19,7 +19,7 @@ func TestInitTemplate(t *testing.T) {
 	if ua.Name != "BeehiveDashboard" {
 		t.Errorf("Name: got %q, want %q", ua.Name, "BeehiveDashboard")
 	}
-	if ua.Mission != "aggregation" {
+	if ua.Mission.String() != "aggregation" {
 		t.Errorf("Mission: got %q, want %q", ua.Mission, "aggregation")
 	}
 	tr, ok := ua.Traits.(*Traits)

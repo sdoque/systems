@@ -110,11 +110,11 @@ func newResource(uac usecases.ConfigurableAsset, sys *components.System) (*compo
 	// The template is also the fallback, so a configuration written before this
 	// asset had a name or mission still starts.
 	name, mission := uac.Name, uac.Mission
-	if tmpl := initTemplate(); name == "" || mission == "" {
+	if tmpl := initTemplate(); name == "" || mission.IsZero() {
 		if name == "" {
 			name = tmpl.Name
 		}
-		if mission == "" {
+		if mission.IsZero() {
 			mission = tmpl.Mission
 		}
 	}

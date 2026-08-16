@@ -122,7 +122,6 @@ level actually protects.
 | `cloudmodel` | Assembles SysML v2 BDD/IBD models of all systems currently registered in the local cloud |
 | `kgrapher` | Assembles OWL/RDF knowledge graph ontologies of all systems in the local cloud |
 | `democrat` | Bridges the Arrowhead local cloud knowledge graph to FA³ST Asset Administration Shells (AAS) |
-| `messenger` | Centralized logging system that receives and stores log messages from other systems |
 
 ### Learning
 

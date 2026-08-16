@@ -241,8 +241,6 @@ running deployment.
 - **Not in the Makefile's `SYSTEMS` list**, so continuous integration (CI) does
   not lint, test or
   cross-compile it yet.
-- **`messenger` has no mission** and no committed configuration, so it will refuse
-  to start once it is looked at.
 - **Never run end to end on the testbed.** Every layer is unit-tested; none of it
   has met a real Raspberry Pi.
 

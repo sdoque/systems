@@ -146,9 +146,23 @@ func newResources(uac usecases.ConfigurableAsset, sys *components.System) ([]*co
 	}
 }
 
-// parseTraitDefaults extracts and validates the Traits defaults from the configurable asset.
-func parseTraitDefaults(uac usecases.ConfigurableAsset) Traits {
-	d := Traits{SetPt: 20, Period: 10, Kp: 5}
+// traitDefaults is the configured starting point for every heater this system
+// builds — three numbers read from the file, not a running controller.
+//
+// A type of its own because Traits carries the mutex that guards a live control
+// loop, and passing that by value copies the lock: go vet's copylocks refuses
+// it, which is what turned this into a build failure for every module after
+// ethermostat in the Makefile. A bag of configured numbers has nothing to
+// guard, so it should not be carrying the thing that does the guarding.
+type traitDefaults struct {
+	SetPt  float64       `json:"setPoint"`
+	Period time.Duration `json:"samplingPeriod"`
+	Kp     float64       `json:"kp"`
+}
+
+// parseTraitDefaults extracts and validates the trait defaults from the configurable asset.
+func parseTraitDefaults(uac usecases.ConfigurableAsset) traitDefaults {
+	d := traitDefaults{SetPt: 20, Period: 10, Kp: 5}
 	if len(uac.Traits) > 0 {
 		if err := json.Unmarshal(uac.Traits[0], &d); err != nil {
 			log.Println("ethermostat: warning — could not unmarshal traits:", err)
@@ -166,7 +180,7 @@ func parseTraitDefaults(uac usecases.ConfigurableAsset) Traits {
 // discoverHeaters performs one round of service discovery and returns a UnitAsset
 // for every beekeeper OnOff plug whose DisplayName ends in "Heater" and for which
 // a matching meteorologue Temperature service can be found.
-func discoverHeaters(sys *components.System, sProtocols []string, defaults Traits, uac usecases.ConfigurableAsset) []*components.UnitAsset {
+func discoverHeaters(sys *components.System, sProtocols []string, defaults traitDefaults, uac usecases.ConfigurableAsset) []*components.UnitAsset {
 	onOffCer := &components.Cervice{
 		Definition: "OnOff",
 		Protos:     sProtocols,

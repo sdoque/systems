@@ -18,12 +18,10 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -68,7 +66,18 @@ type assembled struct {
 }
 
 // store keeps a freshly assembled graph for readers.
+// store publishes a newly assembled graph, refusing an empty one.
+//
+// Belt and braces beside the error returns in assembleOntologies: an empty
+// graph is never a correct description of a cloud that has at least this
+// grapher in it, and serving one is indistinguishable from serving a good one
+// until somebody reads the triples. Whatever fails upstream, the graph already
+// served is a better answer than nothing.
 func (t *Traits) store(turtle string) {
+	if strings.TrimSpace(turtle) == "" {
+		log.Println("kgrapher: refusing to replace the graph with an empty one")
+		return
+	}
 	t.graph.Store(&assembled{turtle: turtle, at: time.Now()})
 }
 
@@ -79,16 +88,10 @@ func (t *Traits) current() (*assembled, bool) {
 }
 
 // registryToken returns the token to present on the subscription, if the cloud
-// issues one. An unauthorized cloud issues none and the stream carries none.
+// issues one. The subscription holds a connection open and so cannot use
+// SystemList, but it asks for the same token in the same way.
 func (t *Traits) registryToken() (string, bool) {
-	for _, nodes := range t.registry.Nodes {
-		for _, ni := range nodes {
-			if token, discovered := ni.TokenFor("read"); discovered {
-				return token, true
-			}
-		}
-	}
-	return "", false
+	return usecases.RegistryToken(&t.registry, t.owner)
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -257,54 +260,12 @@ func (t *Traits) listOntologies(w http.ResponseWriter, r *http.Request) {
 // fresh upload to the triple store. Separating the two lets the graph be built
 // when the cloud changes and read as often as anyone likes.
 func (t *Traits) assembleOntologies() (string, error) {
-	leadingRegistrarURL, err := components.GetRunningCoreSystemURL(t.owner, "serviceregistrar")
+	// One implementation of this, in the framework. The request was built here
+	// by hand, and in modeler too, and neither carried an access token — so
+	// declaring syslist as a service refused both in exactly the clouds the
+	// declaration was for.
+	systems, err := usecases.SystemList(&t.registry, t.owner)
 	if err != nil {
-		log.Printf("Error getting the leading service registrar URL: %s\n", err)
-		return "", fmt.Errorf("%s", "Internal Server Error: unable to get leading service registrar URL")
-	}
-	leadUrl := leadingRegistrarURL + "/syslist"
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequest(http.MethodGet, leadUrl, nil)
-	if err != nil {
-		log.Printf("Error getting the systems list from service registrar, %s\n", err)
-		return "", err
-	}
-	req = req.WithContext(ctx)
-
-	// Use the framework's TLS-configured transport so this call works
-	// against an HTTPS-only service registrar.
-	client := &http.Client{Transport: http.DefaultClient.Transport}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error receiving the systems list from service registrar, %s\n", err)
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Printf("GetRValue-Error reading registration response body: %v", err)
-		return "", err
-	}
-
-	contentType := resp.Header.Get("Content-Type")
-	mediaType, _, err := mime.ParseMediaType(contentType)
-	if err != nil {
-		fmt.Println("Error parsing media type:", err)
-		return "", err
-	}
-	sL, err := usecases.Unpack(bodyBytes, mediaType)
-	if err != nil {
-		log.Printf("error extracting the systems list reply %v\n", err)
-		return "", err
-	}
-
-	systemsList, ok := sL.(*forms.SystemRecordList_v1)
-	if !ok {
-		fmt.Println("Problem unpacking the service registration reply")
 		return "", err
 	}
 
@@ -312,7 +273,7 @@ func (t *Traits) assembleOntologies() (string, error) {
 	processedBlocks := make(map[string]bool)
 	var uniqueIndividuals []string
 
-	for _, s := range systemsList.List {
+	for _, s := range systems {
 		sysUrl := s + "/kgraph"
 		fmt.Println(sysUrl)
 
@@ -419,6 +380,12 @@ func (t *Traits) assembleOntologies() (string, error) {
 // publishToStore writes the assembled graph to the triple store, first as a
 // timestamped snapshot and then as the current graph.
 func (t *Traits) publishToStore(graph string) {
+	// As in store: an empty graph is not a description of anything, and PUTting
+	// one over urn:current replaces the cloud's knowledge graph with nothing.
+	if strings.TrimSpace(graph) == "" {
+		log.Println("kgrapher: refusing to publish an empty graph to the triple store")
+		return
+	}
 
 	snapshotT := time.Now().UTC().Format(time.RFC3339)
 	snapshotIRI := "urn:snapshots:" + snapshotT

@@ -47,6 +47,11 @@ const PoliciesFile = "policies.json"
 type Traits struct {
 	owner *components.System
 
+	// orchestrator is the common name the orchestrator enrolls under, taken from
+	// this asset's configured details. Empty means the framework's default.
+	// Written once at construction and read on the request path.
+	orchestrator string
+
 	mu       sync.RWMutex
 	policies Policies
 	loadedAt time.Time // modification time of the file the policies came from
@@ -100,6 +105,13 @@ func initTemplate() *components.UnitAsset {
 func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (*components.UnitAsset, func()) {
 	t := &Traits{owner: sys}
 	t.attributesOf = t.subjectAttributes
+	// From the asset's details in systemconfig.json, which is a file an operator
+	// can actually write. It used to be read from Husk.Details, a map nothing
+	// sets from configuration and which no documentation mentions — so the name
+	// it was meant to make configurable stayed hardcoded in practice.
+	if names := configuredAsset.Details["OrchestratorName"]; len(names) > 0 && names[0] != "" {
+		t.orchestrator = names[0]
+	}
 
 	if err := t.reloadPolicies(); err != nil {
 		log.Fatalf("authorizer: %v\n", err)
@@ -297,10 +309,8 @@ func (t *Traits) authorize(w http.ResponseWriter, r *http.Request) {
 // authorized() fails closed against a reachable-but-refusing authorizer, that
 // stopped orchestration cloud-wide.
 func (t *Traits) orchestratorCN() string {
-	if t.owner != nil {
-		if names := t.owner.Husk.Details["OrchestratorName"]; len(names) > 0 && names[0] != "" {
-			return names[0]
-		}
+	if t.orchestrator != "" {
+		return t.orchestrator
 	}
 	return usecases.OrchestratorName
 }

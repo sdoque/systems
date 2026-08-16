@@ -276,7 +276,19 @@ func (t *Traits) readTemperature(ctx context.Context) {
 			}
 			reading, err := usecases.Convert(t.temperature, celsius(), t.unit, false)
 			if err != nil {
-				order.Error <- err
+				// Bounded like the two sends around it. The requesting handler
+				// stops waiting after five seconds, and an unbounded send to a
+				// channel nobody will read again wedges this loop for the life
+				// of the process — every later request then times out against a
+				// system that is up and answering nothing. Hard to reach, since
+				// startup validates the conversion, but the cost of reaching it
+				// is the asset.
+				select {
+				case order.Error <- err:
+				case <-ctx.Done():
+				case <-time.After(5 * time.Second):
+					log.Printf("%s: no one collected the conversion error; the caller had already given up\n", t.name)
+				}
 				continue
 			}
 			var f forms.SignalA_v1a

@@ -175,6 +175,24 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		// the payload would still carry a unit the registration never mentioned.
 		if len(configuredAsset.Services) > 0 {
 			ua.ServicesMap = usecases.MakeServiceMap(configuredAsset.Services)
+			// The two have to be the same word, and nothing made them so. The
+			// definition registered comes from the file; the key looked for in a
+			// JSON payload came from the topic's last segment. The README's
+			// example block names "temperature" beside instructions to add one
+			// asset per topic, so a "Kitchen/temp" topic configured from it
+			// registered as temperature and then looked for a "temp" key that
+			// the payload does not have — a 500 on every GET.
+			//
+			// The configured one wins, because it is what a consumer discovers
+			// this topic by and what an operator wrote deliberately.
+			for _, configured := range configuredAsset.Services {
+				if configured.Definition != "" && configured.Definition != t.definition {
+					log.Printf("telegrapher: topic %q ends in %q but the service is configured as %q; reading %q from the payload\n",
+						topic, t.definition, configured.Definition, configured.Definition)
+					t.definition = configured.Definition
+				}
+				break
+			}
 		} else {
 			access := components.Service{
 				Definition:  service,

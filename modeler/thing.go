@@ -49,7 +49,7 @@ type Traits struct {
 	name      string             `json:"-"`
 	// registry is where the system list is read from, discovered like any other
 	// consumed service so the read carries a token in an authorized cloud.
-	registry components.Cervice `json:"-"`
+	registry *components.Cervice `json:"-"`
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -89,7 +89,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		}
 	}
 
-	t.registry = *usecases.SystemListCervice(sys)
+	t.registry = usecases.SystemListCervice(sys)
 
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
@@ -128,7 +128,7 @@ func (t *Traits) assembleModel(w http.ResponseWriter) {
 	// Through the framework, which discovers the registry service and carries
 	// the access token. This request was built by hand and carried none, so
 	// declaring syslist as a service refused it in any cloud with an authorizer.
-	systems, err := usecases.SystemList(&t.registry, t.owner)
+	systems, err := usecases.SystemList(t.registry, t.owner)
 	if err != nil {
 		log.Printf("Error getting the system list: %s\n", err)
 		http.Error(w, "Service Unavailable: unable to read the service registrar", http.StatusServiceUnavailable)

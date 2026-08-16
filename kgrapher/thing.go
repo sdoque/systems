@@ -56,7 +56,7 @@ type Traits struct {
 
 	// registry is where the subscription reads from, discovered like any other
 	// consumed service so the stream carries a token in an authorized cloud.
-	registry components.Cervice
+	registry *components.Cervice
 }
 
 // assembled is one build of the graph and the moment it was made.
@@ -91,7 +91,7 @@ func (t *Traits) current() (*assembled, bool) {
 // issues one. The subscription holds a connection open and so cannot use
 // SystemList, but it asks for the same token in the same way.
 func (t *Traits) registryToken() (string, bool) {
-	return usecases.RegistryToken(&t.registry, t.owner)
+	return usecases.RegistryToken(t.registry, t.owner)
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -166,7 +166,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 
 	// The registry is a consumed service like any other, so that in an
 	// authorized cloud the subscription carries a token minted for reading it.
-	t.registry = components.Cervice{
+	t.registry = &components.Cervice{
 		Definition: "syslist",
 		Protos:     components.SProtocols(sys.Husk.ProtoPort),
 		Nodes:      make(map[string][]components.NodeInfo),
@@ -264,7 +264,7 @@ func (t *Traits) assembleOntologies() (string, error) {
 	// by hand, and in modeler too, and neither carried an access token — so
 	// declaring syslist as a service refused both in exactly the clouds the
 	// declaration was for.
-	systems, err := usecases.SystemList(&t.registry, t.owner)
+	systems, err := usecases.SystemList(t.registry, t.owner)
 	if err != nil {
 		return "", err
 	}

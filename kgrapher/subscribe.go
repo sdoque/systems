@@ -102,7 +102,7 @@ func (t *Traits) followOnce(ctx context.Context) error {
 	// A cloud with no authorizer mints nothing, and discovery there either
 	// returns a node without a token or fails outright. Neither is a reason not
 	// to subscribe — the registry will say whether it wants one.
-	if err := usecases.Search4ServicesAs(&t.registry, t.owner, "read"); err != nil {
+	if err := usecases.Search4ServicesAs(t.registry, t.owner, "read"); err != nil {
 		log.Printf("kgrapher: no token for the registry subscription (%v); subscribing without one\n", err)
 	}
 	if token, ok := t.registryToken(); ok && token != "" {

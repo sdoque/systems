@@ -262,8 +262,8 @@ func (t *Traits) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !verified {
-		if tlsPort := t.owner.Husk.Bound.Port("https"); tlsPort != 0 {
-			log.Printf("authorizer: refusing an authorization quest that arrived over plain HTTP while %d is serving TLS\n", tlsPort)
+		if tlsPort, expected := t.expectsTLS(); expected {
+			log.Printf("authorizer: refusing an authorization quest that arrived over plain HTTP while %d is for TLS\n", tlsPort)
 			http.Error(w, fmt.Sprintf(
 				"this authorizer requires TLS: reach it at https://<host>:%d/%s/ and give that URL "+
 					"as the authorizer's coreSystems entry", tlsPort, t.owner.Name),
@@ -303,6 +303,29 @@ func (t *Traits) orchestratorCN() string {
 		}
 	}
 	return usecases.OrchestratorName
+}
+
+// expectsTLS reports whether this authorizer should be reached over TLS, and on
+// which port.
+//
+// Latched rather than current, which is the difference between a security
+// control and a coincidence.
+//
+// Reading the current port meant the refusal could switch itself off. The
+// HTTPS server releases its entry when it returns, so an authorizer that had
+// been refusing plaintext for weeks would start accepting it again after a cert
+// rotation or a cancelled context, while continuing to serve on the plain port.
+// EverBound is the latch: once TLS has been served, it stays served as far as
+// this decision is concerned.
+// The window before TLS first binds is deliberately still open: there is no
+// better channel for the orchestrator to have used, and refusing would stop
+// orchestration cloud-wide for a gap the cloud has not yet had the means to
+// close. It is reported instead, by notePlaintextQuest.
+func (t *Traits) expectsTLS() (int, bool) {
+	if port, ok := t.owner.Husk.Bound.EverBound("https"); ok && port != 0 {
+		return port, true
+	}
+	return 0, false
 }
 
 // notePlaintextQuest reports, at most once a minute, that quests are arriving

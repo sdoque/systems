@@ -24,6 +24,7 @@ import (
 
 	"github.com/sdoque/mbaigo/components"
 	"github.com/sdoque/mbaigo/forms"
+	"github.com/sdoque/mbaigo/usecases"
 )
 
 // TestGetSetPoint verifies that getSetPoint returns a form with the correct Value and Unit.
@@ -392,5 +393,48 @@ func TestSetpointHandlerRefusesAWrongUnit(t *testing.T) {
 	}
 	if tr.SetPt != 20 {
 		t.Errorf("the refused setpoint was written anyway: SetPt = %v", tr.SetPt)
+	}
+}
+
+// TestAHeaterNeverRunsWithoutASetpointUnit is the failure the louder one was
+// hiding.
+//
+// The startup check gained a fallback so a configuration without a unit no
+// longer refuses to start. adoptUnits did not, so every heater built from that
+// configuration kept an empty setpointUnit — and an empty unit is worse than a
+// wrong one. AdoptUnit returns immediately when asked to convert into nothing,
+// so a setpoint PUT as 68 with unit DEG_F is stored as 68. Against a room at
+// 21.5 the error is 46.5, the proportional output saturates, and the heater is
+// held on for as long as the system runs. The fatal it replaced was safer.
+//
+// The unit is also written back into the service, because a consumer converts
+// using the unit in the registration record. Fixing only what this system does
+// with the number leaves every consumer guessing, and a consumer that guesses
+// °C for a °F setpoint is the same accident from the other side.
+func TestAHeaterNeverRunsWithoutASetpointUnit(t *testing.T) {
+	// A configuration whose setpoint service declares no unit, which is what the
+	// README shipped before the units work.
+	setpoint := &components.Service{Definition: "setpoint", SubPath: "setpoint"}
+	services := components.Services{"setpoint": setpoint}
+
+	traits := &Traits{}
+	traits.adoptUnits(services)
+
+	if traits.setpointUnit == "" {
+		t.Fatal("the heater runs with no setpoint unit, so a PUT in any unit is " +
+			"stored verbatim and the controller saturates")
+	}
+	if _, ok := usecases.LookupUnit(traits.setpointUnit); !ok {
+		t.Errorf("the setpoint unit is %q, which is not a unit the framework can "+
+			"convert into", traits.setpointUnit)
+	}
+	if traits.errorUnit != traits.setpointUnit {
+		t.Errorf("the deviation is reported in %q while the setpoint is in %q; the "+
+			"deviation is a difference of two temperatures in the setpoint's unit",
+			traits.errorUnit, traits.setpointUnit)
+	}
+	if got := firstDetail(setpoint.Details, "Unit"); got != traits.setpointUnit {
+		t.Errorf("the setpoint service registers unit %q while the controller works "+
+			"in %q, so a consumer has nothing to convert from", got, traits.setpointUnit)
 	}
 }

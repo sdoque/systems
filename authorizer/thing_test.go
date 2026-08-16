@@ -326,4 +326,20 @@ func TestPlaintextQuestsAreRefusedOnceTLSIsServing(t *testing.T) {
 	if body := w.Body.String(); !strings.Contains(body, "https://") || !strings.Contains(body, "coreSystems") {
 		t.Errorf("the refusal does not name the remedy: %s", strings.TrimSpace(body))
 	}
+
+	// The TLS server stops — a certificate rotation, a port taken, a cancelled
+	// context. SetoutServers releases the entry on its way out, so a check that
+	// reads the port being served now goes back to zero and the authorizer
+	// silently starts answering plaintext quests again, on a plain port that is
+	// still up, having refused them for however long it had been running.
+	//
+	// A permission that comes back on its own is not a permission. Once TLS has
+	// been served, this decision stays taken.
+	sys.Husk.Bound.Release("https")
+	w = httptest.NewRecorder()
+	tr.authorize(w, quest())
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("the TLS server stopped and the authorizer began signing tokens for "+
+			"unverified callers again (status %d)", w.Code)
+	}
 }

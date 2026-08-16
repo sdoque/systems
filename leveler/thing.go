@@ -400,6 +400,18 @@ func (t *Traits) adoptUnits(services components.Services) {
 		t.jitterUnit = firstDetail(jitter.Details, "Unit")
 	}
 
+	if setpoint != nil && t.setpointUnit != "" {
+		// Written back into the service, not just held here. A consumer converts
+		// using the unit in the registration record, so a controller working in
+		// °C while registering a setpoint with no unit invites a PUT in °F that
+		// is then believed — the fallback fixes what this system does with the
+		// number and leaves everyone else guessing.
+		if setpoint.Details == nil {
+			setpoint.Details = make(map[string][]string)
+		}
+		setpoint.Details["Unit"] = []string{t.setpointUnit}
+	}
+
 	t.errorUnit = t.setpointUnit
 	if deviation != nil {
 		// Advertise it too: a consumer converts using the unit in the service

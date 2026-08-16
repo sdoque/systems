@@ -630,8 +630,31 @@ func (t *Traits) adoptUnits(services components.Services) {
 	if setpoint != nil {
 		t.setpointUnit = firstDetail(setpoint.Details, "Unit")
 	}
+	if t.setpointUnit == "" {
+		// The same fallback the startup check applies. Without it the check
+		// passed on the configured value while every heater built here kept an
+		// empty one, and an empty unit is worse than a wrong one: AdoptUnit
+		// returns immediately when asked to convert into nothing, so a setpoint
+		// PUT as 68 °F was stored as 68. Against a room at 21.5 the error is
+		// 46.5, the output saturates, and the heater is held on indefinitely.
+		t.setpointUnit = templateSetpointUnit()
+		log.Printf("ethermostat: the setpoint service in systemconfig.json declares no unit; using %s from the template. Add a \"details\" block naming a Unit to state it explicitly.\n",
+			t.setpointUnit)
+	}
 	if jitter != nil {
 		t.jitterUnit = firstDetail(jitter.Details, "Unit")
+	}
+
+	if setpoint != nil && t.setpointUnit != "" {
+		// Written back into the service, not just held here. A consumer converts
+		// using the unit in the registration record, so a controller working in
+		// °C while registering a setpoint with no unit invites a PUT in °F that
+		// is then believed — the fallback fixes what this system does with the
+		// number and leaves everyone else guessing.
+		if setpoint.Details == nil {
+			setpoint.Details = make(map[string][]string)
+		}
+		setpoint.Details["Unit"] = []string{t.setpointUnit}
 	}
 
 	t.errorUnit = t.setpointUnit

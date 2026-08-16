@@ -264,11 +264,49 @@ func TestSwitchSortOrder(t *testing.T) {
 }
 
 // TestDashboardHTML verifies the embedded HTML contains expected landmarks.
+//
+// The two calls are relative to the page's own URL, which is what moves them
+// under the asset and through the framework's authorization. They used to be
+// absolute — /beehive/api/state and /beehive/api/toggle — registered on the
+// default mux, which Go prefers to the framework's own "/beehive/" prefix
+// because the pattern is longer. Nothing reached ResourceHandler, so nothing
+// was authorized: any host on the network could drive a heater over plain HTTP.
+//
+// Relative also means the asset can be renamed in the configuration without the
+// page having to be told.
 func TestDashboardHTML(t *testing.T) {
-	for _, want := range []string{"Beehive", "/beehive/api/state", "/beehive/api/toggle", "fetchState"} {
+	for _, want := range []string{"Beehive", "fetch('state')", "'toggle?name='", "fetchState"} {
 		if !strings.Contains(dashboardHTML, want) {
 			t.Errorf("dashboardHTML missing %q", want)
 		}
+	}
+	for _, unwanted := range []string{"/beehive/api/"} {
+		if strings.Contains(dashboardHTML, unwanted) {
+			t.Errorf("dashboardHTML still calls %q, which bypasses authorization", unwanted)
+		}
+	}
+}
+
+// TestTheToggleIsADeclaredActuationService is what makes the endpoint
+// governable at all.
+//
+// A service the framework does not know about cannot be authorized, and one
+// that does not declare actuation is authorized as whatever its asset declares
+// — here aggregation, which tells the authorizer this system only reads while
+// it switches heaters.
+func TestTheToggleIsADeclaredActuationService(t *testing.T) {
+	ua := initTemplate()
+
+	toggle, declared := ua.ServicesMap["toggle"]
+	if !declared {
+		t.Fatal("the toggle is not a declared service, so no policy applies to it")
+	}
+	if got := components.EffectiveMission(ua, toggle); got != components.MissionActuation {
+		t.Errorf("the toggle authorizes as %q; it drives a plug", got)
+	}
+	if _, declared := ua.ServicesMap["state"]; !declared {
+		t.Error("the switch list is not a declared service, so the device inventory " +
+			"is readable without a policy")
 	}
 }
 

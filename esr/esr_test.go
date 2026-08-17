@@ -697,3 +697,61 @@ func TestCleanDB(t *testing.T) {
 		shutdown()
 	}
 }
+
+// TestTheRegistryPageShowsAQudtUnit is the bug an operator sees as missing data.
+//
+// A QUDT identifier is written <http://qudt.org/vocab/unit/DEG_C>. Interpolated
+// into HTML unescaped, a browser reads it as an unknown tag and renders nothing,
+// so the page showed "Unit: []" and "QuantityKind: []" on every service in the
+// cloud — not missing values, swallowed ones. The registry held them all along,
+// which is what made it look like a registration fault rather than a display
+// one.
+func TestTheRegistryPageShowsAQudtUnit(t *testing.T) {
+	services := []forms.ServiceRecord_v1{{
+		Id: 1, SystemName: "thermostat", SubPath: "controller_1/setpoint",
+		ServiceDefinition: "setpoint",
+		IPAddresses:       []string{"10.0.0.1"}, ProtoPort: map[string]int{"http": 8081},
+		Details: map[string][]string{
+			"Unit":         {"<http://qudt.org/vocab/unit/DEG_C>"},
+			"QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"},
+		},
+	}}
+
+	page := renderListItems(services)
+
+	// Escaped, so the browser prints the identifier instead of hunting for a
+	// closing tag.
+	if !strings.Contains(page, "&lt;http://qudt.org/vocab/unit/DEG_C&gt;") {
+		t.Errorf("the unit is not rendered where a browser will show it:\n%s", page)
+	}
+	if !strings.Contains(page, "&lt;http://qudt.org/vocab/quantitykind/ThermodynamicTemperature&gt;") {
+		t.Errorf("the quantity kind is not rendered where a browser will show it:\n%s", page)
+	}
+	// The raw form is what disappeared.
+	if strings.Contains(page, "<http://qudt.org") {
+		t.Error("an identifier is still written as a tag, so the browser will eat it")
+	}
+}
+
+// A detail is whatever some system registered, and this page is opened by the
+// person commissioning the cloud. Anything registered must be shown, not run.
+func TestTheRegistryPageDoesNotRunWhatWasRegistered(t *testing.T) {
+	services := []forms.ServiceRecord_v1{{
+		Id: 1, SystemName: `sys"><script>alert(1)</script>`, SubPath: "asset/svc",
+		ServiceDefinition: "definition",
+		IPAddresses:       []string{`10.0.0.1"><script>alert(2)</script>`},
+		ProtoPort:         map[string]int{"http": 8081},
+		Details:           map[string][]string{"Note": {"<script>alert(3)</script>"}},
+	}}
+
+	page := renderListItems(services)
+
+	if strings.Contains(page, "<script>") {
+		t.Errorf("a registered value reached the page as markup, so it runs in the "+
+			"browser of whoever opens the registry:\n%s", page)
+	}
+	// The values are still shown — escaping displays them, it does not drop them.
+	if !strings.Contains(page, "&lt;script&gt;alert(3)&lt;/script&gt;") {
+		t.Errorf("the detail was not displayed at all:\n%s", page)
+	}
+}

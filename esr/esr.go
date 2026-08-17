@@ -21,6 +21,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"fmt"
+	"html"
 	"log"
 	"net/http"
 	"net/url"
@@ -139,9 +140,26 @@ func renderListItems(servicesList []forms.ServiceRecord_v1) string {
 
 	var sb strings.Builder
 	for _, servRec := range servicesList {
+		// Escaped, because every one of these came off the wire from whichever
+		// system registered it.
+		//
+		// A QUDT unit is written <http://qudt.org/vocab/unit/DEG_C>, and a
+		// browser reads that as an unknown tag and renders nothing — so a page
+		// showing "Unit: []" was not missing the unit, it was swallowing it, and
+		// QuantityKind was invisible on every service in the cloud because it is
+		// always an identifier of that shape. The registry had the value all
+		// along.
+		//
+		// The same escaping is what stops a system registering a detail
+		// containing a script from running it in the browser of the technician
+		// who opens this page.
 		var details strings.Builder
 		for key, values := range servRec.Details {
-			fmt.Fprintf(&details, "%s: %v ", key, values)
+			shown := make([]string, 0, len(values))
+			for _, value := range values {
+				shown = append(shown, html.EscapeString(value))
+			}
+			fmt.Fprintf(&details, "%s: [%s] ", html.EscapeString(key), strings.Join(shown, " "))
 		}
 
 		parts := strings.Split(servRec.SubPath, "/")
@@ -155,14 +173,19 @@ func renderListItems(servicesList []forms.ServiceRecord_v1) string {
 			}
 			url := proto + "://" + servRec.IPAddresses[0] + ":" + strconv.Itoa(port) +
 				"/" + servRec.SystemName + "/" + servRec.SubPath
+			// The address is built from what the provider registered, so it is
+			// escaped like anything else that arrived from elsewhere — an
+			// attribute is a place a quotation mark ends something.
+			safe := html.EscapeString(url)
 			if proto == "http" {
 				// Browser-clickable plain-HTTP link.
-				fmt.Fprintf(&endpoints, ` <a href="%s">%s</a>`, url, proto)
+				fmt.Fprintf(&endpoints, ` <a href="%s">%s</a>`, safe, html.EscapeString(proto))
 			} else {
 				// mTLS endpoint (HTTPS) or non-HTTP protocols (CoAP):
 				// shown as a labeled span so the URL is visible but not
 				// clickable into a regular browser session.
-				fmt.Fprintf(&endpoints, ` <span title="requires mTLS">[%s: %s]</span>`, proto, url)
+				fmt.Fprintf(&endpoints, ` <span title="requires mTLS">[%s: %s]</span>`,
+					html.EscapeString(proto), safe)
 			}
 		}
 
@@ -170,11 +193,11 @@ func renderListItems(servicesList []forms.ServiceRecord_v1) string {
 			"<li><p>Service ID: %d with definition <b>%s</b> from the <b>%s/%s</b>"+
 				" — endpoints:%s — with details %s — will expire at: %s</p></li>",
 			servRec.Id,
-			servRec.ServiceDefinition,
-			servRec.SystemName, uaName,
+			html.EscapeString(servRec.ServiceDefinition),
+			html.EscapeString(servRec.SystemName), html.EscapeString(uaName),
 			endpoints.String(),
 			details.String(),
-			servRec.EndOfValidity,
+			html.EscapeString(servRec.EndOfValidity),
 		)
 	}
 	return sb.String()

@@ -41,6 +41,10 @@ const pageHTML = `<!DOCTYPE html>
     --ink: #1b2733; --dim: #7b8794; --line: #b3c0cc; --paper: #f7f9fb;
     --open: #d0342c; --enrolling: #e08a1e; --identified: #2f8fd6; --authorized: #2e9e5b;
     --unknown: #9aa5b1;
+    /* The announcements. Named apart from the posture colours they resemble,
+       because they mean something else: --authorized is a state a system is in,
+       --arrived is a thing that just happened to it. */
+    --arrived: #2e9e5b; --gone: #d0342c;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--paper); color: var(--ink);
@@ -74,7 +78,9 @@ const pageHTML = `<!DOCTYPE html>
   <span><i class="swatch" style="background:var(--open)"></i>open</span>
   <span>&mdash; observes</span>
   <span>&ndash; &ndash; acts</span>
-  <span><i class="swatch" style="background:var(--open);opacity:.9"></i>wants a service nothing provides</span>
+  <span><i class="swatch" style="border:2px solid var(--open);background:transparent"></i>wants a service nothing provides</span>
+  <span><i class="swatch" style="background:var(--arrived)"></i>just arrived</span>
+  <span><i class="swatch" style="background:var(--gone)"></i>just gone</span>
 </div>
 <script>
 "use strict";
@@ -259,9 +265,9 @@ function draw() {
       var since = now - (arrivals.get(id) || -1e9);
       if (since >= 0 && since < ARRIVING) {
         var beat = (since % 1000) / 1000;
-        el("circle", { r: 34 + beat * 26, fill: "none", stroke: "#2e9e5b",
+        el("circle", { r: 34 + beat * 26, fill: "none", stroke: "var(--arrived)",
                        "stroke-width": 3 / view.scale, "stroke-opacity": 1 - beat }, sysG);
-        el("circle", { r: 34, fill: "#2e9e5b", "fill-opacity": 0.28 * (1 - since / ARRIVING) }, sysG);
+        el("circle", { r: 34, fill: "var(--arrived)", "fill-opacity": 0.28 * (1 - since / ARRIVING) }, sysG);
       }
       // The name belongs to the system at every level past the widest: it is
       // what an operator is looking for.
@@ -269,7 +275,27 @@ function draw() {
         label(sys.name, 0, 34 + 12 / view.scale, 12, "var(--ink)", sysG);
       }
 
+      // Trouble is shown at every distance, not only close up.
+      //
+      // The unmet request used to be a dot on the asset, which is drawn from
+      // detail 2 upwards — so a page left at the zoom that shows the whole
+      // cloud, which is the zoom an operator leaves it at, showed nothing at
+      // all while a control loop had no input. A fault that is only visible to
+      // somebody already looking for it is not being reported.
       var assets = sys.assets || [];
+      var starved = 0;
+      assets.forEach(function (asset) {
+        (asset.wants || []).forEach(function (want) { if (!want.satisfied) starved++; });
+      });
+      if (starved) {
+        var alarm = el("circle", { r: 40, fill: "none", stroke: "var(--open)",
+                                   "stroke-width": 3 / view.scale }, sysG);
+        el("animate", { attributeName: "stroke-opacity", values: "1;0.15;1",
+                        dur: "1.4s", repeatCount: "indefinite" }, alarm);
+        el("title", {}, alarm).textContent =
+          sys.name + ": " + starved + " service(s) asked for and not provided";
+      }
+
       var assetRing = ringRadius(assets.length, 7, 0);
       assets.forEach(function (asset, ai) {
         var aid = id + "/" + asset.name;
@@ -307,11 +333,11 @@ function draw() {
     if (since > LEAVING) return;
     var grow = since / LEAVING;
     var goneG = el("g", { transform: "translate(" + d.x + "," + d.y + ")" }, disks);
-    el("circle", { r: 34 + grow * 34, fill: "#d0342c", "fill-opacity": 0.35 * (1 - grow),
-                   stroke: "#d0342c", "stroke-width": 3 / view.scale,
+    el("circle", { r: 34 + grow * 34, fill: "var(--gone)", "fill-opacity": 0.35 * (1 - grow),
+                   stroke: "var(--gone)", "stroke-width": 3 / view.scale,
                    "stroke-opacity": 1 - grow }, goneG);
     if (detail >= 1) {
-      label(d.name + " gone", 0, 34 + 12 / view.scale, 12, "#d0342c", goneG);
+      label(d.name + " gone", 0, 34 + 12 / view.scale, 12, "var(--gone)", goneG);
     }
   });
 

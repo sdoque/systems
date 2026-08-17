@@ -88,6 +88,22 @@ anywhere. A plant's network reaches the machines in it and often nothing else,
 and a page that needs a library from a content delivery network is a page that
 works at a desk and shows a blank screen in a substation.
 
+## Checking the drawing
+
+The page is the half of this system Go cannot test. macOS ships a JavaScript
+engine, so the drawing can be executed and asked what it produced:
+
+```bash
+cd painter && osascript -l JavaScript page_check.js
+```
+
+It reads the script out of `page.go` rather than copying it, so the two cannot
+drift. It is not a browser — no layout, no paint, no SMIL — so it proves the code
+runs and emits the right elements, not that the result looks right. That
+distinction is worth keeping in mind: it has caught faults a Go test could not
+see, and it would not have caught the one where every line was drawn underneath
+an opaque disk.
+
 ## Configuration (`systemconfig.json`)
 
 ```json

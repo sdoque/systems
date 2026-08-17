@@ -96,13 +96,29 @@ function hash(text) {
   return (h >>> 0) / 4294967295;
 }
 
-// place spreads n things around a disk of the given radius, at angles taken
-// from their names rather than from their order, so adding one does not move
-// the others.
-function place(name, radius) {
-  var angle = hash(name) * Math.PI * 2;
-  var r = radius * (0.45 + 0.5 * hash(name + "/r"));
-  return { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
+// ringRadius is how far out n things of a given size must sit to not overlap.
+// Eleven systems of radius 34 need about 139, where the first version of this
+// used a fixed 70 and drew them on top of each other.
+function ringRadius(n, size, minimum) {
+  if (n < 2) return 0;
+  return Math.max(minimum, (size / Math.sin(Math.PI / n)) * 1.15);
+}
+
+// place puts the i-th of n things on that ring.
+//
+// By position in a sorted list rather than by a hash of the name, which was the
+// first attempt: a hash gives every system a place of its own and no guarantee
+// that two of them are not the same place, and with eleven systems they
+// collided badly. Sorted order is still stable — a system that restarts finds
+// the same neighbours and the same spot — but a system that joins or leaves does
+// shift the others round the ring. That is the price of never overlapping, and
+// legibility is worth more than absolute constancy.
+//
+// The half-turn offset keeps the first system off the label at the top.
+function place(i, n, radius) {
+  if (n < 2) return { x: 0, y: 0 };
+  var angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+  return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
 }
 
 function colourOf(level) {
@@ -111,6 +127,18 @@ function colourOf(level) {
   if (level === "enrolling") return "var(--enrolling)";
   if (level === "open") return "var(--open)";
   return "var(--unknown)";
+}
+
+// label writes text at a constant size on screen, whatever the zoom.
+//
+// Font sizes were in user units, so zooming in magnified the words along with
+// the disks until eleven system names covered the cloud. Dividing by the scale
+// keeps a label the size it was drawn at, which is the size it is legible at.
+function label(text, x, y, size, fill, parent) {
+  var node = el("text", { x: x, y: y, "text-anchor": "middle",
+                          "font-size": size / view.scale, fill: fill }, parent);
+  node.textContent = text;
+  return node;
 }
 
 function el(name, attrs, parent) {
@@ -130,6 +158,20 @@ function levelOfDetail() {
 }
 
 var geometry = {}; // asset id -> centre, filled while drawing, used for lines
+var extent = 300;  // how far the picture reaches, set while drawing
+var framed = false;
+
+// frame sets the zoom so the whole cloud is on screen, once, on the first
+// picture. A cloud of three systems and a cloud of forty need very different
+// magnifications to be worth looking at, and an operator opening the page
+// should not have to find that out with the wheel.
+function frame() {
+  var w = stage.clientWidth, h = stage.clientHeight;
+  if (!w || !h) return;
+  view.scale = Math.min(14, Math.max(0.2, (Math.min(w, h) * 0.44) / extent));
+  view.x = 0;
+  view.y = 0;
+}
 
 function draw() {
   stage.innerHTML = "";
@@ -141,41 +183,58 @@ function draw() {
   var now = Date.now();
   geometry = {};
 
-  // The cloud itself: the disk everything else sits on.
-  el("circle", { r: 300, fill: "#fff", stroke: "var(--line)", "stroke-width": 1 / view.scale }, root);
-  if (detail === 0) {
-    el("text", { y: -320, "text-anchor": "middle", "font-size": 22, fill: "var(--ink)" }, root)
-      .textContent = cloud.name;
-  }
+  // Sizes follow from what is inside, so a cloud of three systems and a cloud of
+  // thirty are both legible rather than one being empty and the other a heap.
+  var hosts = cloud.hosts || [];
+  var hostSizes = hosts.map(function (host) {
+    var systems = host.systems || [];
+    var ring = ringRadius(systems.length, 34, 70);
+    return { ring: ring, radius: Math.max(110, ring + 34 + 16) };
+  });
+  var biggest = hostSizes.reduce(function (m, s) { return Math.max(m, s.radius); }, 110);
+  var hostRing = ringRadius(hosts.length, biggest, 0);
+  var cloudRadius = Math.max(300, hostRing + biggest + 40);
+  extent = cloudRadius;
+  if (!framed) { framed = true; frame(); draw(); return; }
+
+  el("circle", { r: cloudRadius, fill: "#fff", stroke: "var(--line)",
+                 "stroke-width": 1 / view.scale }, root);
+  label(cloud.name, 0, -cloudRadius - 14 / view.scale, 22, "var(--ink)", root);
 
   var lines = el("g", {}, root);   // drawn under the disks
   var disks = el("g", {}, root);
 
-  (cloud.hosts || []).forEach(function (host) {
-    var hp = place("host:" + host.name, 170);
+  hosts.forEach(function (host, hi) {
+    var size = hostSizes[hi];
+    var hp = place(hi, hosts.length, hostRing);
     var hostG = el("g", { transform: "translate(" + hp.x + "," + hp.y + ")", class: "disk" }, disks);
-    el("circle", { r: 110, fill: "#eef3f8", stroke: "var(--line)", "stroke-width": 1 / view.scale }, hostG);
-    el("text", { y: -118, "text-anchor": "middle", "font-size": 11, fill: "var(--dim)" }, hostG)
-      .textContent = host.name;
+    el("circle", { r: size.radius, fill: "#eef3f8", stroke: "var(--line)",
+                   "stroke-width": 1 / view.scale }, hostG);
+    label(host.name, 0, -size.radius - 8 / view.scale, 13, "var(--dim)", hostG);
 
-    (host.systems || []).forEach(function (sys) {
+    var systems = host.systems || [];
+    systems.forEach(function (sys, si) {
       var id = host.name + "/" + sys.name;
       if (!seen.has(id)) seen.set(id, now);
       var age = (now - seen.get(id)) / 700;
-      var sp = place("sys:" + id, 70);
+      var going = leaving.has(id);
+      var sp = place(si, systems.length, size.ring);
       var sysG = el("g", { transform: "translate(" + sp.x + "," + sp.y + ")", class: "disk",
-                           opacity: Math.min(1, age) }, hostG);
+                           opacity: going ? 0.25 : Math.min(1, age) }, hostG);
 
       el("circle", { r: 34, fill: colourOf(sys.level), "fill-opacity": 0.22,
                      stroke: colourOf(sys.level), "stroke-width": 2 / view.scale }, sysG);
+      // The name belongs to the system at every level past the widest: it is
+      // what an operator is looking for.
       if (detail >= 1) {
-        el("text", { y: 48, "text-anchor": "middle", "font-size": 10, fill: "var(--ink)" }, sysG)
-          .textContent = sys.name;
+        label(sys.name, 0, 34 + 12 / view.scale, 12, "var(--ink)", sysG);
       }
 
-      (sys.assets || []).forEach(function (asset) {
+      var assets = sys.assets || [];
+      var assetRing = ringRadius(assets.length, 7, 0);
+      assets.forEach(function (asset, ai) {
         var aid = id + "/" + asset.name;
-        var ap = place("asset:" + aid, 20);
+        var ap = place(ai, assets.length, Math.min(assetRing, 20));
         geometry[aid] = { x: hp.x + sp.x + ap.x, y: hp.y + sp.y + ap.y };
 
         if (detail >= 2) {
@@ -183,17 +242,15 @@ function draw() {
           el("circle", { r: 7, fill: "#fff", stroke: colourOf(sys.level),
                          "stroke-width": 1.5 / view.scale }, assetG);
           if (detail >= 3) {
-            el("text", { y: 18, "text-anchor": "middle", "font-size": 6, fill: "var(--dim)" }, assetG)
-              .textContent = asset.name;
+            label(asset.name, 0, 7 + 8 / view.scale, 9, "var(--dim)", assetG);
           }
           // A service this asset asked for and nobody provides: the one state
           // that looks healthy from every other angle.
           var unmet = (asset.wants || []).filter(function (want) { return !want.satisfied; });
           if (unmet.length) {
             var dot = el("circle", { cx: 9, cy: -9, r: 3.2, fill: "var(--open)" }, assetG);
-            var pulse = el("animate", { attributeName: "opacity", values: "1;0.15;1",
-                                        dur: "1.4s", repeatCount: "indefinite" }, dot);
-            void pulse;
+            el("animate", { attributeName: "opacity", values: "1;0.15;1",
+                            dur: "1.4s", repeatCount: "indefinite" }, dot);
             el("title", {}, dot).textContent =
               "wants, and nothing provides: " + unmet.map(function (w) { return w.definition; }).join(", ");
           }
@@ -235,8 +292,7 @@ function draw() {
       }
       el("title", {}, path).textContent = link.definition + " → " + link.to;
       if (detail >= 3) {
-        el("text", { x: mx, y: my - 3, "text-anchor": "middle", "font-size": 6, fill: "var(--dim)" }, lines)
-          .textContent = link.definition;
+        label(link.definition, mx, my - 4 / view.scale, 9, "var(--dim)", lines);
       }
     });
   });

@@ -201,8 +201,16 @@ function draw() {
                  "stroke-width": 1 / view.scale }, root);
   label(cloud.name, 0, -cloudRadius - 14 / view.scale, 22, "var(--ink)", root);
 
-  var lines = el("g", {}, root);   // drawn under the disks
+  // Disks first, lines over them.
+  //
+  // The other way round is the usual convention for a node-link diagram and is
+  // wrong here, because these nodes are nested containers rather than dots: a
+  // host disk is opaque and covers whatever was drawn beneath it, so every line
+  // between two systems on the same host was drawn and then painted over. On a
+  // one-host cloud that is all of them, which is what it looked like — a picture
+  // with no connections at all while the model had them.
   var disks = el("g", {}, root);
+  var lines = el("g", { "pointer-events": "none" }, root);
 
   hosts.forEach(function (host, hi) {
     var size = hostSizes[hi];

@@ -19,6 +19,7 @@
 package main
 
 import (
+	"net/url"
 	"sort"
 	"strings"
 )
@@ -215,7 +216,17 @@ func build(fallbackName string, graphs map[string]string) *Cloud {
 	for _, p := range pending {
 		target, known := offered[p.url]
 		if !known {
-			continue
+			// The URL a consumer was bound to says who provides the service, in
+			// its own path: /<system>/<asset>/<subpath>. Falling back to reading
+			// it means a line is still drawn when the two ends spell the same
+			// endpoint differently — a provider that published its address over
+			// one protocol while the consumer was orchestrated to the other, or a
+			// host whose several addresses were enumerated in a different order
+			// than when it registered.
+			target, known = byPath(byHost, p.url)
+			if !known {
+				continue
+			}
 		}
 		p.want.ProviderID = target.assetID
 		from := assetOwnerID(byHost, p.asset)
@@ -289,6 +300,41 @@ func wantedDefinition(facts []statement, cervice string) string {
 		}
 	}
 	return localName(object(facts, cervice, "afo:consumes"))
+}
+
+// byPath finds a provider from the shape of the URL a consumer was bound to.
+//
+// An Arrowhead endpoint spells out what is behind it — the system, then the unit
+// asset, then the service — so the path alone identifies the provider even when
+// the address in front of it does not match anything published.
+func byPath(byHost map[string]*Host, rawURL string) (provided, bool) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return provided{}, false
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) < 2 {
+		return provided{}, false
+	}
+	systemName, assetName := parts[0], parts[1]
+
+	for _, host := range byHost {
+		for _, system := range host.Systems {
+			if system.Name != systemName {
+				continue
+			}
+			for _, asset := range system.Assets {
+				if asset.Name != assetName {
+					continue
+				}
+				return provided{
+					assetID: assetID(host.Name, system.Name, asset.Name),
+					mission: asset.Mission,
+				}, true
+			}
+		}
+	}
+	return provided{}, false
 }
 
 // assetOwnerID finds the identifier of an asset already placed under a host.

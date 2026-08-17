@@ -299,3 +299,47 @@ func TestACloudNobodyNamesFallsBack(t *testing.T) {
 		t.Errorf("the cloud is called %q; with nothing declared it keeps the fallback", cloud.Name)
 	}
 }
+
+// TestALineSurvivesTheTwoEndsSpellingTheEndpointDifferently is why the URL path
+// is read when the exact address does not match.
+//
+// A consumer is bound to the endpoint the Orchestrator handed it, and a provider
+// publishes the endpoint it built from its own first address. Those are usually
+// the same string and need not be: a host with several addresses can enumerate
+// them in a different order than when it registered, and a consumer can be sent
+// to the plain-HTTP endpoint of a provider that also published HTTPS. The line
+// is real in both cases and the picture should show it.
+func TestALineSurvivesTheTwoEndsSpellingTheEndpointDifferently(t *testing.T) {
+	// The provider publishes only its HTTPS address on one interface...
+	provider := beekeeperGraph
+	// ...while the consumer was orchestrated to the other one, over HTTP.
+	consumer := strings.Replace(ethermostatGraph,
+		"<https://192.168.1.109:30185/beekeeper/KitchenHeater/on_off>",
+		"<http://10.0.0.7:20185/beekeeper/KitchenHeater/on_off>", 1)
+
+	cloud := build("AlphaCloud", map[string]string{
+		"beekeeper":   provider,
+		"ethermostat": consumer,
+	})
+
+	if len(cloud.Links) != 1 {
+		t.Fatalf("got %d links; the path names the provider even when the address "+
+			"in front of it does not match", len(cloud.Links))
+	}
+	if cloud.Links[0].To != "home/beekeeper/KitchenHeater" {
+		t.Errorf("the line ends at %q", cloud.Links[0].To)
+	}
+}
+
+// A URL naming a system this painter never reached draws no line, rather than a
+// line to nowhere.
+func TestAProviderNobodyReachedDrawsNoLine(t *testing.T) {
+	consumer := strings.Replace(ethermostatGraph,
+		"<https://192.168.1.109:30185/beekeeper/KitchenHeater/on_off>",
+		"<https://10.0.0.9:30185/absent/SomeAsset/on_off>", 1)
+
+	cloud := build("AlphaCloud", map[string]string{"ethermostat": consumer})
+	if len(cloud.Links) != 0 {
+		t.Errorf("got %d links to a system that is not in the picture", len(cloud.Links))
+	}
+}

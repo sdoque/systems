@@ -84,8 +84,29 @@ var stage = document.getElementById("stage");
 // The view. scale is what the wheel changes; everything else follows from it.
 var view = { x: 0, y: 0, scale: 1 };
 var cloud = null;
-var seen = new Map();   // id -> when it was first drawn, for fading in
-var leaving = new Map(); // id -> when it stopped being reported, for fading out
+var seen = new Map();       // id -> when it was first drawn
+var arrivals = new Map();   // id -> when it appeared, for the green flash
+var departures = new Map(); // id -> { at, x, y, name }, for the red one
+var centres = new Map();    // id -> where it was last drawn, so a departure knows where
+
+// How long each announcement lasts. A change in a plant is worth interrupting
+// somebody for, and a picture that merely settles into a new arrangement does
+// not do that: the eye follows movement and colour, so a system arriving or
+// leaving is given both, briefly, and then the picture goes quiet again.
+var ARRIVING = 2000;
+var LEAVING = 1200;
+
+// animating reports whether anything still needs redrawing between refreshes.
+function animating() {
+  var now = Date.now(), busy = false;
+  arrivals.forEach(function (at, id) {
+    if (now - at > ARRIVING) { arrivals.delete(id); } else { busy = true; }
+  });
+  departures.forEach(function (d, id) {
+    if (now - d.at > LEAVING) { departures.delete(id); } else { busy = true; }
+  });
+  return busy;
+}
 
 // hash turns a name into a number, so a thing's place comes from what it is.
 // The same cloud therefore draws the same way in every browser and after every
@@ -225,13 +246,23 @@ function draw() {
       var id = host.name + "/" + sys.name;
       if (!seen.has(id)) seen.set(id, now);
       var age = (now - seen.get(id)) / 700;
-      var going = leaving.has(id);
       var sp = place(si, systems.length, size.ring);
+      centres.set(id, { x: hp.x + sp.x, y: hp.y + sp.y, name: sys.name });
       var sysG = el("g", { transform: "translate(" + sp.x + "," + sp.y + ")", class: "disk",
-                           opacity: going ? 0.25 : Math.min(1, age) }, hostG);
+                           opacity: Math.min(1, age) }, hostG);
 
       el("circle", { r: 34, fill: colourOf(sys.level), "fill-opacity": 0.22,
                      stroke: colourOf(sys.level), "stroke-width": 2 / view.scale }, sysG);
+
+      // Just arrived: a green ring swelling outwards and fading, twice, so it
+      // catches the eye of somebody who was looking elsewhere.
+      var since = now - (arrivals.get(id) || -1e9);
+      if (since >= 0 && since < ARRIVING) {
+        var beat = (since % 1000) / 1000;
+        el("circle", { r: 34 + beat * 26, fill: "none", stroke: "#2e9e5b",
+                       "stroke-width": 3 / view.scale, "stroke-opacity": 1 - beat }, sysG);
+        el("circle", { r: 34, fill: "#2e9e5b", "fill-opacity": 0.28 * (1 - since / ARRIVING) }, sysG);
+      }
       // The name belongs to the system at every level past the widest: it is
       // what an operator is looking for.
       if (detail >= 1) {
@@ -265,6 +296,23 @@ function draw() {
         }
       });
     });
+  });
+
+  // Systems that have gone. They are not in the picture any more, so they are
+  // drawn from where they last were: a red disk swelling and fading over a
+  // moment. Without it a system leaves by simply not being drawn, which is the
+  // one change a picture can make that nobody notices.
+  departures.forEach(function (d, id) {
+    var since = now - d.at;
+    if (since > LEAVING) return;
+    var grow = since / LEAVING;
+    var goneG = el("g", { transform: "translate(" + d.x + "," + d.y + ")" }, disks);
+    el("circle", { r: 34 + grow * 34, fill: "#d0342c", "fill-opacity": 0.35 * (1 - grow),
+                   stroke: "#d0342c", "stroke-width": 3 / view.scale,
+                   "stroke-opacity": 1 - grow }, goneG);
+    if (detail >= 1) {
+      label(d.name + " gone", 0, 34 + 12 / view.scale, 12, "#d0342c", goneG);
+    }
   });
 
   // The lines: who depends on whom. Bundled while zoomed out, separated and
@@ -350,19 +398,35 @@ function refresh() {
       var notes = document.getElementById("notes");
       notes.className = (next.notes && next.notes.length) ? "hint note" : "hint";
       notes.textContent = (next.notes || []).join(" · ");
-      // Anything no longer reported is remembered briefly, so a system that
-      // stops answering dims rather than vanishing: gone and not answering just
-      // now are different things, and only one of them is worth a callout.
+      // The two edges worth announcing. A system that was not here and now is,
+      // and one that was here and now is not — the second cannot be drawn from
+      // the picture, because it is no longer in it, so it is drawn from where it
+      // last was.
       var present = new Set();
       (next.hosts || []).forEach(function (h) {
         (h.systems || []).forEach(function (s) { present.add(h.name + "/" + s.name); });
       });
-      seen.forEach(function (_, id) { if (!present.has(id)) leaving.set(id, Date.now()); });
-      leaving.forEach(function (when, id) {
-        if (present.has(id)) { leaving.delete(id); return; }
-        if (Date.now() - when > 30000) { leaving.delete(id); seen.delete(id); }
+      var now = Date.now();
+      // The first picture is not an arrival of everything. A page that opened
+      // onto a cloud of thirty systems all flashing green would announce
+      // nothing, since an announcement that fires for everything at once is
+      // just a colour.
+      if (!greeted) {
+        greeted = true;
+        present.forEach(function (id) { seen.set(id, now - 700); });
+      }
+      present.forEach(function (id) {
+        if (!seen.has(id)) { arrivals.set(id, now); }
+      });
+      seen.forEach(function (_, id) {
+        if (present.has(id)) return;
+        var where = centres.get(id);
+        if (where) { departures.set(id, { at: now, x: where.x, y: where.y, name: where.name }); }
+        seen.delete(id);
+        centres.delete(id);
       });
       draw();
+      tick();
     })
     .catch(function (err) {
       var notes = document.getElementById("notes");
@@ -371,9 +435,27 @@ function refresh() {
     });
 }
 
+// tick redraws while an announcement is in progress, and stops when the picture
+// is quiet again. A page showing an unchanging cloud should not be repainting
+// itself sixty times a second on a machine that has other work to do.
+var greeted = false;
+var ticking = false;
+function tick() {
+  if (ticking) return;
+  ticking = true;
+  requestAnimationFrame(function step() {
+    draw();
+    if (animating()) {
+      requestAnimationFrame(step);
+    } else {
+      ticking = false;
+      draw(); // once more, to settle without the announcement on it
+    }
+  });
+}
+
 refresh();
 setInterval(refresh, 5000);
-setInterval(draw, 1000); // so fades and the pulse keep moving between refreshes
 </script>
 </body>
 </html>

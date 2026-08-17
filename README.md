@@ -121,6 +121,7 @@ level actually protects.
 |---|---|
 | `cloudmodel` | Assembles SysML v2 BDD/IBD models of all systems currently registered in the local cloud |
 | `kgrapher` | Assembles OWL/RDF knowledge graph ontologies of all systems in the local cloud |
+| `painter` | Draws the local cloud, its hosts, systems and the services connecting them, as a page an operator can zoom from cloud to service |
 | `democrat` | Bridges the Arrowhead local cloud knowledge graph to FA³ST Asset Administration Shells (AAS) |
 
 ### Learning

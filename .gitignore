@@ -62,6 +62,7 @@ serviceRegistry.db
 /modeler/modeler
 /nurse/nurse
 /orchestrator/orchestrator
+/painter/painter
 /parallax/parallax
 /photographer/photographer
 /recognizer/recognizer

@@ -99,8 +99,16 @@ type provided struct {
 // separate accounts are put side by side. A system whose graph could not be
 // read at all is still drawn — with a note — because an operator looking for a
 // system needs to see that it is there.
-func build(cloudName string, graphs map[string]string) *Cloud {
-	cloud := &Cloud{Name: cloudName}
+func build(fallbackName string, graphs map[string]string) *Cloud {
+	cloud := &Cloud{}
+
+	// What the cloud is called is something the systems say, not something this
+	// one knows. Each carries the name in its own configuration and states it as
+	// afo:isContainedIn, so the painter reports what the cloud says about itself
+	// rather than what the painter was told — and a system configured into a
+	// different cloud than the rest is then visible instead of silently drawn as
+	// though it belonged.
+	claimed := map[string]int{}
 
 	byHost := map[string]*Host{}
 	offered := map[string]provided{} // service URL -> what is behind it
@@ -121,6 +129,9 @@ func build(cloudName string, graphs map[string]string) *Cloud {
 		facts := readTurtle(graphs[name])
 
 		for _, sysSubject := range subjectsOfType(facts, "afo:System") {
+			if declared := localName(object(facts, sysSubject, "afo:isContainedIn")); declared != "" {
+				claimed[declared]++
+			}
 			sysName := object(facts, sysSubject, "afo:hasName")
 			if sysName == "" {
 				sysName = localName(sysSubject)
@@ -219,6 +230,20 @@ func build(cloudName string, graphs map[string]string) *Cloud {
 		})
 	}
 
+	cloud.Name = agreedName(claimed, fallbackName)
+	if len(claimed) > 1 {
+		// Systems that disagree about which cloud they are in. Worth saying out
+		// loud: it is a configuration mistake that looks like nothing at all,
+		// and the painter is where it becomes apparent.
+		var names []string
+		for name := range claimed {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		cloud.Notes = append(cloud.Notes,
+			"systems disagree about the cloud they are in: "+strings.Join(names, ", "))
+	}
+
 	for _, host := range byHost {
 		sort.Slice(host.Systems, func(i, j int) bool { return host.Systems[i].Name < host.Systems[j].Name })
 		cloud.Hosts = append(cloud.Hosts, host)
@@ -231,6 +256,24 @@ func build(cloudName string, graphs map[string]string) *Cloud {
 		return cloud.Links[i].Definition < cloud.Links[j].Definition
 	})
 	return cloud
+}
+
+// agreedName is the name most systems give the cloud they are in.
+//
+// Most rather than all, because one system configured into the wrong cloud
+// should not rename the cloud for everyone else — and because a cloud where no
+// system declares one at all still has to be called something.
+func agreedName(claimed map[string]int, fallback string) string {
+	best, bestCount := "", 0
+	for name, count := range claimed {
+		if count > bestCount || (count == bestCount && name < best) {
+			best, bestCount = name, count
+		}
+	}
+	if best != "" {
+		return best
+	}
+	return fallback
 }
 
 // wantedDefinition returns the service definition an asset asked for.

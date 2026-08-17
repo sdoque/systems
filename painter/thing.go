@@ -180,8 +180,13 @@ func (t *Traits) walk() {
 	t.picture.Store(cloud)
 }
 
-// cloudName is what the local cloud calls itself, taken from this system's own
-// configuration — every system in a cloud is configured with the same one.
+// cloudName is the fallback for a cloud in which no system declares one.
+//
+// The name proper comes from the systems themselves: each carries it in its own
+// configuration and states it as afo:isContainedIn, so build takes it from what
+// they say. This is only what to call a cloud that nobody has named — including,
+// as it happens, one where this painter's own configuration is the thing missing
+// the localcloud field.
 func (t *Traits) cloudName() string {
 	if t.owner != nil && t.owner.Husk != nil {
 		if names := t.owner.Husk.Details["LocalCloud"]; len(names) > 0 {

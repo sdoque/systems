@@ -248,3 +248,54 @@ func TestTheReaderKeepsSubjectsApart(t *testing.T) {
 		t.Errorf("a URL read as %q; the brackets must go or no line can be joined", url)
 	}
 }
+
+// TestTheCloudIsNamedByTheSystemsInIt is where the name comes from.
+//
+// The painter's first picture was titled "local cloud" while every system on
+// the machine was declaring AlphaCloud, because the painter asked its own
+// configuration instead of asking the cloud. The name is per-system
+// configuration — each system carries it and states it as afo:isContainedIn —
+// so it is something the systems say, and reading it from them means the
+// painter needs no configuration of its own to get it right.
+func TestTheCloudIsNamedByTheSystemsInIt(t *testing.T) {
+	cloud := cloudOfTwo(t)
+	if cloud.Name != "AlphaCloud" {
+		t.Errorf("the cloud is called %q; the systems in it say AlphaCloud", cloud.Name)
+	}
+	if len(cloud.Notes) != 0 {
+		t.Errorf("systems that agree produced a note: %v", cloud.Notes)
+	}
+}
+
+// A system configured into another cloud must not rename this one, and must not
+// pass unnoticed either: it is a mistake that looks like nothing at all until
+// somebody wonders why a service will not resolve.
+func TestASystemInTheWrongCloudIsReported(t *testing.T) {
+	stray := strings.Replace(ethermostatGraph,
+		"afo:hasSecurityPosture alc:home_ethermostat_Security .",
+		"afo:hasSecurityPosture alc:home_ethermostat_Security ;\n    afo:isContainedIn alc:SomeOtherCloud .", 1)
+
+	cloud := build("local cloud", map[string]string{
+		"beekeeper":   beekeeperGraph, // says AlphaCloud
+		"ethermostat": stray,          // says SomeOtherCloud
+	})
+
+	if cloud.Name != "AlphaCloud" {
+		t.Errorf("one stray system renamed the cloud to %q", cloud.Name)
+	}
+	if len(cloud.Notes) == 0 {
+		t.Fatal("systems disagreeing about which cloud they are in went unreported")
+	}
+	if !strings.Contains(cloud.Notes[0], "SomeOtherCloud") {
+		t.Errorf("the note does not name the disagreement: %q", cloud.Notes[0])
+	}
+}
+
+// A cloud where nobody declares a name still has to be called something.
+func TestACloudNobodyNamesFallsBack(t *testing.T) {
+	anonymous := strings.Replace(beekeeperGraph, "    afo:isContainedIn alc:AlphaCloud .", ".", 1)
+	cloud := build("local cloud", map[string]string{"beekeeper": anonymous})
+	if cloud.Name != "local cloud" {
+		t.Errorf("the cloud is called %q; with nothing declared it keeps the fallback", cloud.Name)
+	}
+}

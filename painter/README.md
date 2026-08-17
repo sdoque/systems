@@ -60,10 +60,19 @@ angle — every system running, every light green, and one control loop with no
 input. It is the reason the painter shows what is *missing* and not only what is
 there.
 
-**Things keep their places.** A system's position is derived from its name, not
-from a layout run, so it lands in the same spot in every browser and returns to
-that spot after a restart. Systems fade in when they arrive and dim before they
-disappear, because "gone" and "not answering just now" are different things.
+**Things keep their places.** A system's position comes from its position in the
+sorted list rather than from a layout run, so it lands in the same spot in every
+browser and returns there after a restart. A system joining or leaving does shift
+the others round the ring, which is the price of never overlapping.
+
+**Known not to work: the arrival and departure announcements.** A system arriving
+should flash green for two seconds and one leaving should swell red for a moment.
+The code emits both — `page_check.js` confirms the elements are produced and that
+they expire — but they are not visible in a browser, so the cause is something
+the harness cannot see: the whole picture is rebuilt on every frame, and either
+the animation frames are not running or the elements are replaced faster than
+they can be painted. Not diagnosed. The pulsing alarm on a starved system, which
+is the part that matters operationally, does work.
 
 ## Zoom
 

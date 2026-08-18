@@ -292,13 +292,30 @@ func (t *Traits) getJitter() (f forms.SignalA_v1a) {
 }
 
 // feedbackLoop is THE control loop (IPR of the system)
+//
+// It runs on its own clock and also whenever a fresh temperature arrives. Both,
+// deliberately: the ticker is what guarantees the loop runs at all — a provider
+// that has died says nothing, and a controller waiting only for news would wait
+// for ever — while the arrival is what makes it act *now* rather than at the end
+// of a period that has just begun.
+//
+// Without the second arm, following a temperature only made the reading cheaper
+// to fetch. The valve still moved on the period, so a sensor plunged into warm
+// water took a full cycle to reach it, and an update nobody acted on bought
+// only network traffic. How often an arrival may wake this is the cervice's own
+// business (components.DefaultWakeFloor): a tenth of a degree is worth
+// reporting and not worth moving a valve for.
 func (t *Traits) feedbackLoop(ctx context.Context) {
 	ticker := time.NewTicker(t.Period * time.Second)
 	defer ticker.Stop()
 
+	fresh := t.cervices["temperature"].Updated()
+
 	for {
 		select {
 		case <-ticker.C:
+			t.processFeedbackLoop()
+		case <-fresh:
 			t.processFeedbackLoop()
 		case <-ctx.Done():
 			return

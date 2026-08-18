@@ -526,13 +526,24 @@ func (t *Traits) getJitter() (f forms.SignalA_v1a) {
 //-------------------------------------Feedback control loop
 
 // feedbackLoop is the control goroutine for this heater thermostat.
+//
+// It runs on its own clock and also whenever a fresh reading arrives. Both,
+// deliberately: the ticker guarantees the loop runs at all — a provider that has
+// died says nothing, and a controller waiting only for news would wait for ever
+// — while the arrival is what makes it act now rather than at the end of a
+// period that has just begun. How often an arrival may wake it is the cervice's
+// own business, so a value reported finely does not drive an actuator finely.
 func (t *Traits) feedbackLoop(ctx context.Context) {
 	ticker := time.NewTicker(t.Period * time.Second)
 	defer ticker.Stop()
 
+	fresh := t.cervices["temperature"].Updated()
+
 	for {
 		select {
 		case <-ticker.C:
+			t.processFeedbackLoop()
+		case <-fresh:
 			t.processFeedbackLoop()
 		case <-ctx.Done():
 			return

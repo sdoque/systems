@@ -39,8 +39,8 @@ type Traits struct {
 	// request its own goroutine, so neither can be a plain string. A torn read
 	// while a concurrent failure clears one builds a request against "/query"
 	// with no host at all.
-	leadingRegistrar  components.CachedURL
-	leadingAuthorizer components.CachedURL
+	leadingRegistrar  usecases.CachedURL
+	leadingAuthorizer usecases.CachedURL
 	// unchecked reports an unauthorized cloud once rather than per request, and
 	// unidentified does the same for consumers the connection cannot name.
 	unchecked    sync.Once
@@ -180,7 +180,13 @@ func (t *Traits) orchestrateMultiple(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		servLocation, err := t.getServicesURL(*qf)
+		subject, identified := usecases.PeerCN(r)
+		if !identified {
+			// As on the single-provider path: not a refusal, but recorded so the
+			// authorizer's later refusals have their reason beside them.
+			t.noteUnidentified()
+		}
+		servLocation, err := t.getServicesURL(*qf, subject)
 		if err != nil {
 			log.Println(err)
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -276,7 +282,7 @@ func selectService(serviceList forms.ServiceRecordList_v1) forms.ServicePoint_v1
 	return usecases.ConvertToServicePoint(serviceList.List[0])
 }
 
-func (t *Traits) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []byte, err error) {
+func (t *Traits) getServicesURL(newQuest forms.ServiceQuest_v1, subject string) (servLoc []byte, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	registrar, err := t.leadingRegistrar.Resolve(func() (string, error) {
@@ -324,7 +330,32 @@ func (t *Traits) getServicesURL(newQuest forms.ServiceQuest_v1) (servLoc []byte,
 		return nil, fmt.Errorf("unable to locate any such service: %s", newQuest.ServiceDefinition)
 	}
 
-	payload, err := json.MarshalIndent(serviceList, "", "  ")
+	// Asked of the authorizer, like the single-provider path beside it. This
+	// path used to answer with the registrar's list untouched: it consulted no
+	// policy, so a consumer was told about providers it may not use, and it
+	// minted no tokens, so every request it then made was refused by any
+	// provider in an authorized cloud. A consumer polling two temperature
+	// sensors paid a full orchestration and two refusals on every cycle.
+	permitted, tokens, err := t.authorized(subject, newQuest.Action, *serviceList)
+	if err != nil {
+		return nil, err
+	}
+	if len(permitted.List) == 0 {
+		return nil, fmt.Errorf("%q may not use any provider of %q", subject, newQuest.ServiceDefinition)
+	}
+
+	// Service points rather than records, because a record has nowhere to carry
+	// the token that was just minted for it.
+	var points forms.ServicePointList_v1
+	points.NewForm()
+	points.List = make([]forms.ServicePoint_v1, 0, len(permitted.List))
+	for _, rec := range permitted.List {
+		sp := usecases.ConvertToServicePoint(rec)
+		sp.Token = tokens[sp.ServNode]
+		points.List = append(points.List, sp)
+	}
+
+	payload, err := json.MarshalIndent(points, "", "  ")
 	return payload, err
 }
 

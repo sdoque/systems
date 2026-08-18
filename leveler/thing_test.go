@@ -17,6 +17,7 @@
 package main
 
 import (
+	"github.com/sdoque/mbaigo/usecases"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -178,7 +179,7 @@ func TestVariations(t *testing.T) {
 func TestInitTemplateServiceMissions(t *testing.T) {
 	ua := initTemplate()
 
-	if ua.Mission != "control" {
+	if ua.Mission.String() != "control" {
 		t.Errorf("asset mission = %q; want %q", ua.Mission, "control")
 	}
 
@@ -194,7 +195,7 @@ func TestInitTemplateServiceMissions(t *testing.T) {
 			t.Errorf("service %q missing from the template", subPath)
 			continue
 		}
-		if got := components.EffectiveMission(ua, serv); got != mission {
+		if got := components.EffectiveMission(ua, serv); got.String() != mission {
 			t.Errorf("service %q effective mission = %q; want %q", subPath, got, mission)
 		}
 	}
@@ -256,5 +257,53 @@ func TestSetpointHandlerRefusesAWrongUnit(t *testing.T) {
 	}
 	if tr.SetPt != 20 {
 		t.Errorf("the refused setpoint was written anyway: SetPt = %v", tr.SetPt)
+	}
+}
+
+// TestASetpointWithNoConfiguredUnitFallsBack is follow-up finding N8.
+//
+// Configure builds a unit asset entirely from systemconfig.json and never merges
+// the template into it, so a services array written without a "details" block
+// leaves the setpoint with no unit — and the startup check then refused to run,
+// saying the setpoint was configured in "". The ethermostat README documented
+// exactly such an array, so an operator copying it got a system that would not
+// start and no hint that the fix was to add a details block.
+func TestASetpointWithNoConfiguredUnitFallsBack(t *testing.T) {
+	tr := &Traits{}
+	tr.adoptUnits(components.Services{
+		"setpoint":  {Definition: "setpoint", SubPath: "setpoint"},
+		"deviation": {Definition: "deviation", SubPath: "deviation"},
+		"jitter":    {Definition: "jitter", SubPath: "jitter"},
+	})
+
+	if tr.setpointUnit == "" {
+		t.Fatal("no unit was resolved, so the startup check would refuse to run")
+	}
+	if _, ok := usecases.LookupUnit(tr.setpointUnit); !ok {
+		t.Errorf("fell back to %q, which the framework cannot resolve", tr.setpointUnit)
+	}
+	if tr.setpointUnit != templateSetpointUnit() {
+		t.Errorf("fell back to %q, want the template's %q", tr.setpointUnit, templateSetpointUnit())
+	}
+	// The deviation follows the setpoint, so it must have been given one too.
+	if tr.errorUnit != tr.setpointUnit {
+		t.Errorf("the deviation reports %q while the setpoint is %q", tr.errorUnit, tr.setpointUnit)
+	}
+}
+
+// A unit that is present but unresolvable is a statement the operator made and
+// got wrong, and stays fatal — which the startup check does. This records that
+// the fallback did not swallow it.
+func TestAConfiguredUnitIsNotOverriddenByTheTemplate(t *testing.T) {
+	tr := &Traits{}
+	tr.adoptUnits(components.Services{
+		"setpoint": {Definition: "setpoint", SubPath: "setpoint",
+			Details: map[string][]string{"Unit": {"furlongs per fortnight"}}},
+	})
+	if tr.setpointUnit != "furlongs per fortnight" {
+		t.Errorf("the configured unit became %q; the template must not override what an operator wrote", tr.setpointUnit)
+	}
+	if _, ok := usecases.LookupUnit(tr.setpointUnit); ok {
+		t.Error("that unit resolved, so this test proves nothing")
 	}
 }

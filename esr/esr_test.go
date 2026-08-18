@@ -545,34 +545,60 @@ func TestRenderListItemsProtocols(t *testing.T) {
 // ----------------------------------------------- //
 
 func TestNotify(t *testing.T) {
-	t.Run("wakes subscriber", func(t *testing.T) {
-		tr := &Traits{subscribers: make(map[int]chan struct{})}
-		ch := make(chan struct{}, 1)
-		tr.subscribers[1] = ch
-		tr.notify()
+	record := func() forms.ServiceRecord_v1 {
+		var rec forms.ServiceRecord_v1
+		rec.NewForm()
+		rec.SystemName = "ds18b20"
+		rec.ServiceDefinition = "temperature"
+		return rec
+	}
+
+	t.Run("delivers the event", func(t *testing.T) {
+		tr := &Traits{subscribers: make(map[int]*subscriber)}
+		sub := &subscriber{events: make(chan forms.RegistryEvent_v1, 1)}
+		tr.subscribers[1] = sub
+
+		tr.notify(forms.RegistryRegistered, record())
+
 		select {
-		case <-ch:
+		case got := <-sub.events:
+			if got.Change != forms.RegistryRegistered {
+				t.Errorf("change = %q, want %q", got.Change, forms.RegistryRegistered)
+			}
+			if got.Record.SystemName != "ds18b20" {
+				t.Errorf("the event does not say what changed: %+v", got.Record)
+			}
+			if got.Timestamp == "" {
+				t.Error("the event carries no timestamp")
+			}
 		default:
-			t.Error("Expected subscriber channel to be notified")
+			t.Error("the subscriber was not told")
 		}
 	})
 
 	t.Run("no subscribers is a no-op", func(t *testing.T) {
-		tr := &Traits{subscribers: make(map[int]chan struct{})}
-		tr.notify() // must not panic
+		tr := &Traits{subscribers: make(map[int]*subscriber)}
+		tr.notify(forms.RegistryRegistered, record()) // must not panic
 	})
 
-	t.Run("non-blocking when channel is full", func(t *testing.T) {
-		tr := &Traits{subscribers: make(map[int]chan struct{})}
-		ch := make(chan struct{}, 1)
-		ch <- struct{}{} // pre-fill
-		tr.subscribers[1] = ch
+	t.Run("a full subscriber is told to resync rather than blocking the registry", func(t *testing.T) {
+		tr := &Traits{subscribers: make(map[int]*subscriber)}
+		sub := &subscriber{events: make(chan forms.RegistryEvent_v1, 1)}
+		sub.events <- forms.RegistryEvent_v1{} // pre-fill
+		tr.subscribers[1] = sub
+
 		done := make(chan struct{})
-		go func() { tr.notify(); close(done) }()
+		go func() { tr.notify(forms.RegistryRegistered, record()); close(done) }()
 		select {
 		case <-done:
 		case <-time.After(time.Second):
-			t.Error("notify() blocked on a full channel")
+			t.Fatal("notify blocked on a full subscriber; one slow consumer would stall every registration")
+		}
+
+		// The event could not be delivered, so it must not be silently lost:
+		// the subscriber is told its stream no longer describes the registry.
+		if !sub.resync.Load() {
+			t.Error("an undeliverable event was dropped without asking the subscriber to re-read")
 		}
 	})
 }
@@ -669,5 +695,63 @@ func TestCleanDB(t *testing.T) {
 		}
 
 		shutdown()
+	}
+}
+
+// TestTheRegistryPageShowsAQudtUnit is the bug an operator sees as missing data.
+//
+// A QUDT identifier is written <http://qudt.org/vocab/unit/DEG_C>. Interpolated
+// into HTML unescaped, a browser reads it as an unknown tag and renders nothing,
+// so the page showed "Unit: []" and "QuantityKind: []" on every service in the
+// cloud — not missing values, swallowed ones. The registry held them all along,
+// which is what made it look like a registration fault rather than a display
+// one.
+func TestTheRegistryPageShowsAQudtUnit(t *testing.T) {
+	services := []forms.ServiceRecord_v1{{
+		Id: 1, SystemName: "thermostat", SubPath: "controller_1/setpoint",
+		ServiceDefinition: "setpoint",
+		IPAddresses:       []string{"10.0.0.1"}, ProtoPort: map[string]int{"http": 8081},
+		Details: map[string][]string{
+			"Unit":         {"<http://qudt.org/vocab/unit/DEG_C>"},
+			"QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"},
+		},
+	}}
+
+	page := renderListItems(services)
+
+	// Escaped, so the browser prints the identifier instead of hunting for a
+	// closing tag.
+	if !strings.Contains(page, "&lt;http://qudt.org/vocab/unit/DEG_C&gt;") {
+		t.Errorf("the unit is not rendered where a browser will show it:\n%s", page)
+	}
+	if !strings.Contains(page, "&lt;http://qudt.org/vocab/quantitykind/ThermodynamicTemperature&gt;") {
+		t.Errorf("the quantity kind is not rendered where a browser will show it:\n%s", page)
+	}
+	// The raw form is what disappeared.
+	if strings.Contains(page, "<http://qudt.org") {
+		t.Error("an identifier is still written as a tag, so the browser will eat it")
+	}
+}
+
+// A detail is whatever some system registered, and this page is opened by the
+// person commissioning the cloud. Anything registered must be shown, not run.
+func TestTheRegistryPageDoesNotRunWhatWasRegistered(t *testing.T) {
+	services := []forms.ServiceRecord_v1{{
+		Id: 1, SystemName: `sys"><script>alert(1)</script>`, SubPath: "asset/svc",
+		ServiceDefinition: "definition",
+		IPAddresses:       []string{`10.0.0.1"><script>alert(2)</script>`},
+		ProtoPort:         map[string]int{"http": 8081},
+		Details:           map[string][]string{"Note": {"<script>alert(3)</script>"}},
+	}}
+
+	page := renderListItems(services)
+
+	if strings.Contains(page, "<script>") {
+		t.Errorf("a registered value reached the page as markup, so it runs in the "+
+			"browser of whoever opens the registry:\n%s", page)
+	}
+	// The values are still shown — escaping displays them, it does not drop them.
+	if !strings.Contains(page, "&lt;script&gt;alert(3)&lt;/script&gt;") {
+		t.Errorf("the detail was not displayed at all:\n%s", page)
 	}
 }

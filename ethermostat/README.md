@@ -71,9 +71,17 @@ eThermostat registers its `setpoint` services with the Arrowhead service mesh. [
         { "setPoint": 20.0, "samplingPeriod": 10, "kp": 5.0 }
       ],
       "services": [
-        { "definition": "setpoint",     "subpath": "setpoint",     "registrationPeriod": 120 },
-        { "definition": "deviation", "subpath": "deviation", "registrationPeriod": 120 },
-        { "definition": "jitter",       "subpath": "jitter",       "registrationPeriod": 120 }
+        { "definition": "setpoint",  "subpath": "setpoint",  "registrationPeriod": 120,
+          "details": { "Unit": ["<http://qudt.org/vocab/unit/DEG_C>"],
+                       "QuantityKind": ["<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"],
+                       "Forms": ["SignalA_v1a"] } },
+        { "definition": "deviation", "subpath": "deviation", "registrationPeriod": 120,
+          "details": { "QuantityKind": ["<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"],
+                       "Measure": ["interval"], "Forms": ["SignalA_v1a"] } },
+        { "definition": "jitter",    "subpath": "jitter",    "registrationPeriod": 120,
+          "details": { "Unit": ["<http://qudt.org/vocab/unit/MilliSEC>"],
+                       "QuantityKind": ["<http://qudt.org/vocab/quantitykind/Time>"],
+                       "Forms": ["SignalA_v1a"] } }
       ]
     }
   ],

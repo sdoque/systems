@@ -62,7 +62,13 @@ func initTemplate() *components.UnitAsset {
 	}
 
 	return &components.UnitAsset{
-		Name:    "PLC with Modbus slave",
+		Name: "PLC with Modbus slave",
+		// The fallback for a service that declares no mission of its own. Every
+		// service this system builds at runtime derives one from its register's
+		// access mode, so in practice this reaches the generated configuration
+		// rather than a running service — but without it there is nothing to
+		// fall back to, and the system refuses to start.
+		Mission: components.MissionMeasurement,
 		Details: map[string][]string{"PLC": {"Wago"}, "FunctionalLocation": {"A2307"}},
 		ServicesMap: components.Services{
 			access.SubPath: &access,
@@ -272,14 +278,14 @@ func registerLocation(parts []string) string {
 // batch counter, say, rather than a motor command) is not distinguishable from
 // the access mode alone. If that distinction is ever needed, the register map
 // entry can carry an explicit mission as a sixth field, after the location.
-func missionForRights(rights string) (string, error) {
+func missionForRights(rights string) (components.Mission, error) {
 	switch strings.ToLower(strings.TrimSpace(rights)) {
 	case "ro":
 		return components.MissionMeasurement, nil
 	case "rw", "wo":
 		return components.MissionActuation, nil
 	}
-	return "", fmt.Errorf("unknown access mode %q: expected ro, rw or wo", rights)
+	return components.Mission{}, fmt.Errorf("unknown access mode %q: expected ro, rw or wo", rights)
 }
 
 func typeOfIO(nameIO string) ioType {

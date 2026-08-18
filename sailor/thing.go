@@ -196,7 +196,13 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		details["Unit"] = []string{unit}
 
 		ua := &components.UnitAsset{
-			Name:        sc.Name,
+			Name: sc.Name,
+			// From the configuration, like the name beside it. Left out, the
+			// running asset had no mission whatever the file said, and the
+			// framework refuses to start a system whose assets do not classify
+			// themselves — so this system could not start at all, including from
+			// a configuration it had just written itself.
+			Mission:     configuredAsset.Mission,
 			Owner:       sys,
 			Details:     details,
 			ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),

@@ -67,6 +67,33 @@ func initTemplate() *components.UnitAsset {
 				RegPeriod:   30,
 				Description: "HTML dashboard with on/off toggle switches for ZigBee devices (GET)",
 			},
+			// The two the dashboard's JavaScript calls, declared rather than
+			// registered on the default mux.
+			//
+			// They were http.HandleFunc("/beehive/api/toggle", ...), and Go's mux
+			// prefers the longer exact pattern to the framework's "/beehive/", so
+			// neither ever reached ResourceHandler and neither was ever authorized.
+			// Any host on the network could PUT to the plain-HTTP port and drive a
+			// heater — no certificate, no token, no policy — while this asset told
+			// the authorizer it only aggregates.
+			"state": &components.Service{
+				Definition:  "SwitchList",
+				SubPath:     "state",
+				Details:     map[string][]string{"Forms": {"application/json"}},
+				RegPeriod:   30,
+				Description: "lists the discovered switches and their last known state (GET)",
+			},
+			"toggle": &components.Service{
+				Definition: "Toggle",
+				SubPath:    "toggle",
+				// Actuation, and the asset's aggregation is why this has to say
+				// so: this service drives a plug, and a mission is what the
+				// authorizer writes policy against.
+				Mission:     components.MissionActuation,
+				Details:     map[string][]string{"Forms": {"SignalB_v1a"}},
+				RegPeriod:   30,
+				Description: "switches a discovered device on or off (PUT ?name=<device>&value=<true|false>)",
+			},
 		},
 		Traits: &Traits{Period: 10},
 	}
@@ -92,17 +119,28 @@ func newResource(uac usecases.ConfigurableAsset, sys *components.System) (*compo
 
 	go t.backgroundPoll()
 
-	// Register extra HTTP endpoints used by the dashboard's JavaScript.
-	http.HandleFunc("/beehive/api/state", func(w http.ResponseWriter, r *http.Request) {
-		stateHandler(t, w, r)
-	})
-	http.HandleFunc("/beehive/api/toggle", func(w http.ResponseWriter, r *http.Request) {
-		toggleHandler(t, w, r, sys.Ctx)
-	})
+	// Taken from the configuration, like every other system's asset, rather than
+	// written here. The literal that used to be in this field was
+	// "web_dashboard", which is not one of the missions — so the system refused
+	// to start, whatever its configuration file said. The template that seeds
+	// that file has always said aggregation, which is what this asset does: it
+	// collects the state of every discovered OnOff service and presents the set.
+	//
+	// The template is also the fallback, so a configuration written before this
+	// asset had a name or mission still starts.
+	name, mission := uac.Name, uac.Mission
+	if tmpl := initTemplate(); name == "" || mission.IsZero() {
+		if name == "" {
+			name = tmpl.Name
+		}
+		if mission.IsZero() {
+			mission = tmpl.Mission
+		}
+	}
 
 	ua := &components.UnitAsset{
-		Name:    "BeehiveDashboard",
-		Mission: "web_dashboard",
+		Name:    name,
+		Mission: mission,
 		Owner:   sys,
 		Details: map[string][]string{},
 		ServicesMap: components.Services{
@@ -112,6 +150,33 @@ func newResource(uac usecases.ConfigurableAsset, sys *components.System) (*compo
 				Details:     map[string][]string{"Forms": {"text/html"}},
 				RegPeriod:   30,
 				Description: "HTML dashboard with on/off toggle switches for ZigBee devices (GET)",
+			},
+			// The two the dashboard's JavaScript calls, declared rather than
+			// registered on the default mux.
+			//
+			// They were http.HandleFunc("/beehive/api/toggle", ...), and Go's mux
+			// prefers the longer exact pattern to the framework's "/beehive/", so
+			// neither ever reached ResourceHandler and neither was ever authorized.
+			// Any host on the network could PUT to the plain-HTTP port and drive a
+			// heater — no certificate, no token, no policy — while this asset told
+			// the authorizer it only aggregates.
+			"state": &components.Service{
+				Definition:  "SwitchList",
+				SubPath:     "state",
+				Details:     map[string][]string{"Forms": {"application/json"}},
+				RegPeriod:   30,
+				Description: "lists the discovered switches and their last known state (GET)",
+			},
+			"toggle": &components.Service{
+				Definition: "Toggle",
+				SubPath:    "toggle",
+				// Actuation, and the asset's aggregation is why this has to say
+				// so: this service drives a plug, and a mission is what the
+				// authorizer writes policy against.
+				Mission:     components.MissionActuation,
+				Details:     map[string][]string{"Forms": {"SignalB_v1a"}},
+				RegPeriod:   30,
+				Description: "switches a discovered device on or off (PUT ?name=<device>&value=<true|false>)",
 			},
 		},
 		Traits: t,
@@ -230,7 +295,7 @@ func nameFromURL(rawURL string) string {
 	return rawURL
 }
 
-// stateHandler serves GET /beehive/api/state — returns the current switch list as JSON.
+// stateHandler serves GET <asset>/state — returns the current switch list as JSON.
 func stateHandler(t *Traits, w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -244,7 +309,7 @@ func stateHandler(t *Traits, w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(list)
 }
 
-// toggleHandler serves PUT /beehive/api/toggle?name=<device>&value=<true|false>.
+// toggleHandler serves PUT <asset>/toggle?name=<device>&value=<true|false>.
 // It proxies a SignalB_v1a PUT to the discovered on_off service URL.
 func toggleHandler(t *Traits, w http.ResponseWriter, r *http.Request, ctx context.Context) {
 	if r.Method != http.MethodPut {
@@ -425,7 +490,7 @@ const statusBar = document.getElementById('status-bar');
 
 async function fetchState() {
   try {
-    const resp = await fetch('/beehive/api/state');
+    const resp = await fetch('state');
     if (!resp.ok) return;
     const devices = await resp.json();
     renderGrid(devices);
@@ -481,7 +546,7 @@ async function toggle(name, value, inputEl) {
   inputEl.dataset.pending = '1';
   try {
     const resp = await fetch(
-      '/beehive/api/toggle?name=' + encodeURIComponent(name) + '&value=' + value,
+      'toggle?name=' + encodeURIComponent(name) + '&value=' + value,
       { method: 'PUT' }
     );
     if (!resp.ok) inputEl.checked = !value;

@@ -122,7 +122,7 @@ func TestNewResource(t *testing.T) {
 		}
 		cfgAsset := usecases.ConfigurableAsset{
 			Name:     "maitreD",
-			Mission:  "attest systems on this host",
+			Mission:  components.MissionCore,
 			Services: []components.Service{attestSvc},
 		}
 
@@ -132,8 +132,10 @@ func TestNewResource(t *testing.T) {
 		if ua.GetName() != "maitreD" {
 			t.Errorf("name = %q, want %q", ua.GetName(), "maitreD")
 		}
-		if ua.Mission != "attest systems on this host" {
-			t.Errorf("mission = %q, want %q", ua.Mission, "attest systems on this host")
+		// The taxonomy's value, not a sentence about what the system does. The
+		// host sentinel is framework infrastructure like the rest of the core.
+		if ua.Mission != components.MissionCore {
+			t.Errorf("mission = %q, want %q", ua.Mission, components.MissionCore)
 		}
 		if ua.ServingFunc == nil {
 			t.Error("ServingFunc must be set")

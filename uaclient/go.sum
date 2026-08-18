@@ -8,6 +8,8 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/sdoque/mbaigo v0.1.0-alpha.8 h1:wKovBDAWMMdcJxE6kNbmtee7T3aIWa08Lkf7GmQohIQ=
 github.com/sdoque/mbaigo v0.1.0-alpha.8/go.mod h1:sNaEleHea9b2TcroLCp+9e5cHltlo/JkT9LNag1/nmU=
+github.com/sdoque/mbaigo v0.1.0-alpha.9 h1:+Pxgw/H+Utb9Tw5pEkBHrKKDv07hPWeHUYRmYhP/mmQ=
+github.com/sdoque/mbaigo v0.1.0-alpha.9/go.mod h1:uvuQ4Q1Qdi1U8BpaoBzDvst8BsskEVaVoMZ9T+5SyYc=
 github.com/stretchr/testify v1.10.0 h1:Xv5erBjTwe/5IxqUQTdXv5kgmIvbHo3QQyRwhJsOfJA=
 github.com/stretchr/testify v1.10.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
 gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=

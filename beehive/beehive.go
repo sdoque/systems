@@ -90,14 +90,21 @@ func main() {
 // serving handles incoming HTTP requests for the BeehiveDashboard unit asset.
 // The only registered Arrowhead service is "dashboard" (GET → HTML page).
 func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
-	if servicePath != "dashboard" {
+	switch servicePath {
+	case "dashboard":
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, dashboardHTML)
+	case "state":
+		stateHandler(t, w, r)
+	case "toggle":
+		// The system's context, so a toggle in flight is abandoned at shutdown
+		// rather than outliving the system that started it.
+		toggleHandler(t, w, r, t.owner.Ctx)
+	default:
 		http.Error(w, "unknown service", http.StatusNotFound)
-		return
 	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, dashboardHTML)
 }

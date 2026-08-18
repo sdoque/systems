@@ -18,18 +18,17 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"mime"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
@@ -45,6 +44,60 @@ type Traits struct {
 	LOntologies    map[string]string         `json:"localOntologies"` // map of ontology names to their file paths
 	owner          *components.System        `json:"-"`
 	name           string                    `json:"-"`
+
+	// graph is the assembled cloud, rebuilt when the registry reports a change
+	// rather than when somebody asks for it. Written by the subscriber's
+	// goroutine and read by every request handler, so it is swapped as a whole.
+	graph atomic.Pointer[assembled]
+
+	// silenceFor overrides how long the stream may say nothing before it is
+	// treated as dead. Zero means silenceLimit. A field so a test can drive the
+	// watchdog itself rather than the context, which would pass whether or not
+	// the watchdog existed.
+	silenceFor time.Duration
+
+	// rebuilding is what to do when the registry settles. A field so a test can
+	// count rebuilds without a registrar, a cloud, or a triple store.
+	rebuilding func()
+
+	// registry is where the subscription reads from, discovered like any other
+	// consumed service so the stream carries a token in an authorized cloud.
+	registry *components.Cervice
+}
+
+// assembled is one build of the graph and the moment it was made.
+type assembled struct {
+	turtle string
+	at     time.Time
+}
+
+// store keeps a freshly assembled graph for readers.
+// store publishes a newly assembled graph, refusing an empty one.
+//
+// Belt and braces beside the error returns in assembleOntologies: an empty
+// graph is never a correct description of a cloud that has at least this
+// grapher in it, and serving one is indistinguishable from serving a good one
+// until somebody reads the triples. Whatever fails upstream, the graph already
+// served is a better answer than nothing.
+func (t *Traits) store(turtle string) {
+	if strings.TrimSpace(turtle) == "" {
+		log.Println("kgrapher: refusing to replace the graph with an empty one")
+		return
+	}
+	t.graph.Store(&assembled{turtle: turtle, at: time.Now()})
+}
+
+// current returns the graph last assembled, and whether there is one.
+func (t *Traits) current() (*assembled, bool) {
+	a := t.graph.Load()
+	return a, a != nil
+}
+
+// registryToken returns the token to present on the subscription, if the cloud
+// issues one. The subscription holds a connection open and so cannot use
+// SystemList, but it asks for the same token in the same way.
+func (t *Traits) registryToken() (string, bool) {
+	return usecases.RegistryToken(t.registry, t.owner)
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -117,6 +170,17 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		serving(t, w, r, servicePath)
 	}
 
+	// The registry is a consumed service like any other, so that in an
+	// authorized cloud the subscription carries a token minted for reading it.
+	t.registry = &components.Cervice{
+		Definition: "syslist",
+		Protos:     components.SProtocols(sys.Husk.ProtoPort),
+		Nodes:      make(map[string][]components.NodeInfo),
+		Mode:       "get",
+	}
+
+	go t.follow(sys.Ctx)
+
 	return ua, func() {
 		log.Println("Disconnecting from GraphDB")
 	}
@@ -142,7 +206,36 @@ func resolveLocalOntologies(localOntologies map[string]string, dir string, baseU
 func (t *Traits) aggregate(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		t.assembleOntologies(w)
+		// Served from the last build. The subscriber rebuilds when the registry
+		// reports a change, so this is the cloud as of that change rather than
+		// as of this request — and a reader costs nothing, where it used to cost
+		// one call to the registrar, one to every system, and an upload to the
+		// triple store.
+		if a, ok := t.current(); ok {
+			w.Header().Set("Content-Type", "text/turtle")
+			w.Header().Set("Last-Modified", a.at.UTC().Format(http.TimeFormat))
+			if _, err := w.Write([]byte(a.turtle)); err != nil {
+				log.Printf("kgrapher: writing the graph: %v\n", err)
+			}
+			return
+		}
+
+		// Nothing built yet: the subscriber has not had its first event, or the
+		// registry has never been reachable. Build once here rather than answer
+		// with nothing.
+		graph, err := t.assembleOntologies()
+		if err != nil {
+			log.Printf("kgrapher: %v\n", err)
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		t.store(graph)
+		w.Header().Set("Content-Type", "text/turtle")
+		if _, err := w.Write([]byte(graph)); err != nil {
+			log.Printf("kgrapher: writing the graph: %v\n", err)
+			return
+		}
+		t.publishToStore(graph)
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}
@@ -164,64 +257,29 @@ func (t *Traits) listOntologies(w http.ResponseWriter, r *http.Request) {
 // -------------------------------------Unit asset's function methods
 
 // assembleOntologies gets the list of systems from the lead registrar and then the ontology of each system
-func (t *Traits) assembleOntologies(w http.ResponseWriter) {
-	leadingRegistrarURL, err := components.GetRunningCoreSystemURL(t.owner, "serviceregistrar")
+// assembleOntologies fetches every registered system's ontology and returns the
+// assembled graph.
+//
+// It no longer writes the graph anywhere. Building it is expensive — one request
+// to the registrar and one to each system in the cloud — and doing that inside
+// the handler meant every reader paid for it, and every reader also triggered a
+// fresh upload to the triple store. Separating the two lets the graph be built
+// when the cloud changes and read as often as anyone likes.
+func (t *Traits) assembleOntologies() (string, error) {
+	// One implementation of this, in the framework. The request was built here
+	// by hand, and in modeler too, and neither carried an access token — so
+	// declaring syslist as a service refused both in exactly the clouds the
+	// declaration was for.
+	systems, err := usecases.SystemList(t.registry, t.owner)
 	if err != nil {
-		log.Printf("Error getting the leading service registrar URL: %s\n", err)
-		http.Error(w, "Internal Server Error: unable to get leading service registrar URL", http.StatusInternalServerError)
-		return
-	}
-	leadUrl := leadingRegistrarURL + "/syslist"
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequest(http.MethodGet, leadUrl, nil)
-	if err != nil {
-		log.Printf("Error getting the systems list from service registrar, %s\n", err)
-		return
-	}
-	req = req.WithContext(ctx)
-
-	// Use the framework's TLS-configured transport so this call works
-	// against an HTTPS-only service registrar.
-	client := &http.Client{Transport: http.DefaultClient.Transport}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error receiving the systems list from service registrar, %s\n", err)
-		return
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Printf("GetRValue-Error reading registration response body: %v", err)
-		return
-	}
-
-	contentType := resp.Header.Get("Content-Type")
-	mediaType, _, err := mime.ParseMediaType(contentType)
-	if err != nil {
-		fmt.Println("Error parsing media type:", err)
-		return
-	}
-	sL, err := usecases.Unpack(bodyBytes, mediaType)
-	if err != nil {
-		log.Printf("error extracting the systems list reply %v\n", err)
-		return
-	}
-
-	systemsList, ok := sL.(*forms.SystemRecordList_v1)
-	if !ok {
-		fmt.Println("Problem unpacking the service registration reply")
-		return
+		return "", err
 	}
 
 	prefixes := make(map[string]bool)
 	processedBlocks := make(map[string]bool)
 	var uniqueIndividuals []string
 
-	for _, s := range systemsList.List {
+	for _, s := range systems {
 		sysUrl := s + "/kgraph"
 		fmt.Println(sysUrl)
 
@@ -276,16 +334,14 @@ func (t *Traits) assembleOntologies(w http.ResponseWriter) {
 				local[v] = struct{}{}
 			}
 			if len(local) > 1 {
-				http.Error(w, fmt.Sprintf("Bad Request: system %s has conflicting afo:isContainedIn values", extractSubject(blk)), http.StatusBadRequest)
-				return
+				return "", fmt.Errorf("%s", fmt.Sprintf("Bad Request: system %s has conflicting afo:isContainedIn values", extractSubject(blk)))
 			}
 			for k := range local {
 				seen[k] = struct{}{}
 			}
 		}
 		if len(seen) == 0 {
-			http.Error(w, "Bad Request: no afo:isContainedIn found; please declare a LocalCloud in at least one system", http.StatusBadRequest)
-			return
+			return "", fmt.Errorf("%s", "Bad Request: no afo:isContainedIn found; please declare a LocalCloud in at least one system")
 		}
 		if len(seen) > 1 {
 			var all []string
@@ -293,8 +349,7 @@ func (t *Traits) assembleOntologies(w http.ResponseWriter) {
 				all = append(all, k)
 			}
 			sort.Strings(all)
-			http.Error(w, fmt.Sprintf("Bad Request: multiple LocalClouds detected across systems: %v", all), http.StatusBadRequest)
-			return
+			return "", fmt.Errorf("%s", fmt.Sprintf("Bad Request: multiple LocalClouds detected across systems: %v", all))
 		}
 		for k := range seen {
 			cloudIRI = k
@@ -325,9 +380,18 @@ func (t *Traits) assembleOntologies(w http.ResponseWriter) {
 	for _, block := range uniqueIndividuals {
 		graph += block + "\n\n"
 	}
+	return graph, nil
+}
 
-	w.Header().Set("Content-Type", "text/turtle")
-	w.Write([]byte(graph))
+// publishToStore writes the assembled graph to the triple store, first as a
+// timestamped snapshot and then as the current graph.
+func (t *Traits) publishToStore(graph string) {
+	// As in store: an empty graph is not a description of anything, and PUTting
+	// one over urn:current replaces the cloud's knowledge graph with nothing.
+	if strings.TrimSpace(graph) == "" {
+		log.Println("kgrapher: refusing to publish an empty graph to the triple store")
+		return
+	}
 
 	snapshotT := time.Now().UTC().Format(time.RFC3339)
 	snapshotIRI := "urn:snapshots:" + snapshotT
@@ -337,7 +401,7 @@ func (t *Traits) assembleOntologies(w http.ResponseWriter) {
 
 	gspURL := repoBase + "/rdf-graphs/service?graph=" + url.QueryEscape(snapshotIRI)
 
-	req, err = http.NewRequest(http.MethodPut, gspURL, bytes.NewBuffer([]byte(graph)))
+	req, err := http.NewRequest(http.MethodPut, gspURL, bytes.NewBuffer([]byte(graph)))
 	if err != nil {
 		log.Println("Error creating snapshot PUT:", err)
 		return
@@ -347,8 +411,8 @@ func (t *Traits) assembleOntologies(w http.ResponseWriter) {
 	// Triple-store endpoint is typically HTTP-only on localhost, but use the
 	// framework transport for consistency in case the deployment ever moves
 	// it to HTTPS.
-	client = &http.Client{Transport: http.DefaultClient.Transport}
-	resp, err = client.Do(req)
+	client := &http.Client{Transport: http.DefaultClient.Transport}
+	resp, err := client.Do(req)
 	if err != nil {
 		log.Println("Error PUTting snapshot:", err)
 		return

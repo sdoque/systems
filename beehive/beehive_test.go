@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sdoque/mbaigo/components"
+	"github.com/sdoque/mbaigo/usecases"
 )
 
 // TestInitTemplate verifies the template has the expected name, mission, and defaults.
@@ -15,7 +19,7 @@ func TestInitTemplate(t *testing.T) {
 	if ua.Name != "BeehiveDashboard" {
 		t.Errorf("Name: got %q, want %q", ua.Name, "BeehiveDashboard")
 	}
-	if ua.Mission != "aggregation" {
+	if ua.Mission.String() != "aggregation" {
 		t.Errorf("Mission: got %q, want %q", ua.Mission, "aggregation")
 	}
 	tr, ok := ua.Traits.(*Traits)
@@ -260,11 +264,49 @@ func TestSwitchSortOrder(t *testing.T) {
 }
 
 // TestDashboardHTML verifies the embedded HTML contains expected landmarks.
+//
+// The two calls are relative to the page's own URL, which is what moves them
+// under the asset and through the framework's authorization. They used to be
+// absolute — /beehive/api/state and /beehive/api/toggle — registered on the
+// default mux, which Go prefers to the framework's own "/beehive/" prefix
+// because the pattern is longer. Nothing reached ResourceHandler, so nothing
+// was authorized: any host on the network could drive a heater over plain HTTP.
+//
+// Relative also means the asset can be renamed in the configuration without the
+// page having to be told.
 func TestDashboardHTML(t *testing.T) {
-	for _, want := range []string{"Beehive", "/beehive/api/state", "/beehive/api/toggle", "fetchState"} {
+	for _, want := range []string{"Beehive", "fetch('state')", "'toggle?name='", "fetchState"} {
 		if !strings.Contains(dashboardHTML, want) {
 			t.Errorf("dashboardHTML missing %q", want)
 		}
+	}
+	for _, unwanted := range []string{"/beehive/api/"} {
+		if strings.Contains(dashboardHTML, unwanted) {
+			t.Errorf("dashboardHTML still calls %q, which bypasses authorization", unwanted)
+		}
+	}
+}
+
+// TestTheToggleIsADeclaredActuationService is what makes the endpoint
+// governable at all.
+//
+// A service the framework does not know about cannot be authorized, and one
+// that does not declare actuation is authorized as whatever its asset declares
+// — here aggregation, which tells the authorizer this system only reads while
+// it switches heaters.
+func TestTheToggleIsADeclaredActuationService(t *testing.T) {
+	ua := initTemplate()
+
+	toggle, declared := ua.ServicesMap["toggle"]
+	if !declared {
+		t.Fatal("the toggle is not a declared service, so no policy applies to it")
+	}
+	if got := components.EffectiveMission(ua, toggle); got != components.MissionActuation {
+		t.Errorf("the toggle authorizes as %q; it drives a plug", got)
+	}
+	if _, declared := ua.ServicesMap["state"]; !declared {
+		t.Error("the switch list is not a declared service, so the device inventory " +
+			"is readable without a policy")
 	}
 }
 
@@ -297,5 +339,34 @@ func TestFetchOnOffState_Online(t *testing.T) {
 	}
 	if !state {
 		t.Error("expected state=true")
+	}
+}
+
+// TestTheDashboardAssetDeclaresAMission is about the asset the system actually
+// runs, not the one that seeds its configuration file.
+//
+// TestInitTemplate above checked the template and passed throughout, while
+// newResource wrote the literal "web_dashboard" into the same field — a value
+// that is not one of the missions. The framework validates the mission at
+// startup and refuses to run without a good one, so beehive could not start at
+// all, whatever its configuration said. The template and the runtime asset were
+// two declarations of the same thing, and only one of them was checked.
+func TestTheDashboardAssetDeclaresAMission(t *testing.T) {
+	sys := components.NewSystem("beehive", context.Background())
+	sys.Husk = &components.Husk{ProtoPort: map[string]int{"http": 0, "https": 0, "coap": 0}}
+
+	ua, cleanup := newResource(usecases.ConfigurableAsset{
+		Name:    "BeehiveDashboard",
+		Mission: components.MissionAggregation,
+	}, &sys)
+	defer cleanup()
+
+	if err := components.ValidateMission(ua.Name, ua.Mission); err != nil {
+		t.Fatalf("the running asset would stop the system from starting: %v", err)
+	}
+	if ua.Mission != components.MissionAggregation {
+		t.Errorf("the asset runs as %q though it was configured as %q, so the "+
+			"configuration does not describe what the cloud sees",
+			ua.Mission, components.MissionAggregation)
 	}
 }

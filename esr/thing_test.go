@@ -729,3 +729,139 @@ func TestFilterRecordsRefusesUnnarrowedQuests(t *testing.T) {
 		t.Errorf("a details-only quest returned %d records; want none", len(got))
 	}
 }
+
+// --------------------------------------------------------------------------- //
+// What a subscriber is told about, and what it is not
+// --------------------------------------------------------------------------- //
+
+// subscribe attaches a subscriber to a running registry and returns it with the
+// events it has received so far, read on demand.
+func subscribe(t *testing.T, tr *Traits) (*subscriber, func() []forms.RegistryEvent_v1) {
+	t.Helper()
+	sub, remove := tr.addSubscriber()
+	t.Cleanup(remove)
+
+	return sub, func() []forms.RegistryEvent_v1 {
+		// The registry notifies after releasing its lock, so give the send a
+		// moment to land before deciding nothing arrived.
+		time.Sleep(50 * time.Millisecond)
+		var got []forms.RegistryEvent_v1
+		for {
+			select {
+			case ev := <-sub.events:
+				got = append(got, ev)
+			default:
+				return got
+			}
+		}
+	}
+}
+
+// TestReregistrationIsNotAChange is the reason this exists: a service confirms
+// it is still there every RegPeriod seconds, and the registry used to wake every
+// subscriber for each one — more than once a second across a cloud of this size,
+// every time with a list identical to the last.
+func TestReregistrationIsNotAChange(t *testing.T) {
+	temp := createConfAssetMultipleTraits()
+	sys := createNewSys()
+	res, shutdown := newResource(temp, &sys)
+	defer shutdown()
+	tr := res.Traits.(*Traits)
+
+	_, collect := subscribe(t, tr)
+
+	// A service registers for the first time.
+	if err := sendAddRequest(0, "temperature", "sensor/temp", "", tr.requests); err != nil {
+		t.Fatalf("first registration: %v", err)
+	}
+	first := collect()
+	if len(first) != 1 {
+		t.Fatalf("a new registration produced %d events, want 1", len(first))
+	}
+	if first[0].Change != forms.RegistryRegistered {
+		t.Errorf("change = %q, want %q", first[0].Change, forms.RegistryRegistered)
+	}
+	if first[0].Record.ServiceDefinition != "temperature" {
+		t.Errorf("the event does not name the service: %+v", first[0].Record)
+	}
+
+	// The same service says it is still there, three times over.
+	id := first[0].Record.Id
+	created := first[0].Record.Created
+	for i := 0; i < 3; i++ {
+		if err := sendAddRequest(int64(id), "temperature", "sensor/temp", created, tr.requests); err != nil {
+			t.Fatalf("re-registration %d: %v", i, err)
+		}
+	}
+
+	if again := collect(); len(again) != 0 {
+		t.Errorf("re-registration woke the subscriber %d times; it is a confirmation, not a change", len(again))
+	}
+}
+
+// A deregistration is reported, and carries the record as it last stood so a
+// subscriber can act on what left without having kept its own copy.
+func TestDeregistrationIsReportedWithWhatLeft(t *testing.T) {
+	temp := createConfAssetMultipleTraits()
+	sys := createNewSys()
+	res, shutdown := newResource(temp, &sys)
+	defer shutdown()
+	tr := res.Traits.(*Traits)
+
+	_, collect := subscribe(t, tr)
+
+	if err := sendAddRequest(0, "rotation", "servo/rotation", "", tr.requests); err != nil {
+		t.Fatalf("registration: %v", err)
+	}
+	registered := collect()
+	if len(registered) != 1 {
+		t.Fatalf("registration produced %d events, want 1", len(registered))
+	}
+	id := registered[0].Record.Id
+
+	req := ServiceRegistryRequest{Action: "delete", Id: int64(id), Error: make(chan error)}
+	tr.requests <- req
+	if err := <-req.Error; err != nil {
+		t.Fatalf("deregistration: %v", err)
+	}
+
+	gone := collect()
+	if len(gone) != 1 {
+		t.Fatalf("deregistration produced %d events, want 1", len(gone))
+	}
+	if gone[0].Change != forms.RegistryDeregistered {
+		t.Errorf("change = %q, want %q", gone[0].Change, forms.RegistryDeregistered)
+	}
+	if gone[0].Record.ServiceDefinition != "rotation" {
+		t.Errorf("the event does not say what left: %+v", gone[0].Record)
+	}
+}
+
+// TestTheRegistrarStreamsOnADeclaredService is about the difference between a
+// path that answers and a service the cloud knows about.
+//
+// /syslist answered for a while without being declared. That works only in a
+// cloud whose registrar has no authorizer to consult — where the framework lets
+// an unknown path through — and returns 404 in one that does, which is the case
+// the subscription exists for. Undeclared, it is also invisible to the
+// Orchestrator, so a subscriber cannot be told where it is or be given a token
+// to read it, and it appears nowhere in the knowledge graph.
+//
+// The configuration here has no services at all, which is what every registrar
+// deployed before this service existed has: a template is written only when
+// there is no systemconfig.json, and never merged into one that is already
+// there. So the declaration alone would have left those registrars 404ing.
+func TestTheRegistrarStreamsOnADeclaredService(t *testing.T) {
+	sys := createTestSystem()
+	ua, cleanup := newResource(createConfAssetMultipleTraits(), &sys)
+	defer cleanup()
+
+	serv, declared := ua.ServicesMap[systemListPath]
+	if !declared {
+		t.Fatalf("the registrar serves %q but does not declare it, so an authorized "+
+			"cloud answers 404 there and the Orchestrator cannot find it", systemListPath)
+	}
+	if serv.Definition == "" {
+		t.Error("the service has no definition, so the authorizer has no policy to apply to it")
+	}
+}

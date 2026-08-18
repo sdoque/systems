@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -158,6 +159,13 @@ func (t *Traits) readTemp(w http.ResponseWriter, r *http.Request) {
 
 		select {
 		case err := <-getMeasuremet.Error:
+			// A sensor that has not answered yet is not a fault in this system,
+			// and 500 would tell a consumer to give up on it. 503 says come
+			// back, which is what a control loop should do.
+			if errors.Is(err, errNoReading) {
+				http.Error(w, err.Error(), http.StatusServiceUnavailable)
+				return
+			}
 			fmt.Printf("Logic error in getting measurement, %s\n", err)
 			w.WriteHeader(http.StatusInternalServerError) // Use 500 for an internal error
 			return
@@ -185,6 +193,11 @@ func (t *Traits) shuttingDown() <-chan struct{} {
 	}
 	return t.ctx.Done()
 }
+
+// errNoReading says the sensor has produced nothing valid yet, so there is no
+// temperature to serve. Distinguished from a fault because a consumer should
+// retry rather than give up.
+var errNoReading = errors.New("no valid reading yet")
 
 //-------------------------------------Unit asset's functionalities
 
@@ -244,9 +257,38 @@ func (t *Traits) readTemperature(ctx context.Context) {
 			t.tStamp = <-tStampChan
 
 		case order := <-t.trayChan: // Address a GET request
+			// Nothing has been read yet, so there is nothing to serve. The zero
+			// value is not a reading: a thermostat given 0 C computes an error
+			// of twenty and holds the valve wide open, and it cannot tell that
+			// number from a cold kitchen.
+			//
+			// This matters more since the reader started rejecting the 85 C
+			// power-on value. A chip that browned out is refused on every tick,
+			// so without this the asset would serve 0.000 for the life of the
+			// process while its own log said it was discarding bad readings.
+			if t.tStamp.IsZero() {
+				select {
+				case order.Error <- fmt.Errorf("%w from %s", errNoReading, t.name):
+				case <-ctx.Done():
+				case <-time.After(5 * time.Second):
+				}
+				continue
+			}
 			reading, err := usecases.Convert(t.temperature, celsius(), t.unit, false)
 			if err != nil {
-				order.Error <- err
+				// Bounded like the two sends around it. The requesting handler
+				// stops waiting after five seconds, and an unbounded send to a
+				// channel nobody will read again wedges this loop for the life
+				// of the process — every later request then times out against a
+				// system that is up and answering nothing. Hard to reach, since
+				// startup validates the conversion, but the cost of reaching it
+				// is the asset.
+				select {
+				case order.Error <- err:
+				case <-ctx.Done():
+				case <-time.After(5 * time.Second):
+					log.Printf("%s: no one collected the conversion error; the caller had already given up\n", t.name)
+				}
 				continue
 			}
 			var f forms.SignalA_v1a
@@ -254,7 +296,18 @@ func (t *Traits) readTemperature(ctx context.Context) {
 			f.Value = reading
 			f.Unit = t.unit.IRI
 			f.Timestamp = t.tStamp
-			order.ValueP <- f
+			// Bounded, and abandoned at shutdown. The requesting handler stops
+			// waiting after five seconds; if this send is still blocked when it
+			// does, the loop is stuck on a channel nobody will ever read and
+			// every later request times out against a system that is up and
+			// answering nothing. Bounding the handoff made this the last
+			// unbounded step on that path.
+			select {
+			case order.ValueP <- f:
+			case <-ctx.Done():
+			case <-time.After(5 * time.Second):
+				log.Printf("%s: no one collected the reading; the caller had already given up\n", t.name)
+			}
 		}
 	}
 }

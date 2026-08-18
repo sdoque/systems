@@ -36,7 +36,7 @@ func TestServing(t *testing.T) {
 	mua = createUnitAsset()
 	serving(mua, inputW, inputR, "squests")
 
-	expectedOutput = string(createTestServiceRecordListForm())
+	expectedOutput = pointListFor(createTestServiceRecordListForm())
 
 	if inputW.Body.String() != expectedOutput || inputW.Code != 200 {
 		t.Errorf("Expected %s and code %d, got: %s and code %d",
@@ -197,7 +197,7 @@ type orchestrateMultipleTestStruct struct {
 
 var orchestrateMultipleTestParams = []orchestrateMultipleTestStruct{
 	{io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
-		"application/json", 3, 200, string(createTestServiceRecordListForm()), "Best case, everything passes"},
+		"application/json", 3, 200, pointListFor(createTestServiceRecordListForm()), "Best case, everything passes"},
 	{io.NopCloser(strings.NewReader(string(createTestServiceQuestForm()))), "POST",
 		"", 3, 200, "", "Bad case, header content type is wrong"},
 	{io.NopCloser(errorReader{}), "POST",

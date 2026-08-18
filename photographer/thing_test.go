@@ -29,7 +29,7 @@ func TestInitTemplate(t *testing.T) {
 		t.Errorf("expected Name %q, got %q", "PiCam", ua.Name)
 	}
 
-	if ua.Mission != "measurement" {
+	if ua.Mission.String() != "measurement" {
 		t.Errorf("expected Mission %q, got %q", "measurement", ua.Mission)
 	}
 

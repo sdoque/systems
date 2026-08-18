@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -55,6 +56,9 @@ type Traits struct {
 	// unit registered in the service record are the same by construction rather
 	// than by two people remembering to change both.
 	unit usecases.UnitDef `json:"-"`
+	// ua is this sensor's own unit asset, needed to publish a reading to
+	// whoever is following the service.
+	ua *components.UnitAsset `json:"-"`
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -63,11 +67,25 @@ type Traits struct {
 func initTemplate() *components.UnitAsset {
 	// Define the services that expose the capabilities of the unit asset(s)
 	temperature := components.Service{
-		Definition:  "temperature",
-		SubPath:     "temperature",
-		Details:     map[string][]string{"Forms": {"SignalA_v1a"}},
-		RegPeriod:   30,
-		Description: "provides the temperature (GET) of the resource temperature sensor",
+		Definition: "temperature",
+		SubPath:    "temperature",
+		Details:    map[string][]string{"Forms": {"SignalA_v1a"}},
+		RegPeriod:  30,
+		// Followable, so a consumer hears when the temperature moves instead of
+		// asking every few seconds and being told the same number. A room takes
+		// minutes to change and a thermostat polls every ten seconds; almost
+		// every one of those answers says what the last one said.
+		//
+		// A tenth of a degree is the sensor's own resolution, so a finer
+		// threshold would only report its noise. Half a minute of silence is
+		// enough to notice this sensor has stopped without filling the network
+		// with a reading nobody needed.
+		SubscribeAble:    true,
+		Heartbeat:        30,
+		Threshold:        0.1,
+		FastestHeartbeat: 2, // it is only read every two seconds
+		FinestThreshold:  0.0625,
+		Description:      "provides the temperature (GET), or streams it as it changes (GET with Accept: text/event-stream)",
 	}
 
 	return &components.UnitAsset{
@@ -122,6 +140,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
 		serving(t, w, r, servicePath)
 	}
+	t.ua = ua
 
 	go t.readTemperature(sys.Ctx)
 
@@ -158,6 +177,13 @@ func (t *Traits) readTemp(w http.ResponseWriter, r *http.Request) {
 
 		select {
 		case err := <-getMeasuremet.Error:
+			// A sensor that has not answered yet is not a fault in this system,
+			// and 500 would tell a consumer to give up on it. 503 says come
+			// back, which is what a control loop should do.
+			if errors.Is(err, errNoReading) {
+				http.Error(w, err.Error(), http.StatusServiceUnavailable)
+				return
+			}
 			fmt.Printf("Logic error in getting measurement, %s\n", err)
 			w.WriteHeader(http.StatusInternalServerError) // Use 500 for an internal error
 			return
@@ -174,6 +200,28 @@ func (t *Traits) readTemp(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// publish hands the current reading to any consumer following this service.
+//
+// In the unit the service is registered in, not the sensor's: the chip reports
+// millidegrees Celsius and a subscriber is entitled to the same number a GET
+// would have given it. A conversion that failed is simply not published — the
+// next reading will try again, and a wrong number is worse than a late one.
+func (t *Traits) publish() {
+	if t.ua == nil {
+		return
+	}
+	reading, err := usecases.Convert(t.temperature, celsius(), t.unit, false)
+	if err != nil {
+		return
+	}
+	var f forms.SignalA_v1a
+	f.NewForm()
+	f.Value = reading
+	f.Unit = t.unit.IRI
+	f.Timestamp = t.tStamp
+	usecases.Publish(t.ua, "temperature", &f)
+}
+
 // shuttingDown reports the system's cancellation channel, or nil when the asset
 // was built without a context. Receiving from a nil channel blocks forever, so
 // in a select that case simply never fires — which is the right reading of "no
@@ -185,6 +233,11 @@ func (t *Traits) shuttingDown() <-chan struct{} {
 	}
 	return t.ctx.Done()
 }
+
+// errNoReading says the sensor has produced nothing valid yet, so there is no
+// temperature to serve. Distinguished from a fault because a consumer should
+// retry rather than give up.
+var errNoReading = errors.New("no valid reading yet")
 
 //-------------------------------------Unit asset's functionalities
 
@@ -242,11 +295,45 @@ func (t *Traits) readTemperature(ctx context.Context) {
 		case temp := <-tempChan: // Update temperature and timestamp
 			t.temperature = temp
 			t.tStamp = <-tStampChan
+			// Offered to whoever is following. The framework decides whether
+			// this reading has moved enough to be worth sending and whether
+			// anyone is owed a heartbeat; this loop's job is only to say what it
+			// just read. Costs nothing when nobody is listening.
+			t.publish()
 
 		case order := <-t.trayChan: // Address a GET request
+			// Nothing has been read yet, so there is nothing to serve. The zero
+			// value is not a reading: a thermostat given 0 C computes an error
+			// of twenty and holds the valve wide open, and it cannot tell that
+			// number from a cold kitchen.
+			//
+			// This matters more since the reader started rejecting the 85 C
+			// power-on value. A chip that browned out is refused on every tick,
+			// so without this the asset would serve 0.000 for the life of the
+			// process while its own log said it was discarding bad readings.
+			if t.tStamp.IsZero() {
+				select {
+				case order.Error <- fmt.Errorf("%w from %s", errNoReading, t.name):
+				case <-ctx.Done():
+				case <-time.After(5 * time.Second):
+				}
+				continue
+			}
 			reading, err := usecases.Convert(t.temperature, celsius(), t.unit, false)
 			if err != nil {
-				order.Error <- err
+				// Bounded like the two sends around it. The requesting handler
+				// stops waiting after five seconds, and an unbounded send to a
+				// channel nobody will read again wedges this loop for the life
+				// of the process — every later request then times out against a
+				// system that is up and answering nothing. Hard to reach, since
+				// startup validates the conversion, but the cost of reaching it
+				// is the asset.
+				select {
+				case order.Error <- err:
+				case <-ctx.Done():
+				case <-time.After(5 * time.Second):
+					log.Printf("%s: no one collected the conversion error; the caller had already given up\n", t.name)
+				}
 				continue
 			}
 			var f forms.SignalA_v1a
@@ -254,7 +341,18 @@ func (t *Traits) readTemperature(ctx context.Context) {
 			f.Value = reading
 			f.Unit = t.unit.IRI
 			f.Timestamp = t.tStamp
-			order.ValueP <- f
+			// Bounded, and abandoned at shutdown. The requesting handler stops
+			// waiting after five seconds; if this send is still blocked when it
+			// does, the loop is stuck on a channel nobody will ever read and
+			// every later request times out against a system that is up and
+			// answering nothing. Bounding the handoff made this the last
+			// unbounded step on that path.
+			select {
+			case order.ValueP <- f:
+			case <-ctx.Done():
+			case <-time.After(5 * time.Second):
+				log.Printf("%s: no one collected the reading; the caller had already given up\n", t.name)
+			}
 		}
 	}
 }

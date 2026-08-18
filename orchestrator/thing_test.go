@@ -271,13 +271,13 @@ type getServicesURLTestStruct struct {
 
 var getServicesURLTestParams = []getServicesURLTestStruct{
 	{createTestServiceQuest(), string(createTestServiceRecordListFormWithSeveral()), false, false, 0, nil,
-		string(createTestServiceRecordListFormWithSeveral()), false,
+		"", false,
 		"Good case, everything passes with several services"},
 	{createTestServiceQuest(), string(createTestServiceRecordListFormWithDefinition()), false, false, 0, nil,
-		string(createTestServiceRecordListFormWithDefinition()), false,
+		"", false,
 		"Good case, everything passes with one service definition"},
 	{createTestServiceQuest(), string(createTestServiceRecordListFormWithDetails()), false, false, 0, nil,
-		string(createTestServiceRecordListFormWithDetails()), false,
+		"", false,
 		"Good case, everything passes with one service details"},
 	{createTestServiceQuest(), string(createTestServiceRecordListForm()), false, false, 2, errHTTP,
 		"", true,
@@ -308,11 +308,46 @@ func TestGetServicesURL(t *testing.T) {
 			newMockTransport(createMultiHTTPResponse(2, testCase.writeError, testCase.inputBody),
 				testCase.mockTransportErr, testCase.errHTTP)
 		}
-		servLoc, err := mua.getServicesURL(testCase.inputForm)
-		if string(servLoc) != testCase.expectedOutput || (err == nil && testCase.expectedErr == true) ||
-			(err != nil && testCase.expectedErr == false) {
-			t.Errorf("In test case: %s: Expected %s and error %t, got: %s and %v",
-				testCase.testName, testCase.expectedOutput, testCase.expectedErr, string(servLoc), err)
+		servLoc, err := mua.getServicesURL(testCase.inputForm, "testconsumer")
+		if (err == nil) == testCase.expectedErr {
+			t.Errorf("In test case: %s: expected error %t, got: %v",
+				testCase.testName, testCase.expectedErr, err)
+			continue
+		}
+		if testCase.expectedErr {
+			continue
+		}
+
+		// The answer is checked for what a consumer needs from it rather than
+		// compared byte for byte with the registrar's reply. It is no longer
+		// that reply: the orchestrator now asks the authorizer which providers
+		// this consumer may use and answers with a service point per provider,
+		// carrying the endpoint and the token minted for it. Asserting the old
+		// bytes only asserted that nothing happened in between.
+		var points forms.ServicePointList_v1
+		if err := json.Unmarshal(servLoc, &points); err != nil {
+			t.Errorf("In test case: %s: the answer is not readable: %v", testCase.testName, err)
+			continue
+		}
+		if points.Version != "ServicePointList_v1" {
+			t.Errorf("In test case: %s: the answer is a %q, which carries no token",
+				testCase.testName, points.Version)
+		}
+		// No authorizer in this test, so every candidate is permitted and the
+		// count is the registrar's.
+		var offered forms.ServiceRecordList_v1
+		if err := json.Unmarshal([]byte(testCase.inputBody), &offered); err != nil {
+			t.Fatalf("In test case: %s: the fixture is not a record list: %v", testCase.testName, err)
+		}
+		if len(points.List) != len(offered.List) {
+			t.Errorf("In test case: %s: %d providers were offered and %d answered",
+				testCase.testName, len(offered.List), len(points.List))
+		}
+		for _, sp := range points.List {
+			if sp.ServLocation == "" {
+				t.Errorf("In test case: %s: a service point has no endpoint, so a "+
+					"consumer has nothing to call", testCase.testName)
+			}
 		}
 	}
 }
@@ -447,4 +482,33 @@ func TestAuthorizedReturnsNothingWhenAllAreRefused(t *testing.T) {
 	if len(got.List) != 0 {
 		t.Errorf("kept %d candidates; want none", len(got.List))
 	}
+}
+
+// pointListFor is what the orchestrator now answers a multi-provider quest
+// with, given what the registrar offered.
+//
+// The handler tests below check dispatch, status and content type, so they
+// compare bodies; this keeps them doing that without each one restating the
+// wire form. What the answer means — one point per permitted provider, each
+// with an endpoint and the token minted for it — is asserted in
+// TestGetServicesURL instead.
+//
+// No authorizer in these tests, so every candidate is permitted and no token
+// is minted.
+func pointListFor(recordList []byte) string {
+	var offered forms.ServiceRecordList_v1
+	if err := json.Unmarshal(recordList, &offered); err != nil {
+		panic(err)
+	}
+	var points forms.ServicePointList_v1
+	points.NewForm()
+	points.List = make([]forms.ServicePoint_v1, 0, len(offered.List))
+	for _, rec := range offered.List {
+		points.List = append(points.List, usecases.ConvertToServicePoint(rec))
+	}
+	out, err := json.MarshalIndent(points, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+	return string(out)
 }

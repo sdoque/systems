@@ -23,6 +23,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
@@ -34,6 +35,13 @@ import (
 
 // Traits are Asset-specific configurable parameters and variables
 type Traits struct {
+	// SetPt is written by the PUT handler on a net/http goroutine and read by
+	// the control loop; deviation and jitter are written by the loop and read by
+	// the diff and variations handlers. These run on Raspberry Pis, where a
+	// 32-bit build stores a float64 in two words — a setpoint moving 20 to 22
+	// while the loop reads it can yield a number that was never written, and
+	// calculateOutput turns that into a fully open or fully closed valve.
+	mu            sync.RWMutex
 	SetPt         float64       `json:"setPoint"`
 	Period        time.Duration `json:"samplingPeriod"`
 	Kp            float64       `json:"kp"`
@@ -162,7 +170,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	// deviation is arithmetic on unlike quantities, which still yields a number
 	// and still drives the pump.
 	if _, ok := usecases.LookupUnit(t.setpointUnit); !ok {
-		log.Fatalf("leveler: the setpoint is configured in %q, which is not a QUDT unit this framework can convert a measurement into\n", t.setpointUnit)
+		log.Fatalf("leveler: the setpoint is configured in %q, which is not a QUDT unit this framework can convert a measurement into. Write an identifier such as <http://qudt.org/vocab/unit/PERCENT> in the setpoint service's details.\n", t.setpointUnit)
 	}
 	ua.CervicesMap["level"].Details = components.MergeDetails(ua.Details, map[string][]string{
 		"QuantityKind":       {"<http://qudt.org/vocab/quantitykind/DimensionlessRatio>"},
@@ -235,7 +243,9 @@ func (t *Traits) variations(w http.ResponseWriter, r *http.Request) {
 // getSetPoint fills out a signal form with the current level set point
 func (t *Traits) getSetPoint() (f forms.SignalA_v1a) {
 	f.NewForm()
+	t.mu.RLock()
 	f.Value = t.SetPt
+	t.mu.RUnlock()
 	f.Unit = t.setpointUnit
 	f.Timestamp = time.Now()
 	return f
@@ -249,7 +259,9 @@ func (t *Traits) setSetPoint(f forms.SignalA_v1a) error {
 	if err := usecases.AdoptUnit(&f, t.setpointUnit, false); err != nil {
 		return fmt.Errorf("setpoint refused: %w", err)
 	}
+	t.mu.Lock()
 	t.SetPt = f.Value
+	t.mu.Unlock()
 	log.Printf("new set point: %.1f", f.Value)
 	return nil
 }
@@ -257,7 +269,9 @@ func (t *Traits) setSetPoint(f forms.SignalA_v1a) error {
 // getError fills out a signal form with the current level error
 func (t *Traits) getError() (f forms.SignalA_v1a) {
 	f.NewForm()
+	t.mu.RLock()
 	f.Value = t.deviation
+	t.mu.RUnlock()
 	f.Unit = t.errorUnit
 	f.Timestamp = time.Now()
 	return f
@@ -266,20 +280,33 @@ func (t *Traits) getError() (f forms.SignalA_v1a) {
 // getJitter fills out a signal form with the current jitter
 func (t *Traits) getJitter() (f forms.SignalA_v1a) {
 	f.NewForm()
+	t.mu.RLock()
 	f.Value = float64(t.jitter.Milliseconds())
+	t.mu.RUnlock()
 	f.Unit = t.jitterUnit
 	f.Timestamp = time.Now()
 	return f
 }
 
 // feedbackLoop is THE control loop
+//
+// It runs on its own clock and also whenever a fresh reading arrives. Both,
+// deliberately: the ticker guarantees the loop runs at all — a provider that has
+// died says nothing, and a controller waiting only for news would wait for ever
+// — while the arrival is what makes it act now rather than at the end of a
+// period that has just begun. How often an arrival may wake it is the cervice's
+// own business, so a value reported finely does not drive an actuator finely.
 func (t *Traits) feedbackLoop(ctx context.Context) {
 	ticker := time.NewTicker(t.Period * time.Second)
 	defer ticker.Stop()
 
+	fresh := t.cervices["level"].Updated()
+
 	for {
 		select {
 		case <-ticker.C:
+			t.processFeedbackLoop()
+		case <-fresh:
 			t.processFeedbackLoop()
 		case <-ctx.Done():
 			return
@@ -302,8 +329,12 @@ func (t *Traits) processFeedbackLoop() {
 		return
 	}
 
+	t.mu.Lock()
 	t.deviation = t.SetPt - tup.Value
-	output := t.calculateOutput(t.deviation)
+	deviation := t.deviation
+	t.mu.Unlock()
+
+	output := t.calculateOutput(deviation)
 
 	var of forms.SignalA_v1a
 	of.NewForm()
@@ -322,11 +353,14 @@ func (t *Traits) processFeedbackLoop() {
 	}
 
 	if tup.Value != t.previousLevel {
-		log.Printf("the level is %.2f percent with an error %.2f percent and the pumpSpeed set at %.2f%%\n", tup.Value, t.deviation, output)
+		log.Printf("the level is %.2f %s with an error %.2f %s and the pumpSpeed set at %.2f%%\n",
+			tup.Value, t.setpointUnit, deviation, t.errorUnit, output)
 		t.previousLevel = tup.Value
 	}
 
+	t.mu.Lock()
 	t.jitter = time.Since(jitterStart)
+	t.mu.Unlock()
 }
 
 // calculateOutput is the actual PI controller
@@ -368,8 +402,25 @@ func (t *Traits) adoptUnits(services components.Services) {
 	if setpoint != nil {
 		t.setpointUnit = firstDetail(setpoint.Details, "Unit")
 	}
+	if t.setpointUnit == "" {
+		t.setpointUnit = templateSetpointUnit()
+		log.Printf("%s: the setpoint service in systemconfig.json declares no unit; using %s from the template. Add a \"details\" block naming a Unit to state it explicitly.\n",
+			"leveler", t.setpointUnit)
+	}
 	if jitter != nil {
 		t.jitterUnit = firstDetail(jitter.Details, "Unit")
+	}
+
+	if setpoint != nil && t.setpointUnit != "" {
+		// Written back into the service, not just held here. A consumer converts
+		// using the unit in the registration record, so a controller working in
+		// °C while registering a setpoint with no unit invites a PUT in °F that
+		// is then believed — the fallback fixes what this system does with the
+		// number and leaves everyone else guessing.
+		if setpoint.Details == nil {
+			setpoint.Details = make(map[string][]string)
+		}
+		setpoint.Details["Unit"] = []string{t.setpointUnit}
 	}
 
 	t.errorUnit = t.setpointUnit
@@ -383,6 +434,28 @@ func (t *Traits) adoptUnits(services components.Services) {
 			deviation.Details["Unit"] = []string{t.errorUnit}
 		}
 	}
+}
+
+// templateSetpointUnit is the unit the shipped template declares for the
+// setpoint.
+//
+// Configure builds a unit asset entirely from systemconfig.json and never
+// merges the template into it, so a services array written without a details
+// block leaves the setpoint with no unit at all. The README documented exactly
+// such an array, so an operator following it got a system that refused to
+// start, saying the setpoint was configured in "".
+//
+// Falling back is the lesser of the two wrongs: a system that runs on the unit
+// its own template names, and says so, beats one that will not run. A unit that
+// is present but unresolvable is still fatal — that is a statement the operator
+// made and got wrong, rather than one they never made.
+func templateSetpointUnit() string {
+	for _, s := range initTemplate().GetServices() {
+		if s.Definition == "setpoint" {
+			return firstDetail(s.Details, "Unit")
+		}
+	}
+	return ""
 }
 
 // findService looks a service up by definition, since the subpath an operator

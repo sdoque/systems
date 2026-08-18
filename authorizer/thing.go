@@ -62,7 +62,7 @@ type Traits struct {
 	// Read and written on the request path — Adjudicate resolves a subject's
 	// attributes through the registrar — and net/http gives every request its
 	// own goroutine, so this cannot be a plain string.
-	leadingRegistrar components.CachedURL
+	leadingRegistrar usecases.CachedURL
 
 	// attributesOf resolves a subject's attributes. It is a field rather than a
 	// direct call so a decision can be exercised without a registrar: the

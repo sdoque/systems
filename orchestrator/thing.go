@@ -39,8 +39,8 @@ type Traits struct {
 	// request its own goroutine, so neither can be a plain string. A torn read
 	// while a concurrent failure clears one builds a request against "/query"
 	// with no host at all.
-	leadingRegistrar  components.CachedURL
-	leadingAuthorizer components.CachedURL
+	leadingRegistrar  usecases.CachedURL
+	leadingAuthorizer usecases.CachedURL
 	// unchecked reports an unauthorized cloud once rather than per request, and
 	// unidentified does the same for consumers the connection cannot name.
 	unchecked    sync.Once

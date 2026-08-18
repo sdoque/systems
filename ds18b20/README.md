@@ -23,6 +23,53 @@ This is done by adding the sensor's serial number (e.g., 28-0516d0bfd5ff) to the
 ```
 A unit asset block {} needs to be added for each sensor. A comma separates the resource blocks.
 
+## Following the temperature instead of asking for it
+
+The temperature service is subscribable. A consumer may ask for the value once,
+as it always could:
+
+```bash
+curl -s http://localhost:20150/ds18b20/28-00000f030344/temperature
+```
+
+or follow it, on the same address, and be told when it moves:
+
+```bash
+curl -s -N -H "Accept: text/event-stream" \
+  http://localhost:20150/ds18b20/28-00000f030344/temperature
+```
+
+The stream opens with the terms it agreed to, then the current reading, then a
+reading whenever the temperature moves past the threshold or the heartbeat
+elapses — whichever comes first:
+
+```
+event: terms
+data: {"heartbeat":30,"threshold":0.1,"unit":"<http://qudt.org/vocab/unit/DEG_C>"}
+
+event: value
+data: {"value":21.4,"unit":"<http://qudt.org/vocab/unit/DEG_C>", ...}
+```
+
+A subscriber may propose its own terms, `?heartbeat=10&threshold=0.5`, and this
+sensor clamps them to what it can honour: no faster than the two seconds between
+readings, and no finer than 0.0625 °C, which is the chip's own resolution.
+Anything finer would report its noise. What was agreed is in the first event, so
+a consumer never has to assume its request was granted.
+
+**A consuming system needs no code for this.** A thermostat calls `GetState` on
+its own clock exactly as before; the framework follows the service and answers
+from the last reading delivered. If this sensor stops publishing, the value goes
+stale within a few heartbeats and the consumer goes back to asking over the
+network — slower data, never no data.
+
+| Setting | Value | Why |
+|---------|-------|-----|
+| `heartbeat` | 30 s | long enough not to chatter, short enough to notice this sensor has stopped |
+| `threshold` | 0.1 °C | the sensor's usable resolution; a room moves slowly |
+| `fastestHeartbeat` | 2 s | it is only read every two seconds |
+| `finestThreshold` | 0.0625 °C | the chip's resolution; below this is noise |
+
 ## Compiling
 To compile the code, one needs to get the AiGo module
 ```go get github.com/sdoque/mbaigo```

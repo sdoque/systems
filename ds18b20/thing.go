@@ -56,6 +56,9 @@ type Traits struct {
 	// unit registered in the service record are the same by construction rather
 	// than by two people remembering to change both.
 	unit usecases.UnitDef `json:"-"`
+	// ua is this sensor's own unit asset, needed to publish a reading to
+	// whoever is following the service.
+	ua *components.UnitAsset `json:"-"`
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -64,11 +67,25 @@ type Traits struct {
 func initTemplate() *components.UnitAsset {
 	// Define the services that expose the capabilities of the unit asset(s)
 	temperature := components.Service{
-		Definition:  "temperature",
-		SubPath:     "temperature",
-		Details:     map[string][]string{"Forms": {"SignalA_v1a"}},
-		RegPeriod:   30,
-		Description: "provides the temperature (GET) of the resource temperature sensor",
+		Definition: "temperature",
+		SubPath:    "temperature",
+		Details:    map[string][]string{"Forms": {"SignalA_v1a"}},
+		RegPeriod:  30,
+		// Followable, so a consumer hears when the temperature moves instead of
+		// asking every few seconds and being told the same number. A room takes
+		// minutes to change and a thermostat polls every ten seconds; almost
+		// every one of those answers says what the last one said.
+		//
+		// A tenth of a degree is the sensor's own resolution, so a finer
+		// threshold would only report its noise. Half a minute of silence is
+		// enough to notice this sensor has stopped without filling the network
+		// with a reading nobody needed.
+		SubscribeAble:    true,
+		Heartbeat:        30,
+		Threshold:        0.1,
+		FastestHeartbeat: 2, // it is only read every two seconds
+		FinestThreshold:  0.0625,
+		Description:      "provides the temperature (GET), or streams it as it changes (GET with Accept: text/event-stream)",
 	}
 
 	return &components.UnitAsset{
@@ -123,6 +140,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
 		serving(t, w, r, servicePath)
 	}
+	t.ua = ua
 
 	go t.readTemperature(sys.Ctx)
 
@@ -180,6 +198,28 @@ func (t *Traits) readTemp(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}
+}
+
+// publish hands the current reading to any consumer following this service.
+//
+// In the unit the service is registered in, not the sensor's: the chip reports
+// millidegrees Celsius and a subscriber is entitled to the same number a GET
+// would have given it. A conversion that failed is simply not published — the
+// next reading will try again, and a wrong number is worse than a late one.
+func (t *Traits) publish() {
+	if t.ua == nil {
+		return
+	}
+	reading, err := usecases.Convert(t.temperature, celsius(), t.unit, false)
+	if err != nil {
+		return
+	}
+	var f forms.SignalA_v1a
+	f.NewForm()
+	f.Value = reading
+	f.Unit = t.unit.IRI
+	f.Timestamp = t.tStamp
+	usecases.Publish(t.ua, "temperature", &f)
 }
 
 // shuttingDown reports the system's cancellation channel, or nil when the asset
@@ -255,6 +295,11 @@ func (t *Traits) readTemperature(ctx context.Context) {
 		case temp := <-tempChan: // Update temperature and timestamp
 			t.temperature = temp
 			t.tStamp = <-tStampChan
+			// Offered to whoever is following. The framework decides whether
+			// this reading has moved enough to be worth sending and whether
+			// anyone is owed a heartbeat; this loop's job is only to say what it
+			// just read. Costs nothing when nobody is listening.
+			t.publish()
 
 		case order := <-t.trayChan: // Address a GET request
 			// Nothing has been read yet, so there is nothing to serve. The zero

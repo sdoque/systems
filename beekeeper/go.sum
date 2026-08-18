@@ -2,3 +2,5 @@ github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aN
 github.com/gorilla/websocket v1.5.3/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
 github.com/sdoque/mbaigo v0.1.0-alpha.8 h1:wKovBDAWMMdcJxE6kNbmtee7T3aIWa08Lkf7GmQohIQ=
 github.com/sdoque/mbaigo v0.1.0-alpha.8/go.mod h1:sNaEleHea9b2TcroLCp+9e5cHltlo/JkT9LNag1/nmU=
+github.com/sdoque/mbaigo v0.1.0-alpha.9 h1:+Pxgw/H+Utb9Tw5pEkBHrKKDv07hPWeHUYRmYhP/mmQ=
+github.com/sdoque/mbaigo v0.1.0-alpha.9/go.mod h1:uvuQ4Q1Qdi1U8BpaoBzDvst8BsskEVaVoMZ9T+5SyYc=

@@ -14,7 +14,7 @@ believe you are protected when you are not.
 | System | What it adds | Without it |
 |---|---|---|
 | [`ca`](ca/) | Issues the certificates that give every system a verifiable identity. | Nothing is identified. All traffic is in the clear. |
-| [`maitreD`](maitreD/) | Attests a requesting binary's SHA-256 hash against the CA-mastered whitelist before the CA signs for it. | The CA signs for any process that asks, so a certificate proves the host was reachable, not that the executable is the approved one. |
+| [`maitreD`](maitreD/) | Attests a requesting binary's SHA-256 hash — a fingerprint of its exact contents — against the CA-mastered whitelist before the CA signs for it. | The CA signs for any process that asks, so a certificate proves the host was reachable, not that the executable is the approved one. |
 | [`authorizer`](authorizer/) | Decides which system may use which service, and mints the access token that proves it. | Any identified system may call any service on any other. |
 
 Deploy them in that order. Each one is useful without the ones after it; none is
@@ -79,8 +79,9 @@ service on any other.
 
 Two hops stay in the clear at this level, by construction:
 
-- **Enrollment.** A system with no certificate cannot complete an mTLS handshake,
-  so the CSR goes to the CA over plain HTTP. This is exactly what maitreD is for:
+- **Enrollment.** A system with no certificate cannot complete a mutual
+  Transport Layer Security (mTLS) handshake, in which both ends present one, so
+  its certificate signing request (CSR) goes to the CA over plain HTTP. This is exactly what maitreD is for:
   the hop is not authenticated, so the *executable* is.
 - **The core hops.** Registration, orchestration and certification all use the
   `coreSystems` URLs, which are `http://` in the generated configuration. Point

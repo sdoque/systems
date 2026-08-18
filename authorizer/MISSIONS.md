@@ -77,7 +77,7 @@ Write-only sinks for audit trails or data.
 
 Bidirectional control loops that both observe and act on physical state.
 
-- **Examples:** PID controller, feedback loop, servo position-and-feedback combined.
+- **Examples:** proportional-integral-derivative (PID) controller, feedback loop, servo position-and-feedback combined.
 - **Typical actions:** `read` and `write` together; the consumer expects both as a
   paired use.
 - **Pairing:** location-bound, like `actuation`.
@@ -87,7 +87,7 @@ Bidirectional control loops that both observe and act on physical state.
 Business records and exchanges rather than physical or digital process state.
 
 - **Examples:** order entry, order persistence, maintenance notifications, work
-  order confirmations, ERP interfaces.
+  order confirmations, enterprise resource planning (ERP) interfaces.
 - **Typical actions:** `read` and `write` by the roles that own the business
   process; rarely by process-control subjects.
 - **Pairing:** not location-bound. An order is not in a room.
@@ -155,7 +155,8 @@ predate the taxonomy and are to be migrated to it.
 A parallel field — a `Details["Missions"]` key, or any new attribute alongside
 `Mission` — was considered and rejected. Optional metadata that a commissioning
 technician can leave blank *is* left blank; this is the standard experience with
-OPC UA information models. Two fields covering one concept guarantees that the
+the information models of OPC UA (Open Platform Communications Unified
+Architecture). Two fields covering one concept guarantees that the
 obvious one gets filled and the one authorization depends on does not. The
 plumbing saved is not worth the data not collected.
 
@@ -164,7 +165,7 @@ plumbing saved is not worth the data not collected.
 An asset's mission is the right granularity when the asset *is* a thing — a
 sensor, a valve, a controller. It is too coarse when the asset is an **interface
 to things**: a Modbus or OPC UA front end, an MQTT bridge, a ZigBee gateway. The
-PLC is not the asset; what is wired to it is. A read-only register observes and a
+programmable logic controller (PLC) is not the asset; what is wired to it is. A read-only register observes and a
 writable one acts, and they can sit in different functional locations.
 
 Two mechanisms cover this:
@@ -209,7 +210,8 @@ wrongly. An asset that honestly has two missions is usually two assets.
   (`usecases/registration.go:235`). A form-version bump. Without it the mission
   never reaches the authorizer: registration currently copies only `Details` into
   the record.
-- No ESR change. Its filter walks `Details` only
+- No change to the ESR, the ephemeral service registrar. Its filter walks
+  `Details` only
   (`systems/esr/thing.go:261-280`), but it does not need to know about missions —
   the authorizer receives the whole candidate list and evaluates mission itself.
 - `afo:hasMission` in the knowledge graph becomes a controlled vocabulary rather
@@ -274,7 +276,7 @@ is necessarily a misconfiguration, and failing closed is right.
 
 It does **not** resolve which asset's attributes apply when a multi-asset system
 consumes. `telegrapher` provides from both `Bathroom/temperature` and
-`Kitchen/temperature` under one certificate CN. See POLICY.md, *Deployment
+`Kitchen/temperature` under one certificate common name (CN). See POLICY.md, *Deployment
 constraints*.
 
 Outward-pushing systems (SMS gateway, cloud uplink) will end up with a `status`

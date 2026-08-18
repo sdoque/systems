@@ -221,3 +221,37 @@ func TestAggregate(t *testing.T) {
 		t.Errorf("aggregate DELETE status = %d; want 404 or 405", w.Code)
 	}
 }
+
+// TestTheGraphSurvivesAnUnreadableRegistrarReply is about what happens when the
+// cloud changes underneath this system rather than when it misbehaves.
+//
+// assembleOntologies returned ("", nil) if the registrar's reply was not the
+// form it expected — a successful assembly of nothing. rebuild took that as
+// success, stored the empty string and PUT an empty body over the live graph in
+// the triple store. Every read afterwards answered 200 with an empty
+// text/turtle body, so a destroyed knowledge graph and a cloud with nothing in
+// it look identical from outside.
+//
+// The guard is in store rather than only in the caller, because "the graph
+// already served stays as it was rather than being replaced by nothing" is a
+// promise about this system's own state, not about one code path.
+func TestTheGraphSurvivesAnUnreadableRegistrarReply(t *testing.T) {
+	traits := &Traits{}
+	traits.store("@prefix afo: <http://example.org/afo#> . afo:Cloud a afo:LocalCloud .")
+
+	before, ok := traits.current()
+	if !ok {
+		t.Fatal("the graph was not stored to begin with")
+	}
+
+	traits.store("")
+
+	after, ok := traits.current()
+	if !ok {
+		t.Fatal("the graph is gone, so every read answers with nothing and looks healthy")
+	}
+	if after.turtle != before.turtle {
+		t.Errorf("the graph was replaced with %q; a cloud always contains at least "+
+			"this grapher, so an empty graph describes nothing that exists", after.turtle)
+	}
+}

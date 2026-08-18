@@ -12,9 +12,10 @@ on port 20104 (30104 over HTTPS) and provides one service, `authorize`.
 
 The authorizer is the **second gate** of a two-gate chain:
 
-1. **Authentication** (`ca` + `maitreD`): the running binary's SHA-256 hash is on
-   the cloud-mastered whitelist, so the CA signs its CSR. The system *exists*.
-2. **Authorization** (this system): the system's certificate CN matches a policy,
+1. **Authentication** (`ca` + `maitreD`): the running binary's SHA-256 hash — a fingerprint of its exact contents — is on
+   the cloud-mastered whitelist, so the certificate authority (CA) signs its
+   certificate signing request (CSR). The system *exists*.
+2. **Authorization** (this system): the system's certificate common name (CN) matches a policy,
    so it receives tokens for specific (provider, asset, service, action) tuples.
    The system *acts*.
 
@@ -28,6 +29,9 @@ The Orchestrator obtains candidate providers from the Service Registrar, has the
 Authorizer filter them, and returns the survivors — each with a token — to the
 requesting system. This mirrors Arrowhead core, where orchestration consults
 authorization before answering.
+
+Every hop below runs over mutual Transport Layer Security (mTLS), where both
+ends present a certificate, so each knows who the other is.
 
 ```mermaid
 sequenceDiagram
@@ -160,10 +164,10 @@ Save this as `policies.json` in the authorizer's working directory. Edits take
 effect on the next decision; tokens already issued remain valid until they
 expire.
 
-## What this needed from `mbaigo`
+## What the authorizer uses from `mbaigo`
 
-All of it is in place; listed because it is where the authorization concern
-reaches into the framework, and where to look when something misbehaves.
+Listed because this is where the authorization concern reaches into the
+framework, and where to look when something misbehaves.
 
 | Piece | Where |
 |-------|-------|
@@ -178,7 +182,8 @@ reaches into the framework, and where to look when something misbehaves.
 | Verification before dispatch | `usecases/servers_handlers.go` — `permitted` |
 
 `forms.ServicePoint_v1` already carried an unused `Token` field, and the existing
-error path gives token renewal for free (POLICY.md, *Token renewal*).
+error path already provides token renewal without further work (POLICY.md,
+*Token renewal*).
 
 ## Transport: HTTPS is enabled cloud-wide
 
@@ -233,10 +238,9 @@ running deployment.
   deployment writes its own; `writePoliciesTemplate` produces a loadable starting
   point. Until one exists the authorizer denies everything, which is the correct
   state for an uncommissioned cloud but will look like a fault.
-- **Not in the Makefile's `SYSTEMS` list**, so CI does not lint, test or
+- **Not in the Makefile's `SYSTEMS` list**, so continuous integration (CI) does
+  not lint, test or
   cross-compile it yet.
-- **`messenger` has no mission** and no committed configuration, so it will refuse
-  to start once it is looked at.
 - **Never run end to end on the testbed.** Every layer is unit-tested; none of it
   has met a real Raspberry Pi.
 

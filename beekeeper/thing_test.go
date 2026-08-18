@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/sdoque/mbaigo/components"
 )
 
 // TestInitTemplate verifies the template has the expected name, mission, and defaults.
@@ -13,8 +15,12 @@ func TestInitTemplate(t *testing.T) {
 	if ua.Name != "BeekeeperGateway" {
 		t.Errorf("Name: got %q, want %q", ua.Name, "BeekeeperGateway")
 	}
-	if ua.Mission != "expose_zigbee_devices" {
-		t.Errorf("Mission: got %q, want %q", ua.Mission, "expose_zigbee_devices")
+	// Checked against the taxonomy rather than against a literal. This assertion
+	// used to name "expose_zigbee_devices" and so agreed with the template that
+	// no mission at all had been declared — it described the system in a field
+	// meant to classify it, and the test froze that in place.
+	if err := components.ValidateMission(ua.Name, ua.Mission); err != nil {
+		t.Errorf("the template seeds a configuration the framework refuses: %v", err)
 	}
 	cfg, ok := ua.Traits.(*DeconzConfig)
 	if !ok {
@@ -352,7 +358,7 @@ func TestSmartPlugSplitsActuationFromMetering(t *testing.T) {
 			t.Errorf("missionForService(%q): %v", svc, err)
 			continue
 		}
-		if got != mission {
+		if got.String() != mission {
 			t.Errorf("missionForService(%q) = %q; want %q", svc, got, mission)
 		}
 	}

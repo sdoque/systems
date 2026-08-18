@@ -80,7 +80,13 @@ func initTemplate() *components.UnitAsset {
 	}
 
 	return &components.UnitAsset{
-		Name:    "PLC with OPC UA server",
+		Name: "PLC with OPC UA server",
+		// The fallback for a service that declares no mission of its own. Every
+		// service this system builds at runtime derives one from its node's
+		// access level, so in practice this reaches the generated configuration
+		// rather than a running service — but without it there is nothing to
+		// fall back to, and the system refuses to start.
+		Mission: components.MissionMeasurement,
 		Details: map[string][]string{"PLC": {"Prosys_Simulation_Server"}, "FunctionalLocation": {"Line_1"}, "KKS": {"YLLCP001"}},
 		ServicesMap: components.Services{
 			browse.SubPath: &browse,
@@ -102,7 +108,7 @@ func initTemplate() *components.UnitAsset {
 // mission from the access level rather than configuring it means the two cannot
 // disagree — a node that the server refuses to write can never be classified as
 // an actuator.
-func missionForAccess(writable bool) string {
+func missionForAccess(writable bool) components.Mission {
 	if writable {
 		return components.MissionActuation
 	}

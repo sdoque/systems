@@ -93,7 +93,7 @@ func TestSpeedIsARatioWithItsRangeStated(t *testing.T) {
 	if r := speed.Details["Range"]; len(r) != 2 || r[0] != "0" || r[1] != "100" {
 		t.Errorf("Range = %v; want 0 to 100, the range of the unit it is stated in", r)
 	}
-	if speed.Mission != "actuation" {
+	if speed.Mission.String() != "actuation" {
 		t.Errorf("mission = %q; commanding a locomotive acts on the world", speed.Mission)
 	}
 }

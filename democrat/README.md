@@ -111,7 +111,7 @@ SELECT ?system ?hostName ?ip FROM <urn:state:current> WHERE {
           afo:hasHusk ?husk .
   ?husk afo:runsOnHost ?host .
   ?host afo:hasName ?hostName .
-  OPTIONAL { ?host afo:hasIPaddress ?ip . }
+  OPTIONAL { ?host afo:hasIPAddress ?ip . }
 }
 
 -- Query 3: service endpoints

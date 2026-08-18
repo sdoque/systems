@@ -11,7 +11,7 @@ Each configured signal becomes one unit asset reachable at:
 GET /sailor/<SignalName>/access  →  SignalA_v1a JSON
 ```
 
-Signals monitored out of the box: wind speed, wind angle, water speed,
+Signals monitored by default: wind speed, wind angle, water speed,
 heading, COG, SOG, and depth.  Any NMEA 2000 PGN can be added in minutes — see
 [Adding new signals](#adding-new-signals).
 

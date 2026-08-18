@@ -16,23 +16,19 @@
 package main
 
 import (
-	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"mime"
 	"net/http"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/sdoque/mbaigo/components"
-	"github.com/sdoque/mbaigo/forms"
 	"github.com/sdoque/mbaigo/usecases"
 )
 
@@ -51,6 +47,9 @@ type Traits struct {
 	CloudName string             `json:"cloudName"` // name used for the merged SysML v2 package
 	owner     *components.System `json:"-"`
 	name      string             `json:"-"`
+	// registry is where the system list is read from, discovered like any other
+	// consumed service so the read carries a token in an authorized cloud.
+	registry *components.Cervice `json:"-"`
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -90,6 +89,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		}
 	}
 
+	t.registry = usecases.SystemListCervice(sys)
+
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
 		Mission:     configuredAsset.Mission,
@@ -124,61 +125,13 @@ func (t *Traits) aggregate(w http.ResponseWriter, r *http.Request) {
 // assembleModel fetches /smodel from each registered system, merges the per-system
 // SysML v2 packages into a single package, and writes the result.
 func (t *Traits) assembleModel(w http.ResponseWriter) {
-	leadingRegistrarURL, err := components.GetRunningCoreSystemURL(t.owner, "serviceregistrar")
+	// Through the framework, which discovers the registry service and carries
+	// the access token. This request was built by hand and carried none, so
+	// declaring syslist as a service refused it in any cloud with an authorizer.
+	systems, err := usecases.SystemList(t.registry, t.owner)
 	if err != nil {
-		log.Printf("Error getting the leading service registrar URL: %s\n", err)
-		http.Error(w, "Internal Server Error: unable to get leading service registrar URL", http.StatusInternalServerError)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequest(http.MethodGet, leadingRegistrarURL+"/syslist", nil)
-	if err != nil {
-		log.Printf("Error creating system list request: %s\n", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	req = req.WithContext(ctx)
-
-	// Preserve the framework-configured Transport so this call uses mTLS
-	// when the registrar serves only HTTPS. http.DefaultClient.Transport is
-	// set up by installTLSConfig at enrollment.
-	client := &http.Client{Transport: http.DefaultClient.Transport}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error fetching system list: %s\n", err)
-		http.Error(w, "Service Unavailable: unable to reach service registrar", http.StatusServiceUnavailable)
-		return
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Printf("Error reading system list response: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	if err != nil {
-		log.Printf("Error parsing system list content type: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	sL, err := usecases.Unpack(bodyBytes, mediaType)
-	if err != nil {
-		log.Printf("Error unpacking system list: %v\n", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	systemsList, ok := sL.(*forms.SystemRecordList_v1)
-	if !ok {
-		log.Println("Problem asserting system list type")
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		log.Printf("Error getting the system list: %s\n", err)
+		http.Error(w, "Service Unavailable: unable to read the service registrar", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -188,7 +141,7 @@ func (t *Traits) assembleModel(w http.ResponseWriter) {
 	var portDefs, blockDefs, abstractActions, behaviorDefs []string
 	var fragments []systemFragment
 
-	for _, sysURL := range systemsList.List {
+	for _, sysURL := range systems {
 		smodelURL := sysURL + "/smodel"
 		log.Println("Fetching SysML model from", smodelURL)
 

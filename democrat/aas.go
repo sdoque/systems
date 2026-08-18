@@ -252,7 +252,7 @@ WHERE {
           afo:hasHusk ?husk .
   ?husk afo:runsOnHost ?host .
   ?host afo:hasName ?hostName .
-  OPTIONAL { ?host afo:hasIPaddress ?ip . }
+  OPTIONAL { ?host afo:hasIPAddress ?ip . }
 }
 `
 	r2, err := sparqlSelect(client, sparqlEndpoint, qHost)

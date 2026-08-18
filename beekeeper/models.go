@@ -118,7 +118,7 @@ var sensorServices = map[string][]string{
 // A service absent from this map is a programming error rather than a
 // configuration one — it means a device type was given a service that was never
 // classified — and missionForService reports it so startup fails loudly.
-var serviceMissions = map[string]string{
+var serviceMissions = map[string]components.Mission{
 	// Drivable.
 	"on_off":     components.MissionActuation,
 	"brightness": components.MissionActuation,
@@ -139,11 +139,11 @@ var serviceMissions = map[string]string{
 }
 
 // missionForService returns the mission of a ZigBee service subpath.
-func missionForService(subPath string) (string, error) {
+func missionForService(subPath string) (components.Mission, error) {
 	if mission, ok := serviceMissions[subPath]; ok {
 		return mission, nil
 	}
-	return "", fmt.Errorf("service %q has no mission: add it to serviceMissions", subPath)
+	return components.Mission{}, fmt.Errorf("service %q has no mission: add it to serviceMissions", subPath)
 }
 
 // serviceSpec defines the Arrowhead service metadata for each service subpath.

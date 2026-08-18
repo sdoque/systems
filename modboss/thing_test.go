@@ -128,7 +128,7 @@ func TestMissionForRights(t *testing.T) {
 			t.Errorf("missionForRights(%q) error = %v; wantErr %v", tc.rights, err, tc.wantErr)
 			continue
 		}
-		if got != tc.want {
+		if got.String() != tc.want {
 			t.Errorf("missionForRights(%q) = %q; want %q", tc.rights, got, tc.want)
 		}
 	}

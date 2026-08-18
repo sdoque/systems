@@ -10,7 +10,7 @@ Each configured PID becomes one unit asset reachable at:
 GET /busdriver/<AssetName>/access  →  SignalA_v1a JSON
 ```
 
-Signals monitored out of the box: engine RPM, coolant temperature, vehicle
+Signals monitored by default: engine RPM, coolant temperature, vehicle
 speed.  Any OBD-II Mode 01 PID can be added in two minutes — see
 [Adding new signals](#adding-new-signals).
 

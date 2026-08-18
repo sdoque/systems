@@ -137,9 +137,11 @@ func (p Policies) Validate() error {
 			if m == Wildcard {
 				continue
 			}
-			if !components.ValidMission(m) {
-				return fmt.Errorf("policy %d (subject %q): unknown mission %q: expected one of %s",
-					i, r.Subject, m, strings.Join(components.Missions, ", "))
+			// The policy file holds missions as text, so it is parsed rather
+			// than compared: a mission outside the taxonomy is refused here,
+			// where the rule that names it can be pointed at.
+			if _, err := components.MissionFromString(m); err != nil {
+				return fmt.Errorf("policy %d (subject %q): %w", i, r.Subject, err)
 			}
 		}
 		for _, a := range r.Actions {

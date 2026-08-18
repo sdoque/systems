@@ -1,4 +1,4 @@
-module github.com/sdoque/systems/messenger
+module github.com/sdoque/systems/painter
 
 go 1.26.5
 

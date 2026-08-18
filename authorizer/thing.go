@@ -47,6 +47,11 @@ const PoliciesFile = "policies.json"
 type Traits struct {
 	owner *components.System
 
+	// orchestrator is the common name the orchestrator enrolls under, taken from
+	// this asset's configured details. Empty means the framework's default.
+	// Written once at construction and read on the request path.
+	orchestrator string
+
 	mu       sync.RWMutex
 	policies Policies
 	loadedAt time.Time // modification time of the file the policies came from
@@ -57,7 +62,7 @@ type Traits struct {
 	// Read and written on the request path — Adjudicate resolves a subject's
 	// attributes through the registrar — and net/http gives every request its
 	// own goroutine, so this cannot be a plain string.
-	leadingRegistrar components.CachedURL
+	leadingRegistrar usecases.CachedURL
 
 	// attributesOf resolves a subject's attributes. It is a field rather than a
 	// direct call so a decision can be exercised without a registrar: the
@@ -100,6 +105,13 @@ func initTemplate() *components.UnitAsset {
 func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (*components.UnitAsset, func()) {
 	t := &Traits{owner: sys}
 	t.attributesOf = t.subjectAttributes
+	// From the asset's details in systemconfig.json, which is a file an operator
+	// can actually write. It used to be read from Husk.Details, a map nothing
+	// sets from configuration and which no documentation mentions — so the name
+	// it was meant to make configurable stayed hardcoded in practice.
+	if names := configuredAsset.Details["OrchestratorName"]; len(names) > 0 && names[0] != "" {
+		t.orchestrator = names[0]
+	}
 
 	if err := t.reloadPolicies(); err != nil {
 		log.Fatalf("authorizer: %v\n", err)
@@ -236,21 +248,40 @@ func (t *Traits) authorize(w http.ResponseWriter, r *http.Request) {
 	// the quest names a subject the peer is not. What the peer certificate
 	// establishes is that the *asker* is the orchestrator.
 	//
-	// Over plain HTTP there is no certificate to check. That is not a
-	// misconfiguration to refuse: the core-system URLs are http:// in the
-	// template, enrollment itself is plaintext, and a cloud is expected to run
-	// before it is protected. Refusing here would break every default
-	// deployment to close a hole that only exists in deployments which have not
-	// adopted TLS anyway. It is recorded instead — in the log line below, and in
-	// the security posture the knowledge graph carries — so a cloud that
-	// believes it is protected can be seen not to be.
+	// Over plain HTTP there is no certificate to check, and what to do about
+	// that depends on whether this authorizer is listening on TLS at all.
+	//
+	// The earlier reasoning here was wrong. It said refusing "would break every
+	// default deployment to close a hole that only exists in deployments which
+	// have not adopted TLS anyway". The premise does not hold: SetoutServers
+	// binds the HTTP port unconditionally and never withdraws it, so a fully
+	// enrolled cloud still answers on 20104. The hole was therefore open in
+	// exactly the deployments that believe they are protected, and what was
+	// reachable through it is an unauthenticated signing endpoint — anyone with
+	// network reach could post any subject and any candidate and receive a
+	// signed token plus the policy's reasons for every refusal.
+	//
+	// So: once this authorizer is serving on TLS, a quest that did not come
+	// over it is refused. Before that — during enrollment, or in a cloud with
+	// no HTTPS port — it is accepted and reported, because there is no better
+	// channel for the orchestrator to have used and refusing would stop
+	// orchestration cloud-wide for a gap the cloud has not yet had the means to
+	// close.
 	asker, verified := usecases.PeerCN(r)
-	if verified && asker != t.owner.Name && asker != orchestratorCN {
+	if verified && asker != t.owner.Name && asker != t.orchestratorCN() {
 		log.Printf("authorizer: refusing an authorization quest from %q: only the orchestrator may ask\n", asker)
 		http.Error(w, "only the orchestrator may request authorization", http.StatusForbidden)
 		return
 	}
 	if !verified {
+		if tlsPort, expected := t.expectsTLS(); expected {
+			log.Printf("authorizer: refusing an authorization quest that arrived over plain HTTP while %d is for TLS\n", tlsPort)
+			http.Error(w, fmt.Sprintf(
+				"this authorizer requires TLS: reach it at https://<host>:%d/%s/ and give that URL "+
+					"as the authorizer's coreSystems entry", tlsPort, t.owner.Name),
+				http.StatusForbidden)
+			return
+		}
 		t.notePlaintextQuest()
 	}
 
@@ -269,10 +300,43 @@ func (t *Traits) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// orchestratorCN is the common name the orchestrator enrolls under. The
-// authorize service has exactly one legitimate caller, so naming it is the whole
-// of the access rule.
-const orchestratorCN = "orchestrator"
+// orchestratorCN reports the common name the orchestrator enrolls under, which
+// this authorizer accepts as the one legitimate asker.
+//
+// Configurable, because sys.Name is: a system renamed in its configuration file
+// enrolls under that name, and two clouds sharing a host is a reason to rename
+// one. Hardcoding it meant such a cloud got 403 on every quest, and since
+// authorized() fails closed against a reachable-but-refusing authorizer, that
+// stopped orchestration cloud-wide.
+func (t *Traits) orchestratorCN() string {
+	if t.orchestrator != "" {
+		return t.orchestrator
+	}
+	return usecases.OrchestratorName
+}
+
+// expectsTLS reports whether this authorizer should be reached over TLS, and on
+// which port.
+//
+// Latched rather than current, which is the difference between a security
+// control and a coincidence.
+//
+// Reading the current port meant the refusal could switch itself off. The
+// HTTPS server releases its entry when it returns, so an authorizer that had
+// been refusing plaintext for weeks would start accepting it again after a cert
+// rotation or a cancelled context, while continuing to serve on the plain port.
+// EverBound is the latch: once TLS has been served, it stays served as far as
+// this decision is concerned.
+// The window before TLS first binds is deliberately still open: there is no
+// better channel for the orchestrator to have used, and refusing would stop
+// orchestration cloud-wide for a gap the cloud has not yet had the means to
+// close. It is reported instead, by notePlaintextQuest.
+func (t *Traits) expectsTLS() (int, bool) {
+	if port, ok := t.owner.Husk.Bound.EverBound("https"); ok && port != 0 {
+		return port, true
+	}
+	return 0, false
+}
 
 // notePlaintextQuest reports, at most once a minute, that quests are arriving
 // with no verifiable asker.
@@ -287,7 +351,7 @@ func (t *Traits) notePlaintextQuest() {
 		return
 	}
 	t.lastPlaintextNote = time.Now()
-	log.Printf("authorizer: authorization quests are arriving without a client certificate, so the asking system is unverified — this cloud reaches the authorizer over plain HTTP\n")
+	log.Printf("authorizer: authorization quests are arriving without a client certificate, so the asking system is unverified — this cloud reaches the authorizer over plain HTTP. Once this system is serving TLS, such quests are refused.\n")
 }
 
 //-------------------------------------Unit asset's functionalities
@@ -499,7 +563,7 @@ func writePoliciesTemplate(path string) error {
 	starter := Policies{
 		Rules: []Rule{{
 			Subject:            "thermostat-*",
-			Missions:           []string{components.MissionMeasurement},
+			Missions:           []string{components.MissionMeasurement.String()},
 			Actions:            []string{ActionRead},
 			MustMatchAttribute: "FunctionalLocation",
 			TTL:                "5m",

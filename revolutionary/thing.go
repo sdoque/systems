@@ -274,7 +274,18 @@ func (t *Traits) sampleSignal(ctx context.Context) {
 			f.Value = t.Value
 			f.Unit = t.unit
 			f.Timestamp = t.tStamp
-			order.SampledDatum <- f
+			// Bounded, and abandoned at shutdown. The requesting handler stops
+			// waiting after five seconds; if this send is still blocked when it
+			// does, the loop is stuck on a channel nobody will ever read and
+			// every later request times out against a system that is up and
+			// answering nothing. Bounding the handoff made this the last
+			// unbounded step on that path.
+			select {
+			case order.SampledDatum <- f:
+			case <-ctx.Done():
+			case <-time.After(5 * time.Second):
+				log.Printf("%s: no one collected the reading; the caller had already given up\n", t.name)
+			}
 		case requestedOutput := <-t.outputChannel:
 			log.Printf("Received output request for %s: %.2f%%\n", t.name, requestedOutput)
 			rawValue := PercentToRaw(requestedOutput)

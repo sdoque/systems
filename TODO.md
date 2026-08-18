@@ -17,6 +17,25 @@ say why here and then delete the entry.
   than removed on the same day the general fix landed. Remove it, and let the
   ESR's own test for a declared `syslist` prove the general path works.
 
+## Unexplained
+
+- **`tls: bad record MAC` on a subscription stream.** Seen twice in three
+  minutes on the testbed, 18 August, on the thermostat following the ds18b20's
+  temperature over HTTPS:
+
+      following temperature ended (local error: tls: bad record MAC)
+
+  The fallback did its job — it polled, then resumed — so nothing stopped, and
+  that is exactly why it is worth chasing before it is relied upon. A bad record
+  MAC is a TLS integrity failure: the receiver could not authenticate a record.
+  On a wired LAN that is not ordinary corruption, and the usual software cause
+  is two goroutines writing one TLS connection. Nothing in the publisher or the
+  follower obviously does that, so it is not diagnosed.
+
+  Worth trying: whether it happens over plain HTTP as well (which would rule TLS
+  out), whether it correlates with the sensor's empty reads, and whether a
+  second consumer following the same service makes it more frequent.
+
 ## Security
 
 - **`/kgraph` and `/smodel` are governed by nothing.** They are served by

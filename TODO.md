@@ -73,18 +73,21 @@ say why here and then delete the entry.
   it, and nothing has yet loaded it into the AASX Package Explorer or FA³ST to
   confirm the shape is accepted rather than merely plausible.
 
-- **Enabling authorization has never been tried on a cloud.** The bootstrap
-  exemption makes it possible — core-mission services are served without a token,
-  so discovery and registration no longer deadlock — but nothing has run that
-  way. Two things to watch when it is first switched on. Deregistration is
-  exempt only because `unregister` is core-mission; `ActionForMethod` maps DELETE
-  to the empty string by design, so if that service ever stopped being core, no
-  token could authorize it. And filtering at the orchestrator still applies to
-  core services, so `painter`, `kgrapher` and `modeler` will attempt an
-  orchestration for `syslist` on every walk that the authorizer refuses for want
-  of a rule — harmless, since `SystemList` then sends the request without a token
-  and the registrar accepts it, but it is traffic and possibly log noise. A rule
-  granting those three `read` on mission `core` would settle it.
+- **`painter`, `kgrapher` and `modeler` still reach the orchestrator over http.**
+  Their `syslist` reads work — it is core-mission and served without a token —
+  but every quest is refused with an empty subject and logged, so the
+  orchestrator and authorizer logs fill with refusals that are not denials. One
+  line each, the same change the thermostat needed.
+- **ds18b20's asset name reverted to the template's `sensor_Id`.** The 1-wire ID
+  is still right in the trait; it is the asset that lost it, so the registry,
+  the knowledge graph and any AAS now identify the sensor by a placeholder.
+  Worth checking whether its `FunctionalLocation` survived too: without it the
+  pairing rule still passes — an asset with no value satisfies the constraint —
+  so the kitchen-must-not-drive-the-bathroom property is not being exercised.
+- **Authorization has not been refused in anger.** Every denial so far has been
+  a misconfiguration. Nothing has yet tested a token expiring under load, a
+  second consumer competing for one provider, or a policy edit taking effect
+  while a control loop runs.
 
 ## Not yet run on hardware
 

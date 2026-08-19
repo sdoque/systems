@@ -324,6 +324,66 @@ needed.
 
 ## Deployment constraints
 
+### Reach the Orchestrator over HTTPS
+
+**A consumer whose `coreSystems` entry for the Orchestrator is `http://…` can
+never be authorized, however the policy file is written.**
+
+The subject is the Common Name of a verified client certificate, and a client
+certificate exists only on a mutual-TLS connection. A service quest that arrives
+over plain HTTP therefore carries no subject at all, the Authorizer is asked
+about `""`, and nothing in `policies.json` names `""` — so every candidate is
+refused and the consumer is told it may use none of them.
+
+This is not hypothetical; it is what the first enabled deployment did. The
+generated configuration seeds every core system over HTTP, which is correct for
+two of the three:
+
+| Core system | Scheme | Why |
+|---|---|---|
+| `ca` | **http** | Enrollment precedes any certificate. It cannot be otherwise. |
+| `serviceregistrar` | **http** | Registration is core-mission and needs no token. |
+| `orchestrator` | **https** once authorization is adopted | This is where the subject is established. |
+
+So exactly one line changes per consumer:
+
+```json
+{ "coreSystem": "orchestrator",
+  "url": "https://192.168.1.10:30103/orchestrator/orchestration" }
+```
+
+The address rather than `localhost`: the certificate the CA issues carries the
+host's addresses and never mentions `localhost`, so `https://localhost:30103`
+fails to verify. Generated configurations now seed the host's own address for
+this reason, and the HTTPS port is the HTTP port with its leading `2` replaced
+by a `3`.
+
+The failure is quiet from the consumer's side — it looks like a policy refusal,
+which sends an operator to the one file the answer is not in — so the
+Orchestrator now says so in the refusal it returns rather than only in its own
+log.
+
+### The authorizer slot in a generated configuration
+
+`systemconfig.json` is generated with a fourth core system:
+
+```json
+{ "coreSystem": "authorizer", "url": "" }
+```
+
+An empty URL means **absent**: a cloud that has not adopted authorization
+behaves exactly as it did before, and `GetRunningCoreSystemURL` skips the entry.
+What the slot buys is discovery — an operator opening the file sees that the
+framework has an authorizer and where its URL goes, rather than needing to know
+the JSON shape and copy it from another system.
+
+It is deliberately not seeded with a real URL. `AuthorizeRequest` does not check
+whether an authorizer is *reachable*, only whether one is *configured*, so a
+seeded URL would make every newly generated system answer 503 to everything but
+its core services until an authorizer existed — breaking every cloud that has
+not adopted authorization, which is the opposite of adoption per deployment.
+
+
 **One functional location per system.** The subject is a certificate CN, which
 identifies a *system*; attributes such as `FunctionalLocation` are declared on
 *unit assets*. A system whose assets sit in different locations therefore has no

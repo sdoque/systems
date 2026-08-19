@@ -73,16 +73,18 @@ say why here and then delete the entry.
   it, and nothing has yet loaded it into the AASX Package Explorer or FA³ST to
   confirm the shape is accepted rather than merely plausible.
 
-- **The service registrar cannot be put behind the authorizer as things stand.**
-  Two independent reasons, both found while writing AlphaCloud's policy file.
-  First, `RegisterServices` sends a bare POST and `unregisterService` a bare
-  DELETE — neither carries a token, and neither could obtain one, because a
-  token comes from orchestration and orchestration needs the registry. Second,
-  `ActionForMethod` maps DELETE to the empty string by design, so no token claim
-  can ever match a deregistration. Until both are answered, `esr` must stay out
-  of the core-system list of anything that would enforce against it, and the
-  aggregation systems reading `syslist` need no policy. Enable enforcement on
-  leaf providers — `ds18b20`, `parallax` — first.
+- **Enabling authorization has never been tried on a cloud.** The bootstrap
+  exemption makes it possible — core-mission services are served without a token,
+  so discovery and registration no longer deadlock — but nothing has run that
+  way. Two things to watch when it is first switched on. Deregistration is
+  exempt only because `unregister` is core-mission; `ActionForMethod` maps DELETE
+  to the empty string by design, so if that service ever stopped being core, no
+  token could authorize it. And filtering at the orchestrator still applies to
+  core services, so `painter`, `kgrapher` and `modeler` will attempt an
+  orchestration for `syslist` on every walk that the authorizer refuses for want
+  of a rule — harmless, since `SystemList` then sends the request without a token
+  and the registrar accepts it, but it is traffic and possibly log noise. A rule
+  granting those three `read` on mission `core` would settle it.
 
 ## Not yet run on hardware
 

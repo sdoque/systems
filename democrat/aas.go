@@ -44,9 +44,9 @@ import (
 // ── AAS data types (AAS Part 2 v3 JSON serialization) ─────────────────────────
 
 type AASEnv struct {
-	AssetAdministrationShells []AAS         `json:"assetAdministrationShells"`
-	Submodels                 []Submodel    `json:"submodels"`
-	ConceptDescriptions       []interface{} `json:"conceptDescriptions"`
+	AssetAdministrationShells []AAS                `json:"assetAdministrationShells"`
+	Submodels                 []Submodel           `json:"submodels"`
+	ConceptDescriptions       []ConceptDescription `json:"conceptDescriptions"`
 }
 
 type AAS struct {
@@ -479,7 +479,7 @@ func buildAASEnv(systems map[string]*SystemInfo) AASEnv {
 	env := AASEnv{
 		AssetAdministrationShells: []AAS{},
 		Submodels:                 []Submodel{},
-		ConceptDescriptions:       []interface{}{},
+		ConceptDescriptions:       []ConceptDescription{},
 	}
 
 	// Stable iteration order so output diffs are minimal.
@@ -639,82 +639,81 @@ func buildAASEnv(systems map[string]*SystemInfo) AASEnv {
 		}
 	}
 
+	// Last, because it reads what the loop above produced: every identifier the
+	// shell now mentions and this bridge is entitled to explain.
+	env.ConceptDescriptions = buildConceptDescriptions(env)
+
 	return env
 }
 
 // ── FA³ST upsert ──────────────────────────────────────────────────────────────
 
-// upsertShell creates or replaces an AAS in FA³ST.
-// It tries PUT (update) first; if FA³ST returns 404 it falls back to POST (create).
+// upsert creates or replaces one element in FA³ST.
+//
+// PUT first and POST on a 404, which is the only way to be sure without asking:
+// a GET to find out whether the element exists would be a second round trip and
+// would still be a guess by the time the write arrived.
+//
+// One function for shells, submodels and concept descriptions because the AAS
+// API treats them alike — collection, base64url identifier, same status codes.
+// Three copies of this existed in spirit; the third was the one that made it
+// obvious.
+func upsert(client *http.Client, faaastBase, collection, id string, payload any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal %s %s: %w", collection, id, err)
+	}
+	idB64 := b64url(id)
+
+	req, _ := http.NewRequest(http.MethodPut, faaastBase+"/"+collection+"/"+idB64, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	if resp.StatusCode != http.StatusNotFound {
+		return fmt.Errorf("PUT /%s/%s: HTTP %d", collection, idB64, resp.StatusCode)
+	}
+
+	// It does not exist yet — create it.
+	req2, _ := http.NewRequest(http.MethodPost, faaastBase+"/"+collection, bytes.NewReader(body))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err := client.Do(req2)
+	if err != nil {
+		return err
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode == http.StatusCreated || resp2.StatusCode == http.StatusOK {
+		return nil
+	}
+	return fmt.Errorf("POST /%s: HTTP %d", collection, resp2.StatusCode)
+}
+
+// upsertShell creates or replaces an Asset Administration Shell.
 func upsertShell(client *http.Client, faaastBase string, aas AAS) error {
-	body, _ := json.Marshal(aas)
-	idB64 := b64url(aas.ID)
-	putURL := faaastBase + "/shells/" + idB64
-
-	req, _ := http.NewRequest(http.MethodPut, putURL, bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK {
-		return nil
-	}
-	if resp.StatusCode != http.StatusNotFound {
-		return fmt.Errorf("PUT /shells/%s: HTTP %d", idB64, resp.StatusCode)
-	}
-
-	// Shell does not exist yet — create it.
-	req2, _ := http.NewRequest(http.MethodPost, faaastBase+"/shells", bytes.NewReader(body))
-	req2.Header.Set("Content-Type", "application/json")
-	resp2, err := client.Do(req2)
-	if err != nil {
-		return err
-	}
-	resp2.Body.Close()
-	if resp2.StatusCode == http.StatusCreated || resp2.StatusCode == http.StatusOK {
-		return nil
-	}
-	return fmt.Errorf("POST /shells: HTTP %d", resp2.StatusCode)
+	return upsert(client, faaastBase, "shells", aas.ID, aas)
 }
 
-// upsertSubmodel creates or replaces a Submodel in FA³ST.
+// upsertSubmodel creates or replaces a submodel.
 func upsertSubmodel(client *http.Client, faaastBase string, sm Submodel) error {
-	body, _ := json.Marshal(sm)
-	idB64 := b64url(sm.ID)
-	putURL := faaastBase + "/submodels/" + idB64
-
-	req, _ := http.NewRequest(http.MethodPut, putURL, bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK {
-		return nil
-	}
-	if resp.StatusCode != http.StatusNotFound {
-		return fmt.Errorf("PUT /submodels/%s: HTTP %d", idB64, resp.StatusCode)
-	}
-
-	req2, _ := http.NewRequest(http.MethodPost, faaastBase+"/submodels", bytes.NewReader(body))
-	req2.Header.Set("Content-Type", "application/json")
-	resp2, err := client.Do(req2)
-	if err != nil {
-		return err
-	}
-	resp2.Body.Close()
-	if resp2.StatusCode == http.StatusCreated || resp2.StatusCode == http.StatusOK {
-		return nil
-	}
-	return fmt.Errorf("POST /submodels: HTTP %d", resp2.StatusCode)
+	return upsert(client, faaastBase, "submodels", sm.ID, sm)
 }
+
+// upsertConcept creates or replaces a concept description.
+//
+// Written before the submodels that point at it, so a consumer that reads the
+// shell between two syncs finds the meaning already there rather than a
+// semanticId leading nowhere.
+func upsertConcept(client *http.Client, faaastBase string, cd ConceptDescription) error {
+	return upsert(client, faaastBase, "concept-descriptions", cd.ID, cd)
+}
+
+// ── Small helpers ─────────────────────────────────────────────────────────────
 
 // appendOnce adds a value to a slice unless it is already there. The SPARQL
 // result multiplies rows across every OPTIONAL, so the same URL arrives once per

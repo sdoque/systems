@@ -372,6 +372,78 @@ Services
 A consumer reading only the interface description learns how to read the value;
 one reading the whole shell learns that the setpoint can also be written.
 
+## Concept descriptions: the meanings, brought inside
+
+A semanticId is a promise that somebody, somewhere, wrote down what the
+identifier stands for.  A **ConceptDescription** is that writing-down brought
+into the environment, so a consumer with no internet — or no interest in
+dereferencing an IRI it has never seen — can still learn that a value is a
+temperature in degrees Celsius.
+
+The rule for what gets one is *describe what only we can describe*.
+
+| Identifier | Described here? | Why |
+|---|---|---|
+| `alc:aas/IdentitySubmodel` and the other local templates | yes | Nothing else in the world defines them |
+| `alc:hasMethods` | yes | Same |
+| QUDT units | yes | For the IEC 61360 translation, not the definition |
+| QUDT quantity kinds | yes | Same |
+| `afo:hasName`, `afo:hasUrl`, … | **no** | AFO is published with a DOI and defines its own terms |
+| `admin-shell.io/…`, `w3.org/…` | **no** | Not ours to define |
+
+The AFO exclusion is the interesting one.  Copying those definitions into every
+shell would be exactly the duplication democrat exists to remove, and the copies
+would drift the first time the ontology was revised.  The IRIs dereference; that
+is enough.
+
+The QUDT entries are not a redefinition either.  QUDT is authoritative and does
+dereference — but it does not publish *"°C, and formally this IRI"* in the shape
+the Asset Administration Shell world reads.  IEC 61360 has exactly that shape,
+and this bridge is the only place the pairing can be made:
+
+```json
+{
+  "modelType": "ConceptDescription",
+  "id": "http://qudt.org/vocab/unit/DEG_C",
+  "idShort": "DEG_C",
+  "embeddedDataSpecifications": [{
+    "dataSpecification": { "type": "ExternalReference", "keys": [{ "type": "GlobalReference",
+      "value": "https://admin-shell.io/DataSpecificationTemplates/DataSpecificationIec61360/3/0" }]},
+    "dataSpecificationContent": {
+      "modelType": "DataSpecificationIec61360",
+      "preferredName": [{ "language": "en", "text": "DEG_C" }],
+      "shortName":     [{ "language": "en", "text": "°C" }],
+      "unit":   "°C",
+      "unitId": { "type": "ExternalReference", "keys": [{ "type": "GlobalReference",
+        "value": "http://qudt.org/vocab/unit/DEG_C" }]},
+      "dataType": "REAL_MEASURE",
+      "definition": [{ "language": "en",
+        "text": "The QUDT unit DEG_C, which measures ThermodynamicTemperature." }]
+    }
+  }]
+}
+```
+
+The symbol comes from the framework's own unit table — the one its conversions
+use — via `usecases.LookupUnit`, rather than from a second table here that could
+disagree with it.  A unit the framework does not know is left undescribed: an
+invented symbol would be worse than a consumer following the IRI.
+
+A quantity kind gets a description with no unit and no data type.  It says what
+a value *is*, not what it is counted in, and filling those fields would be
+describing the wrong thing.
+
+`buildConceptDescriptions` walks the environment it was handed rather than being
+given a list, so a submodel or property added later brings its concept along
+instead of leaving a semanticId pointing at nothing.
+`TestNoLocalIdentifierDangles` holds that invariant.
+
+They are written to FA³ST **before** the shells and submodels that point at
+them, so a consumer reading the store between two writes finds a semanticId that
+already resolves.
+
+---
+
 ### Where the methods come from
 
 Until recently nothing outside a provider's own `serving` switch knew that a
@@ -415,6 +487,7 @@ becomes `afo:hasMethods` and one line changes in `kgraphing.go`.
 | `thing.go` | `DemocratConfig`, `Traits`, `SyncResult`, `initTemplate`, `newResource`, `syncLoop`, `runSync` |
 | `aas.go` | AAS/Submodel types, SPARQL helpers, `loadSystems`, `buildAASEnv`, `upsertShell`, `upsertSubmodel` — no build constraints |
 | `aid.go` | The Asset Interfaces Description: IDTA 02017-1-0 and Web of Things identifiers, `buildAID` and the elements below it |
+| `concepts.go` | ConceptDescriptions: what the identifiers mean, in IEC 61360, for the ones this bridge is entitled to explain |
 
 ### Concurrency
 
@@ -620,6 +693,12 @@ go test ./...
 | `TestAServiceThatOnlyWritesSaysSo` | A PUT-only service is not described as readable |
 | `TestSilenceAboutMethodsStaysSilent` | A service that declared no methods gets no claim made for it |
 | `TestNoAddressNoInterfaceDescription` | A system with no addresses gets no empty interface description |
+| `TestOnlyWhatThisBridgeCanSpeakFor` | AFO, IDTA and W3C terms are left to their publishers |
+| `TestNoLocalIdentifierDangles` | Every `alc:` semanticId resolves inside the environment |
+| `TestAUnitCarriesItsSymbolAndItsIRI` | `unit`, `unitId`, `REAL_MEASURE` and a language-tagged name |
+| `TestSymbolsComeFromTheTableTheConversionsUse` | An unknown unit is left undescribed, not invented |
+| `TestAQuantityKindCarriesNoUnit` | A quantity kind is not a value |
+| `TestEachConceptIsDescribedOnce` | Two services in °C produce one description of it |
 | `TestInitTemplate` | Name, both services, non-empty URLs |
 | `TestServing_InvalidPath` | Unknown path → 400 |
 | `TestStatusHandler_MethodNotAllowed` | POST → 405 |

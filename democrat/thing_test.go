@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -411,5 +412,111 @@ func TestSyncLoop_ContextCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("syncLoop did not exit after context cancellation")
+	}
+}
+
+// ── semantic identifiers ──────────────────────────────────────────────────────
+
+// TestEverySubmodelAndPropertyMeansSomething is what separates a shell that can
+// be consumed from one that merely parses.
+//
+// Without a semanticId, a consumer receiving a property called
+// "ServiceUrl_temperature" can display the string and do nothing else with it:
+// nothing to look up, nothing to compare against another vendor's shell, and no
+// way to tell a URL from a serial number except by reading the name and
+// guessing. Every element carries the identifier of the concept its value came
+// from — which, since this bridge reads a knowledge graph, is the predicate the
+// literal was the object of.
+//
+// The check walks everything rather than naming elements, so an element added
+// later without a meaning fails here instead of reaching a data space.
+func TestEverySubmodelAndPropertyMeansSomething(t *testing.T) {
+	env := buildAASEnv(map[string]*SystemInfo{
+		"http://example.com/sys/thermostat": {
+			SystemURI:  "http://example.com/sys/thermostat",
+			SystemName: "thermostat",
+			HostName:   "pi-office",
+			IPs:        []string{"192.168.1.10", "127.0.0.1"},
+			Services: []ServiceInfo{
+				{ServiceName: "thermostat_temperature", ServiceDef: "temperature",
+					URL: "http://192.168.1.10:20185/thermostat/sensor1/temperature"},
+			},
+		},
+	})
+
+	if len(env.Submodels) == 0 {
+		t.Fatal("no submodels were built")
+	}
+	for _, sm := range env.Submodels {
+		if sm.SemanticID == nil {
+			t.Errorf("submodel %q says what it contains and not what it is", sm.IDShort)
+		} else if len(sm.SemanticID.Keys) != 1 || sm.SemanticID.Keys[0].Value == "" {
+			t.Errorf("submodel %q carries an empty semantic identifier", sm.IDShort)
+		} else if sm.SemanticID.Type != "ExternalReference" {
+			t.Errorf("submodel %q uses %q; a concept lives outside this shell",
+				sm.IDShort, sm.SemanticID.Type)
+		}
+
+		for _, el := range sm.SubmodelElements {
+			if el.SemanticID == nil {
+				t.Errorf("%s/%s has no meaning, so a consumer can only display it",
+					sm.IDShort, el.IDShort)
+				continue
+			}
+			iri := el.SemanticID.Keys[0].Value
+			if !strings.HasPrefix(iri, "http://") && !strings.HasPrefix(iri, "https://") {
+				t.Errorf("%s/%s means %q, which is not something anyone can look up",
+					sm.IDShort, el.IDShort, iri)
+			}
+		}
+	}
+}
+
+// The identifiers are the ontology's own, because that is where the values came
+// from. Naming an IDTA submodel template instead would claim conformance to a
+// template this does not implement, which is a worse thing to publish than a
+// local identifier that is honest about being local.
+func TestTheMeaningsComeFromTheOntologyTheValuesCameFrom(t *testing.T) {
+	env := buildAASEnv(map[string]*SystemInfo{
+		"http://example.com/sys/thermostat": {
+			SystemURI: "http://example.com/sys/thermostat", SystemName: "thermostat",
+			HostName: "pi-office", IPs: []string{"192.168.1.10"},
+			Services: []ServiceInfo{{ServiceName: "t_temperature", ServiceDef: "temperature",
+				URL: "http://192.168.1.10:20185/thermostat/sensor1/temperature"}},
+		},
+	})
+
+	want := map[string]string{
+		"SystemName":     afo + "hasName",
+		"SystemUri":      afo + "System",
+		"HostName":       afo + "hasName",
+		"IP_1":           afo + "hasIPAddress",
+		"TemperatureUrl": afo + "hasServiceDefinition",
+	}
+	found := map[string]string{}
+	for _, sm := range env.Submodels {
+		for _, el := range sm.SubmodelElements {
+			if el.SemanticID != nil {
+				found[el.IDShort] = el.SemanticID.Keys[0].Value
+			}
+		}
+	}
+	for idShort, iri := range want {
+		got, present := found[idShort]
+		if !present {
+			t.Errorf("%s is not in the shell at all", idShort)
+			continue
+		}
+		if got != iri {
+			t.Errorf("%s means %q, want %q", idShort, got, iri)
+		}
+	}
+
+	// And nothing claims to be an IDTA template, because none of these implement
+	// one yet.
+	for _, sm := range env.Submodels {
+		if strings.Contains(sm.SemanticID.Keys[0].Value, "admin-shell.io") {
+			t.Errorf("submodel %q claims an IDTA template it does not implement", sm.IDShort)
+		}
 	}
 }

@@ -76,14 +76,40 @@ type Submodel struct {
 	ModelType        string            `json:"modelType"`
 	ID               string            `json:"id"`
 	IDShort          string            `json:"idShort"`
+	SemanticID       *Reference        `json:"semanticId,omitempty"`
 	SubmodelElements []SubmodelElement `json:"submodelElements"`
 }
 
 type SubmodelElement struct {
-	ModelType string `json:"modelType"`
-	IDShort   string `json:"idShort"`
-	ValueType string `json:"valueType"`
-	Value     any    `json:"value,omitempty"`
+	ModelType  string     `json:"modelType"`
+	IDShort    string     `json:"idShort"`
+	SemanticID *Reference `json:"semanticId,omitempty"`
+	ValueType  string     `json:"valueType"`
+	Value      any        `json:"value,omitempty"`
+}
+
+// Reference points at the concept an element means, rather than at another
+// element of this shell.
+//
+// An ExternalReference, because what it names lives outside the Asset
+// Administration Shell entirely: a term in an ontology, with a definition
+// somebody published and a consumer can look up. A ModelReference — the type
+// already used above for "this shell has that submodel" — would say something
+// quite different.
+type Reference struct {
+	Type string `json:"type"`
+	Keys []Key  `json:"keys"`
+}
+
+// meaning builds the semantic identifier for one concept IRI.
+func meaning(iri string) *Reference {
+	if iri == "" {
+		return nil
+	}
+	return &Reference{
+		Type: "ExternalReference",
+		Keys: []Key{{Type: "GlobalReference", Value: iri}},
+	}
 }
 
 // ── SPARQL types ──────────────────────────────────────────────────────────────
@@ -117,6 +143,43 @@ type ServiceInfo struct {
 	ServiceDef  string // afo:hasServiceDefinition (optional)
 	URL         string // afo:hasUrl
 }
+
+// ── What the elements mean ────────────────────────────────────────────────────
+
+// The namespaces this bridge names concepts from.
+//
+// An Asset Administration Shell without semantic identifiers is a shape without
+// a meaning. A consumer receiving a property called "ServiceUrl_temperature" can
+// display the string and do nothing else with it: there is nothing to look up,
+// nothing to compare with a property from another vendor's shell, and no way to
+// tell a URL from a serial number except by reading the name and guessing. Every
+// element below therefore carries a semanticId naming the concept its value came
+// from.
+//
+// The identifiers are the ontology's own, because that is where these values
+// actually came from — democrat reads a knowledge graph, and each property is a
+// literal that was the object of one predicate. Pointing at that predicate is
+// both true and useful. Inventing an IDTA submodel template identifier instead
+// would claim conformance to a template this does not implement, which is worse
+// than claiming nothing.
+const (
+	// afo is the Arrowhead Framework Ontology, published with a DOI, which is
+	// what makes these identifiers worth dereferencing.
+	afo = "http://www.synecdoque.com/2025/afo#"
+	// alc is the local cloud's own namespace, for what this project mints.
+	alc = "http://www.synecdoque.com/lcloud/"
+)
+
+// Submodel templates. No IDTA template describes an Arrowhead system, so these
+// are the local cloud's own and are named as such. When a submodel here does
+// come to implement an IDTA template — an Asset Interfaces Description built
+// from these same endpoints is the obvious candidate — its identifier becomes
+// the IDTA one and this comment should shrink.
+const (
+	smtIdentity = alc + "aas/IdentitySubmodel"
+	smtHost     = alc + "aas/HostSubmodel"
+	smtServices = alc + "aas/ServicesSubmodel"
+)
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -375,12 +438,20 @@ func buildAASEnv(systems map[string]*SystemInfo) AASEnv {
 
 		// Identity submodel — static; does not need periodic patching.
 		env.Submodels = append(env.Submodels, Submodel{
-			ModelType: "Submodel",
-			ID:        smIdentity,
-			IDShort:   "Identity",
+			ModelType:  "Submodel",
+			ID:         smIdentity,
+			IDShort:    "Identity",
+			SemanticID: meaning(smtIdentity),
 			SubmodelElements: []SubmodelElement{
-				{ModelType: "Property", IDShort: "SystemName", ValueType: "xs:string", Value: s.SystemName},
-				{ModelType: "Property", IDShort: "SystemUri", ValueType: "xs:string", Value: s.SystemURI},
+				{ModelType: "Property", IDShort: "SystemName",
+					SemanticID: meaning(afo + "hasName"),
+					ValueType:  "xs:string", Value: s.SystemName},
+				{ModelType: "Property", IDShort: "SystemUri",
+					// The subject the graph knows this system by, which is what
+					// lets a consumer follow it back into the graph rather than
+					// treat this shell as the whole story.
+					SemanticID: meaning(afo + "System"),
+					ValueType:  "xs:anyURI", Value: s.SystemURI},
 			},
 		})
 
@@ -390,7 +461,8 @@ func buildAASEnv(systems map[string]*SystemInfo) AASEnv {
 			if s.HostName != "" {
 				elems = append(elems, SubmodelElement{
 					ModelType: "Property", IDShort: "HostName",
-					ValueType: "xs:string", Value: s.HostName,
+					SemanticID: meaning(afo + "hasName"),
+					ValueType:  "xs:string", Value: s.HostName,
 				})
 			}
 			for i, ip := range s.IPs {
@@ -399,13 +471,15 @@ func buildAASEnv(systems map[string]*SystemInfo) AASEnv {
 				}
 				elems = append(elems, SubmodelElement{
 					ModelType: "Property", IDShort: fmt.Sprintf("IP_%d", i+1),
-					ValueType: "xs:string", Value: ip,
+					SemanticID: meaning(afo + "hasIPAddress"),
+					ValueType:  "xs:string", Value: ip,
 				})
 			}
 			env.Submodels = append(env.Submodels, Submodel{
 				ModelType:        "Submodel",
 				ID:               smHost,
 				IDShort:          "Host",
+				SemanticID:       meaning(smtHost),
 				SubmodelElements: elems,
 			})
 		}
@@ -417,7 +491,8 @@ func buildAASEnv(systems map[string]*SystemInfo) AASEnv {
 			prop := "ServiceUrl_" + sanitizeIDShort(svc.ServiceName)
 			svcElems = append(svcElems, SubmodelElement{
 				ModelType: "Property", IDShort: prop,
-				ValueType: "xs:anyURI", Value: svc.URL,
+				SemanticID: meaning(afo + "hasUrl"),
+				ValueType:  "xs:anyURI", Value: svc.URL,
 			})
 		}
 		// Definition shortcuts (only when a definition maps to exactly one URL).
@@ -431,7 +506,10 @@ func buildAASEnv(systems map[string]*SystemInfo) AASEnv {
 			if len(urls) == 1 {
 				svcElems = append(svcElems, SubmodelElement{
 					ModelType: "Property", IDShort: titleCaseURL(def),
-					ValueType: "xs:anyURI", Value: urls[0],
+					// The shortcut is named for the service definition, so it
+					// means the definition rather than merely an address.
+					SemanticID: meaning(afo + "hasServiceDefinition"),
+					ValueType:  "xs:anyURI", Value: urls[0],
 				})
 			}
 		}
@@ -442,6 +520,7 @@ func buildAASEnv(systems map[string]*SystemInfo) AASEnv {
 			ModelType:        "Submodel",
 			ID:               smServices,
 			IDShort:          "Services",
+			SemanticID:       meaning(smtServices),
 			SubmodelElements: svcElems,
 		})
 	}

@@ -50,8 +50,9 @@ automatically.  **No information is entered twice.**
 │                         Arrowhead local cloud                           │
 │                                                                         │
 │  ds18b20 ──┐                                                            │
-│  thermostat├──► Service Registrar ──► kgrapher ──► GraphDB             │
+│  thermostat├──► Service Registrar ──► kgrapher ──► GraphDB              │
 │  modboss  ──┘        (registry)       (harvest)   (knowledge graph)     │
+│                                    (notifies on change)                 │
 │  ...                                                                    │
 └───────────────────────────────────────────────────┬─────────────────────┘
                                                     │ SPARQL SELECT
@@ -72,13 +73,22 @@ automatically.  **No information is entered twice.**
 When a new system joins the cloud:
 
 1. It starts, registers its services with the Service Registrar.
-2. A browser request to kgrapher (or its periodic refresh) harvests the new
-   system into the knowledge graph snapshot in GraphDB.
+2. The Service Registrar notifies kgrapher that the registry changed, and
+   kgrapher harvests the new system into the knowledge graph snapshot in
+   GraphDB.
 3. Democrat's background sync (every `syncInterval` seconds, default 5 minutes)
    queries GraphDB, builds an AAS for the new system, and upserts it into
    FA³ST.
 
 The engineer does nothing beyond step 1.
+
+The registrar-to-kgrapher step used to be a poll, and the graph was therefore
+only as fresh as the last time somebody opened kgrapher's page.  It is now
+driven by the registrar's own subscription: kgrapher rebuilds when the registry
+changes, so the snapshot democrat reads is current rather than merely recent.
+That matters here more than it does for a browser looking at a graph — democrat
+publishes into an AAS store that other organizations read, and a stale shell
+that still lists a system which left the cloud is worse than no shell at all.
 
 ---
 
@@ -128,6 +138,50 @@ SELECT ?system ?svcName ?svcDef ?url FROM <urn:state:current> WHERE {
 The `FROM <urn:state:current>` clause ensures democrat reads the latest
 consistent snapshot written by kgrapher, not a partial or historical state.
 
+### The graph holds more than the running cloud
+
+Everything above is the **runtime view**: what is deployed, where it runs, what
+it offers.  It is the view mbaigo can produce by itself, because it is the only
+view mbaigo knows anything about.  A `ds18b20` can say it provides a temperature
+service at a URL; it cannot say which tag on the P&ID it was installed against,
+who manufactured it, or what its serial number is.  Nothing in a
+`systemconfig.json` carries that.
+
+But the triple store democrat reads is not restricted to what kgrapher writes.
+The same GraphDB repository can hold the **plant-design view** (a DEXPI-based
+P&ID model, loaded once per design revision) and the **lifecycle view** (STEP
+AP4K instance records, updated as physical units are installed or replaced),
+aligned to the runtime view through the ISO 23726-3 Industrial Data Ontology.
+That alignment is the subject of:
+
+> Wintercorn, O., & van Deventer, J. A. *Ontology Alignment for Co-Engineering:
+> Integrating Plant Design, Lifecycle, and Runtime Views through IDO*.
+> (See `Research/GitPub/alignment`.)
+
+The consequence for democrat is concrete.  With the three views in one
+repository and one hand-authored `afo-lis:hasFunctionalLocation` assertion per
+deployed unit asset, a single query goes from a registered service, through the
+P&ID tag it was installed against, to the serial number of the unit physically
+installed at that position today:
+
+```sparql
+SELECT ?svc ?tag ?unit WHERE {
+  ?ua afo:providesService ?svc ;
+      afo-lis:hasFunctionalLocation ?tag ;
+      afo-lis:currentPhysicalUnit ?unit .
+}
+```
+
+Democrat does not run that query yet — it reads the runtime view only.  It is
+worth saying plainly what that changes: an AAS **Digital Nameplate** submodel
+needs a manufacturer, a serial number and a year of construction, and the
+correct statement is not that this data does not exist but that *mbaigo* does
+not have it.  The graph can.  When democrat is extended to a Nameplate submodel,
+the data will come from the lifecycle view through these bridges rather than
+from anything an Arrowhead system says about itself — which is the right place
+for it, since a system that is replaced by an identical spare keeps its
+configuration and changes its serial number.
+
 ---
 
 ## What democrat generates
@@ -167,6 +221,66 @@ The `TemperatureUrl` shortcut appears because there is exactly one service with
 definition `"temperature"`.  When a system has two services with the same
 definition (e.g. a modboss with multiple `OnOff` coils), only the per-name
 properties are generated — no ambiguous shortcut.
+
+---
+
+## What makes a shell consumable: semanticIds
+
+An AAS that parses is not the same thing as an AAS that can be used.  Given a
+property called `ServiceUrl_thermostat_temperature`, a consumer can display the
+string and do nothing else with it: there is nothing to look up, nothing to
+compare against another vendor's shell, and no way to tell a URL from a serial
+number except by reading the name and guessing.  Element names are for people.
+
+Every submodel and every property democrat writes therefore carries a
+`semanticId` — a reference to the concept the value came from:
+
+```json
+{
+  "modelType": "Property",
+  "idShort": "TemperatureUrl",
+  "valueType": "xs:anyURI",
+  "value": "https://192.168.1.10:30150/ds18b20/28-00000f030344/temperature",
+  "semanticId": {
+    "type": "ExternalReference",
+    "keys": [
+      { "type": "GlobalReference",
+        "value": "http://www.synecdoque.com/2025/afo#hasServiceDefinition" }
+    ]
+  }
+}
+```
+
+The identifiers are the **ontology's own predicate IRIs**, because that is
+literally where the values came from: democrat reads a knowledge graph, and each
+property is a literal that was the object of exactly one predicate.  Pointing at
+that predicate is both true and useful.
+
+| Element | Means |
+|---|---|
+| `Identity` submodel | `alc:aas/IdentitySubmodel` |
+| `Host` submodel | `alc:aas/HostSubmodel` |
+| `Services` submodel | `alc:aas/ServicesSubmodel` |
+| `SystemName`, `HostName` | `afo:hasName` |
+| `SystemUri` | `afo:System` |
+| `IP_n` | `afo:hasIPAddress` |
+| `ServiceUrl_<name>` | `afo:hasUrl` |
+| `<Definition>Url` | `afo:hasServiceDefinition` |
+
+The three submodel identifiers are minted in the local cloud's own namespace and
+are honest about being local.  No IDTA submodel template describes an Arrowhead
+system, and naming one anyway — pointing at an `admin-shell.io` template
+identifier because it looks more official — would claim conformance to a
+template democrat does not implement.  A local identifier that is true is worth
+more in a data space than a standard identifier that is false.
+
+The AFO identifiers, by contrast, are dereferenceable and published with a DOI,
+so a consumer that has never seen an Arrowhead cloud can still find out what
+`afo:hasServiceDefinition` means.
+
+`TestEverySubmodelAndPropertyMeansSomething` walks the whole generated
+environment rather than naming elements, so a submodel or property added later
+without a meaning fails in the test run instead of reaching a data space.
 
 ---
 
@@ -375,6 +489,8 @@ go test ./...
 | `TestBuildAASEnv_DefinitionShortcut_NotUniqueIsSkipped` | Non-unique def → no shortcut |
 | `TestBuildAASEnv_EmptyInput` | Empty map → empty AASEnv |
 | `TestBuildAASEnv_StableOrder` | Output is deterministic across calls |
+| `TestEverySubmodelAndPropertyMeansSomething` | Every submodel and property carries a dereferenceable `semanticId` |
+| `TestTheMeaningsComeFromTheOntologyTheValuesCameFrom` | The identifiers are AFO's own, and nothing claims an IDTA template |
 | `TestInitTemplate` | Name, both services, non-empty URLs |
 | `TestServing_InvalidPath` | Unknown path → 400 |
 | `TestStatusHandler_MethodNotAllowed` | POST → 405 |

@@ -69,14 +69,14 @@ func initTemplate() *components.UnitAsset {
 	monitorService := components.Service{
 		Definition:  "SignalMonitoring",
 		SubPath:     "monitor",
-		Details:     map[string][]string{},
+		Details:     map[string][]string{"Methods": components.HTTPMethods("GET", "POST")},
 		RegPeriod:   22,
 		Description: "monitors the value of the consumed service signal (GET)",
 	}
 	enrichmentService := components.Service{
 		Definition:  "EnrichmentNotification",
 		SubPath:     "enrichment",
-		Details:     map[string][]string{"Forms": {"application/json"}},
+		Details:     map[string][]string{"Forms": {"application/json"}, "Methods": components.HTTPMethods("POST")},
 		RegPeriod:   22,
 		Description: "receives planner enrichment + release notifications (POST)",
 	}

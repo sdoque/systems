@@ -87,6 +87,7 @@ func initTemplate() *components.UnitAsset {
 			"Forms":        {"SignalA_v1a"},
 			"Unit":         {"<http://qudt.org/vocab/unit/DEG_C>"},
 			"QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"},
+			"Methods":      components.HTTPMethods("GET", "PUT"),
 		},
 		RegPeriod:   30,
 		Description: "Read the current topic message (GET) or publish to it (PUT)",
@@ -197,7 +198,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			access := components.Service{
 				Definition:  service,
 				SubPath:     "access",
-				Details:     map[string][]string{"Forms": {"mqttPayload"}},
+				Details:     map[string][]string{"Forms": {"mqttPayload"}, "Methods": components.HTTPMethods("GET", "PUT")},
 				RegPeriod:   30,
 				Description: "Read the current topic message (GET) or publish to it (PUT)",
 			}

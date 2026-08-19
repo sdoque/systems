@@ -317,7 +317,7 @@ func newDeviceAsset(assetName, displayName string, services []string, lightID st
 			Definition:  spec.definition,
 			SubPath:     svc,
 			Mission:     mission,
-			Details:     map[string][]string{"Unit": {spec.unit}, "Forms": {"SignalA_v1a"}},
+			Details:     map[string][]string{"Unit": {spec.unit}, "Forms": {"SignalA_v1a"}, "Methods": methodsFor(svc)},
 			RegPeriod:   30,
 			Description: spec.description,
 		}

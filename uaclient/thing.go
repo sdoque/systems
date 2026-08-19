@@ -120,10 +120,22 @@ func missionForAccess(writable bool) components.Mission {
 // `browse` only ever enumerates the address space, so it stays measurement even
 // on a writable node — otherwise a policy granting writes to actuation would also
 // grant the enumeration of every node behind this one.
-func applyNodeMissions(services components.Services) {
+func applyNodeMissions(services components.Services, writable bool) {
 	for _, serv := range services {
 		if serv.Definition == "browse" {
 			serv.Mission = components.MissionMeasurement
+			continue
+		}
+		// The node's OPC UA access level already says whether it may be
+		// written, so the service says so too rather than leaving a consumer to
+		// try a PUT and read the status code. It is the same reasoning that
+		// derives the mission from the access level: the server is where the
+		// truth is, and a second place to state it is a second place to be
+		// wrong.
+		if writable {
+			serv.Details["Methods"] = components.HTTPMethods("GET", "PUT")
+		} else {
+			serv.Details["Methods"] = components.HTTPMethods("GET")
 		}
 	}
 }
@@ -178,7 +190,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
 		Traits:      rootTraits,
 	}
-	applyNodeMissions(rootUA.ServicesMap)
+	applyNodeMissions(rootUA.ServicesMap, false)
 	rootUA.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
 		serving(rootTraits, w, r, servicePath)
 	}
@@ -222,7 +234,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 				ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
 				Traits:      t,
 			}
-			applyNodeMissions(newUA.ServicesMap)
+			applyNodeMissions(newUA.ServicesMap, t.Writable)
 			newUA.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
 				serving(t, w, r, servicePath)
 			}

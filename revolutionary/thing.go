@@ -67,7 +67,7 @@ func initTemplate() *components.UnitAsset {
 	access := components.Service{
 		Definition:  "level",
 		SubPath:     "access",
-		Details:     map[string][]string{"Forms": {"SignalA_v1a"}},
+		Details:     map[string][]string{"Forms": {"SignalA_v1a"}, "Methods": components.HTTPMethods("GET", "POST", "PUT")},
 		RegPeriod:   30,
 		Description: "reads the input (GET) or changes the output (POST) of the channel",
 	}

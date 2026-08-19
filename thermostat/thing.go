@@ -67,7 +67,7 @@ func initTemplate() *components.UnitAsset {
 		Definition:  "setpoint",
 		SubPath:     "setpoint",
 		Mission:     components.MissionState,
-		Details:     map[string][]string{"Unit": {"<http://qudt.org/vocab/unit/DEG_C>"}, "QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"}, "Forms": {"SignalA_v1a"}},
+		Details:     map[string][]string{"Unit": {"<http://qudt.org/vocab/unit/DEG_C>"}, "QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"}, "Forms": {"SignalA_v1a"}, "Methods": components.HTTPMethods("GET", "PUT")},
 		RegPeriod:   120,
 		CUnit:       "Eur/h",
 		Description: "provides the current thermal setpoint (GET) or sets it (PUT)",

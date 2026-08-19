@@ -56,7 +56,7 @@ func initTemplate() *components.UnitAsset {
 	squest := components.Service{
 		Definition:  "squest",
 		SubPath:     "squest",
-		Details:     map[string][]string{"DefaultForm": {"ServiceRecord_v1"}},
+		Details:     map[string][]string{"DefaultForm": {"ServiceRecord_v1"}, "Methods": components.HTTPMethods("POST")},
 		Description: "looks for the desired service described in a quest form (POST)",
 	}
 

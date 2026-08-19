@@ -76,7 +76,7 @@ func initTemplate() *components.UnitAsset {
 	ordersService := components.Service{
 		Definition:  "orders",
 		SubPath:     "orders",
-		Details:     map[string][]string{"Forms": {"PenHolderOrder_v1"}},
+		Details:     map[string][]string{"Forms": {"PenHolderOrder_v1"}, "Methods": components.HTTPMethods("GET", "POST")},
 		RegPeriod:   60,
 		Description: "browser order form (GET), submit new order (POST), look up order (GET ?id=N)",
 	}

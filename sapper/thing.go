@@ -247,14 +247,14 @@ func initTemplate() *components.UnitAsset {
 	ordersService := components.Service{
 		Definition:  "MaintenanceOrder",
 		SubPath:     "maintenanceorders",
-		Details:     map[string][]string{"Forms": {"application/json"}},
+		Details:     map[string][]string{"Forms": {"application/json"}, "Methods": components.HTTPMethods("GET", "POST")},
 		RegPeriod:   30,
 		Description: "creates (POST) and queries (GET ?id=<orderID>) maintenance orders",
 	}
 	firefightingService := components.Service{
 		Definition:  "firefighting",
 		SubPath:     "firefighting",
-		Details:     map[string][]string{"Forms": {"text/html"}},
+		Details:     map[string][]string{"Forms": {"text/html"}, "Methods": components.HTTPMethods("GET", "POST")},
 		RegPeriod:   30,
 		Description: "planner UI (GET) to enrich and release CRTD work orders (POST)",
 	}

@@ -78,7 +78,7 @@ func initTemplate() *components.UnitAsset {
 	authorize := components.Service{
 		Definition:  "authorize",
 		SubPath:     "authorize",
-		Details:     map[string][]string{"Forms": {"AuthorizationQuest_v1"}},
+		Details:     map[string][]string{"Forms": {"AuthorizationQuest_v1"}, "Methods": components.HTTPMethods("POST")},
 		RegPeriod:   30,
 		Description: "decides (POST) which of a set of candidate providers a subject may use",
 	}

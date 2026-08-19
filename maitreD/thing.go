@@ -92,7 +92,7 @@ func initTemplate() *components.UnitAsset {
 	attest := components.Service{
 		Definition:  "attest",
 		SubPath:     "attest",
-		Details:     map[string][]string{"Forms": {"application/json"}},
+		Details:     map[string][]string{"Forms": {"application/json"}, "Methods": components.HTTPMethods("POST")},
 		RegPeriod:   0,
 		Description: "verifies (POST) the executable hash of the requesting system against the whitelist",
 	}

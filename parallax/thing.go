@@ -105,6 +105,7 @@ func initTemplate() *components.UnitAsset {
 			"QuantityKind": {"<http://qudt.org/vocab/quantitykind/DimensionlessRatio>"},
 			"RangeUnit":    {"<http://qudt.org/vocab/unit/DEG>"},
 			"Range":        {"0", "180"},
+			"Methods":      components.HTTPMethods("GET", "PUT"),
 		},
 		RegPeriod:   30,
 		Description: "informs of the servo's current position (GET) or updates the position (PUT)",

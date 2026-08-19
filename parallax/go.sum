@@ -2,5 +2,7 @@ github.com/sdoque/mbaigo v0.1.0-alpha.8 h1:wKovBDAWMMdcJxE6kNbmtee7T3aIWa08Lkf7G
 github.com/sdoque/mbaigo v0.1.0-alpha.8/go.mod h1:sNaEleHea9b2TcroLCp+9e5cHltlo/JkT9LNag1/nmU=
 github.com/sdoque/mbaigo v0.1.0-alpha.9 h1:+Pxgw/H+Utb9Tw5pEkBHrKKDv07hPWeHUYRmYhP/mmQ=
 github.com/sdoque/mbaigo v0.1.0-alpha.9/go.mod h1:uvuQ4Q1Qdi1U8BpaoBzDvst8BsskEVaVoMZ9T+5SyYc=
+github.com/sdoque/mbaigo v0.1.0-alpha.10 h1:AqACsif+szJSJTVUXYImsuf+Pvm/324TahmPMuolB8c=
+github.com/sdoque/mbaigo v0.1.0-alpha.10/go.mod h1:uvuQ4Q1Qdi1U8BpaoBzDvst8BsskEVaVoMZ9T+5SyYc=
 github.com/stianeikeland/go-rpio/v4 v4.6.0 h1:eAJgtw3jTtvn/CqwbC82ntcS+dtzUTgo5qlZKe677EY=
 github.com/stianeikeland/go-rpio/v4 v4.6.0/go.mod h1:A3GvHxC1Om5zaId+HqB3HKqx4K/AqeckxB7qRjxMK7o=

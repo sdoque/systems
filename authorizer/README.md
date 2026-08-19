@@ -232,17 +232,96 @@ running deployment.
 5. **Tokens issued, relayed and verified at the provider.** Last, because it is
    the only step that can lock a running cloud out of itself.
 
+## Enabling it on a running cloud
+
+The order matters, because one list — `coreSystems` — says both *this is the
+authorizer I verify against* and *I demand tokens on my own services*.
+
+1. **Write `policies.json`** in the authorizer's working directory. Until one
+   exists every request is denied, which is correct for an uncommissioned cloud
+   and looks like a fault. The log says `loaded N policies and M denials`.
+2. **The consumers' Orchestrator URL becomes `https://<address>:301xx/…`.**
+   Without this nothing can be authorized at all — see POLICY.md, *Reach the
+   Orchestrator over HTTPS*. This is the step that is easy to miss and hard to
+   read from the symptom.
+3. **The Orchestrator names the authorizer.** Orchestration is now filtered: a
+   consumer is shown only the providers its policy permits, each with a token.
+   Nothing is enforced yet, so a mistake here costs a discovery, not a plant.
+4. **The providers name the authorizer.** They now verify. This is the step that
+   can lock a running cloud out of itself, so it goes last.
+
+Consumers need no change beyond step 2 — they relay the token they are handed.
+
+Leave `esr`, `ca` and `maitreD` out. They will work if added, since their
+services are core-mission and exempt, but there is no benefit and one sharp
+edge: deregistration is exempt only while `unregister` stays core-mission.
+
+Restart order does not matter. A provider that starts before the authorizer
+answers 503 and serves as soon as it has the key, retrying from a second.
+
+### What it looks like when it works
+
+```
+authorizer:    "thermostat" may use 1 of 1 candidates for read
+authorizer:    "thermostat" may use 1 of 1 candidates for write
+ds18b20:       ready to verify access tokens
+ds18b20:       first request to ds18b20 from peer "thermostat"
+parallax:      servo position changing to 26%
+```
+
+The Authorizer is consulted **once** and not again until the tokens expire,
+while the control loop runs on. That is the token doing its work: the decision
+is made once at discovery and checked locally at every provider thereafter, so
+a cell keeps running when the authorizer does not.
+
+### What it looks like when a token expires
+
+```
+14:39:11  ds18b20:    refusing GET .../temperature: the token expired at 14:39:01
+14:39:21  authorizer: "thermostat" may use 1 of 1 candidates for read
+14:40:09  thermostat: deviation -2.187, jitter 1.134 ms, valve 39%
+```
+
+Ten seconds, no intervention, no missed control cycle worth the name. The
+provider refused with 403, `askOneProvider` classified that as a stale provider,
+`forgetToken` dropped the credential for that one action, and the next call
+rediscovered and was issued a fresh one. Nothing was written for renewal: it
+falls out of treating a refused credential as a reason to discover again.
+
+This is also the cost side of the design stated plainly. A permission withdrawn
+from `policies.json` keeps working until the tokens holding it expire — five
+minutes for an actuation here — because that is the same mechanism. Revocation
+latency and outage tolerance are the same property seen from two directions.
+
+### What it looks like when a policy changes
+
+```
+14:37:23  authorizer: loaded 5 policies and 0 denials from policies.json
+14:37:23  authorizer: "painter" may use 1 of 1 candidates for read
+```
+
+No restart. `reloadPolicies` compares the file's modification time before each
+decision, so an edit takes effect on the next one. A file that does not parse
+leaves the previous rules in place rather than reverting to deny-everything,
+which would take a plant down over a typo.
+
 ## What remains
 
-- **No `policies.json` exists in any deployment.** `*.json` is gitignored, so each
+- **No `policies.json` exists in most deployments.** AlphaCloud has one;
+  `policies.alphacloud.json` beside these files is the copy under test. `*.json` is gitignored, so each
   deployment writes its own; `writePoliciesTemplate` produces a loadable starting
   point. Until one exists the authorizer denies everything, which is the correct
   state for an uncommissioned cloud but will look like a fault.
 - **Not in the Makefile's `SYSTEMS` list**, so continuous integration (CI) does
   not lint, test or
   cross-compile it yet.
-- **Never run end to end on the testbed.** Every layer is unit-tested; none of it
-  has met a real Raspberry Pi.
+- **Now run end to end on the testbed**, on AlphaCloud: a thermostat granted read
+  on a measurement and write on an actuation, both paired by functional location,
+  driving a servo through a verified token. Token renewal has since been
+  exercised in anger as well (see below). What has *not* been exercised is a
+  second consumer competing for the same provider, nor a policy narrowed while a
+  control loop runs — the hot reload is proven, revoking a permission somebody
+  is using is not.
 
 ## Related
 

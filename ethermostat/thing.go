@@ -40,10 +40,19 @@ type Traits struct {
 	// 32-bit build stores a float64 in two words — a setpoint moving 20 to 22
 	// while the loop reads it can yield a number that was never written, and
 	// calculateOutput turns that into a fully open or fully closed valve.
-	mu        sync.RWMutex
-	SetPt     float64       `json:"setPoint"`
-	Period    time.Duration `json:"samplingPeriod"`
-	Kp        float64       `json:"kp"`
+	mu    sync.RWMutex
+	SetPt float64 `json:"setPoint"`
+	// Period is the sampling period in seconds.
+	//
+	// An int rather than a time.Duration, because a Duration holding the number
+	// 10 means ten nanoseconds and only becomes ten seconds when multiplied by
+	// time.Second — which works, and reads as if the field were already a
+	// duration. Anyone writing the obvious `Period: time.Second` for one second
+	// would get 10^9 seconds, about 31 years, and the compiler would not object.
+	// The unit belongs in the name and the conversion belongs at the point of
+	// use.
+	Period    int     `json:"samplingPeriod"`
+	Kp        float64 `json:"kp"`
 	jitter    time.Duration
 	deviation float64
 	previousT float64
@@ -66,7 +75,7 @@ func initTemplate() *components.UnitAsset {
 		Definition:  "setpoint",
 		SubPath:     "setpoint",
 		Mission:     components.MissionState,
-		Details:     map[string][]string{"Unit": {"<http://qudt.org/vocab/unit/DEG_C>"}, "QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"}, "Forms": {"SignalA_v1a"}},
+		Details:     map[string][]string{"Unit": {"<http://qudt.org/vocab/unit/DEG_C>"}, "QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"}, "Forms": {"SignalA_v1a"}, "Methods": components.HTTPMethods("GET", "PUT")},
 		RegPeriod:   120,
 		CUnit:       "Eur/h",
 		Description: "provides the current thermal setpoint (GET) or sets it (PUT)",
@@ -114,7 +123,7 @@ func initTemplate() *components.UnitAsset {
 // matches each one to a temperature service from meteorologue, and returns one
 // UnitAsset per heater with its own feedback control loop.
 // If the dependent services are not yet available it retries every 15 s until they
-// are found or the system context is cancelled.
+// are found or the system context is canceled.
 func newResources(uac usecases.ConfigurableAsset, sys *components.System) ([]*components.UnitAsset, func()) {
 	defaults := parseTraitDefaults(uac)
 	sProtocols := components.SProtocols(sys.Husk.ProtoPort)
@@ -155,9 +164,9 @@ func newResources(uac usecases.ConfigurableAsset, sys *components.System) ([]*co
 // ethermostat in the Makefile. A bag of configured numbers has nothing to
 // guard, so it should not be carrying the thing that does the guarding.
 type traitDefaults struct {
-	SetPt  float64       `json:"setPoint"`
-	Period time.Duration `json:"samplingPeriod"`
-	Kp     float64       `json:"kp"`
+	SetPt  float64 `json:"setPoint"`
+	Period int     `json:"samplingPeriod"`
+	Kp     float64 `json:"kp"`
 }
 
 // parseTraitDefaults extracts and validates the trait defaults from the configurable asset.
@@ -481,7 +490,7 @@ func (t *Traits) getSetPoint() (f forms.SignalA_v1a) {
 	t.mu.RLock()
 	f.Value = t.SetPt
 	t.mu.RUnlock()
-	f.Unit = t.setpointUnit
+	f.Unit = usecases.UnitIRI(t.setpointUnit)
 	f.Timestamp = time.Now()
 	return f
 }
@@ -507,7 +516,7 @@ func (t *Traits) getError() (f forms.SignalA_v1a) {
 	t.mu.RLock()
 	f.Value = t.deviation
 	t.mu.RUnlock()
-	f.Unit = t.errorUnit
+	f.Unit = usecases.UnitIRI(t.errorUnit)
 	f.Timestamp = time.Now()
 	return f
 }
@@ -516,9 +525,16 @@ func (t *Traits) getError() (f forms.SignalA_v1a) {
 func (t *Traits) getJitter() (f forms.SignalA_v1a) {
 	f.NewForm()
 	t.mu.RLock()
-	f.Value = float64(t.jitter.Milliseconds())
+	// Microseconds divided out rather than Milliseconds, which truncates.
+	//
+	// This measured whole milliseconds from when every cycle made an HTTP
+	// request for its reading. A followed value is answered from cache, so the
+	// loop now runs in well under a millisecond and the service reported 0 —
+	// the metric losing its resolution to the improvement it was watching. The
+	// unit is unchanged, so nothing consuming it needs to know.
+	f.Value = float64(t.jitter.Microseconds()) / 1000
 	t.mu.RUnlock()
-	f.Unit = t.jitterUnit
+	f.Unit = usecases.UnitIRI(t.jitterUnit)
 	f.Timestamp = time.Now()
 	return f
 }
@@ -534,7 +550,7 @@ func (t *Traits) getJitter() (f forms.SignalA_v1a) {
 // period that has just begun. How often an arrival may wake it is the cervice's
 // own business, so a value reported finely does not drive an actuator finely.
 func (t *Traits) feedbackLoop(ctx context.Context) {
-	ticker := time.NewTicker(t.Period * time.Second)
+	ticker := time.NewTicker(time.Duration(t.Period) * time.Second)
 	defer ticker.Stop()
 
 	fresh := t.cervices["temperature"].Updated()

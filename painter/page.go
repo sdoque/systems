@@ -97,7 +97,7 @@ var centres = new Map();    // id -> where it was last drawn, so a departure kno
 
 // How long each announcement lasts. A change in a plant is worth interrupting
 // somebody for, and a picture that merely settles into a new arrangement does
-// not do that: the eye follows movement and colour, so a system arriving or
+// not do that: the eye follows movement and color, so a system arriving or
 // leaving is given both, briefly, and then the picture goes quiet again.
 var ARRIVING = 2000;
 var LEAVING = 1200;
@@ -181,10 +181,10 @@ function levelOfDetail() {
   if (view.scale < 1.6) return 0;  // the cloud, and its hosts
   if (view.scale < 3.2) return 1;  // the systems on each host
   if (view.scale < 6.5) return 2;  // the unit assets in each system
-  return 3;                        // services, labelled
+  return 3;                        // services, labeled
 }
 
-var geometry = {}; // asset id -> centre, filled while drawing, used for lines
+var geometry = {}; // asset id -> center, filled while drawing, used for lines
 var extent = 300;  // how far the picture reaches, set while drawing
 var framed = false;
 
@@ -368,7 +368,7 @@ function draw() {
                               stroke: "var(--dim)", "stroke-width": 1.4 / view.scale, fill: "none",
                               "stroke-opacity": 0.8 }, lines);
       // Mission decides the style: driving something must not look like reading
-      // it. Colour is left to say one thing only, which is security.
+      // it. Color is left to say one thing only, which is security.
       if (link.mission === "actuation" || link.mission === "control") {
         path.setAttribute("stroke-dasharray", (5 / view.scale) + " " + (3 / view.scale));
       }
@@ -436,7 +436,7 @@ function refresh() {
       // The first picture is not an arrival of everything. A page that opened
       // onto a cloud of thirty systems all flashing green would announce
       // nothing, since an announcement that fires for everything at once is
-      // just a colour.
+      // just a color.
       if (!greeted) {
         greeted = true;
         present.forEach(function (id) { seen.set(id, now - 700); });

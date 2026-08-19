@@ -182,6 +182,15 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 				Traits:      t,
 			}
 			ua.ServicesMap["access"].Definition = parts[1]
+			// The register map already says whether this address may be written,
+			// so the service says so too rather than leaving a consumer to try a
+			// PUT and read the status code.
+			if methods := methodsForRights(parts[2]); len(methods) > 0 {
+				if ua.ServicesMap["access"].Details == nil {
+					ua.ServicesMap["access"].Details = map[string][]string{}
+				}
+				ua.ServicesMap["access"].Details["Methods"] = methods
+			}
 			// Capture t for the closure
 			tc := t
 			ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
@@ -286,6 +295,25 @@ func missionForRights(rights string) (components.Mission, error) {
 		return components.MissionActuation, nil
 	}
 	return components.Mission{}, fmt.Errorf("unknown access mode %q: expected ro, rw or wo", rights)
+}
+
+// methodsForRights derives the HTTP methods a register's service answers from
+// its Modbus access mode, for the same reason missionForRights derives the
+// mission: the register map is where the truth already is, so neither can drift
+// from what the register actually permits.
+//
+// An unknown mode yields nothing rather than a guess; startup has already
+// refused it in missionForRights.
+func methodsForRights(rights string) []string {
+	switch strings.ToLower(strings.TrimSpace(rights)) {
+	case "ro":
+		return components.HTTPMethods("GET")
+	case "rw":
+		return components.HTTPMethods("GET", "PUT")
+	case "wo":
+		return components.HTTPMethods("PUT")
+	}
+	return nil
 }
 
 func typeOfIO(nameIO string) ioType {

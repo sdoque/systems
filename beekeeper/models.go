@@ -146,6 +146,20 @@ func missionForService(subPath string) (components.Mission, error) {
 	return components.Mission{}, fmt.Errorf("service %q has no mission: add it to serviceMissions", subPath)
 }
 
+// methodsFor says which HTTP methods a service subpath answers.
+//
+// Only on_off can be driven — serving() refuses a PUT to anything else — so
+// only on_off says it accepts one. Deriving it here rather than listing it
+// beside each spec keeps the two statements in one place: the handler and the
+// registration would otherwise be free to disagree about which lights can be
+// switched.
+func methodsFor(subPath string) []string {
+	if subPath == "on_off" {
+		return components.HTTPMethods("GET", "PUT")
+	}
+	return components.HTTPMethods("GET")
+}
+
 // serviceSpec defines the Arrowhead service metadata for each service subpath.
 type serviceSpec struct {
 	definition  string

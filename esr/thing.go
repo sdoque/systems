@@ -140,19 +140,19 @@ func initTemplate() *components.UnitAsset {
 	registerService := components.Service{
 		Definition:  "register",
 		SubPath:     "register",
-		Details:     map[string][]string{"Forms": usecases.ServiceRegistrationFormsList()},
+		Details:     map[string][]string{"Forms": usecases.ServiceRegistrationFormsList(), "Methods": components.HTTPMethods("POST")},
 		Description: "registers a service (POST) or updates its expiration time (PUT)",
 	}
 	queryService := components.Service{
 		Definition:  "query",
 		SubPath:     "query",
-		Details:     map[string][]string{"Forms": usecases.ServQuestForms()},
+		Details:     map[string][]string{"Forms": usecases.ServQuestForms(), "Methods": components.HTTPMethods("GET", "POST")},
 		Description: "retrieves all currently available services using a GET request [accessed via a browser by a deployment technician] or retrieves a specific set of services using a POST request with a payload [initiated by the Orchestrator]",
 	}
 	unregisterService := components.Service{
 		Definition:  "unregister",
 		SubPath:     "unregister",
-		Details:     map[string][]string{"Forms": {"ID_only"}},
+		Details:     map[string][]string{"Forms": {"ID_only"}, "Methods": components.HTTPMethods("DELETE")},
 		Description: "removes a record (DELETE) based on record ID",
 	}
 	statusService := components.Service{

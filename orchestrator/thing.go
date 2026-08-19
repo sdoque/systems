@@ -56,7 +56,7 @@ func initTemplate() *components.UnitAsset {
 	squest := components.Service{
 		Definition:  "squest",
 		SubPath:     "squest",
-		Details:     map[string][]string{"DefaultForm": {"ServiceRecord_v1"}},
+		Details:     map[string][]string{"DefaultForm": {"ServiceRecord_v1"}, "Methods": components.HTTPMethods("POST")},
 		Description: "looks for the desired service described in a quest form (POST)",
 	}
 
@@ -261,7 +261,7 @@ func (t *Traits) getServiceURL(newQuest forms.ServiceQuest_v1, subject string) (
 		return nil, err
 	}
 	if len(permitted.List) == 0 {
-		return nil, fmt.Errorf("%q may not use any provider of %q", subject, newQuest.ServiceDefinition)
+		return nil, refusal(subject, newQuest.ServiceDefinition)
 	}
 
 	serviceLocation := selectService(permitted)
@@ -341,7 +341,7 @@ func (t *Traits) getServicesURL(newQuest forms.ServiceQuest_v1, subject string) 
 		return nil, err
 	}
 	if len(permitted.List) == 0 {
-		return nil, fmt.Errorf("%q may not use any provider of %q", subject, newQuest.ServiceDefinition)
+		return nil, refusal(subject, newQuest.ServiceDefinition)
 	}
 
 	// Service points rather than records, because a record has nowhere to carry
@@ -367,6 +367,28 @@ func (t *Traits) noteUnidentified() {
 	t.unidentified.Do(func() {
 		log.Printf("orchestrator: service quests are arriving without a client certificate, so the consumer is unverified — an authorized cloud will refuse them\n")
 	})
+}
+
+// refusal explains to the consumer why it got nothing, in the consumer's own
+// log rather than only in the orchestrator's.
+//
+// An empty subject is not a policy decision, it is a misconfiguration, and the
+// two look identical from the consumer's end: both arrive as "may not use any
+// provider of X". The difference matters, because one is fixed by editing
+// policies.json and the other by editing the consumer's own coreSystems entry —
+// and an operator who reads "may not use" goes looking in the policy file,
+// which is the one place the answer is not.
+//
+// A quest carries a subject only when it arrives over a connection that
+// presented a client certificate, so a consumer whose orchestrator URL is http
+// can never be named by any policy however the policy is written.
+func refusal(subject, definition string) error {
+	if subject == "" {
+		return fmt.Errorf("this quest arrived without a client certificate, so no policy can name the "+
+			"consumer: reach the orchestrator over https (its coreSystems entry) rather than http, "+
+			"and no provider of %q can be granted until then", definition)
+	}
+	return fmt.Errorf("%q may not use any provider of %q", subject, definition)
 }
 
 // errNoAuthorizer says this local cloud declares no authorizer. It is a

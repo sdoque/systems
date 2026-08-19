@@ -40,9 +40,18 @@ type Traits struct {
 	// 32-bit build stores a float64 in two words — a setpoint moving 20 to 22
 	// while the loop reads it can yield a number that was never written, and
 	// calculateOutput turns that into a fully open or fully closed valve.
-	mu        sync.RWMutex
-	SetPt     float64             `json:"setPoint"`
-	Period    time.Duration       `json:"samplingPeriod"`
+	mu    sync.RWMutex
+	SetPt float64 `json:"setPoint"`
+	// Period is the sampling period in seconds.
+	//
+	// An int rather than a time.Duration, because a Duration holding the number
+	// 10 means ten nanoseconds and only becomes ten seconds when multiplied by
+	// time.Second — which works, and reads as if the field were already a
+	// duration. Anyone writing the obvious `Period: time.Second` for one second
+	// would get 10^9 seconds, about 31 years, and the compiler would not object.
+	// The unit belongs in the name and the conversion belongs at the point of
+	// use.
+	Period    int                 `json:"samplingPeriod"`
 	Kp        float64             `json:"kp"`
 	Lambda    float64             `json:"lambda"`
 	Ki        float64             `json:"ki"`
@@ -67,7 +76,7 @@ func initTemplate() *components.UnitAsset {
 		Definition:  "setpoint",
 		SubPath:     "setpoint",
 		Mission:     components.MissionState,
-		Details:     map[string][]string{"Unit": {"<http://qudt.org/vocab/unit/DEG_C>"}, "QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"}, "Forms": {"SignalA_v1a"}},
+		Details:     map[string][]string{"Unit": {"<http://qudt.org/vocab/unit/DEG_C>"}, "QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"}, "Forms": {"SignalA_v1a"}, "Methods": components.HTTPMethods("GET", "PUT")},
 		RegPeriod:   120,
 		CUnit:       "Eur/h",
 		Description: "provides the current thermal setpoint (GET) or sets it (PUT)",
@@ -248,7 +257,7 @@ func (t *Traits) getSetPoint() (f forms.SignalA_v1a) {
 	t.mu.RLock()
 	f.Value = t.SetPt
 	t.mu.RUnlock()
-	f.Unit = t.setpointUnit
+	f.Unit = usecases.UnitIRI(t.setpointUnit)
 	f.Timestamp = time.Now()
 	return f
 }
@@ -275,7 +284,7 @@ func (t *Traits) getError() (f forms.SignalA_v1a) {
 	t.mu.RLock()
 	f.Value = t.deviation
 	t.mu.RUnlock()
-	f.Unit = t.errorUnit
+	f.Unit = usecases.UnitIRI(t.errorUnit)
 	f.Timestamp = time.Now()
 	return f
 }
@@ -284,9 +293,16 @@ func (t *Traits) getError() (f forms.SignalA_v1a) {
 func (t *Traits) getJitter() (f forms.SignalA_v1a) {
 	f.NewForm()
 	t.mu.RLock()
-	f.Value = float64(t.jitter.Milliseconds())
+	// Microseconds divided out rather than Milliseconds, which truncates.
+	//
+	// This measured whole milliseconds from when every cycle made an HTTP
+	// request for its reading. A followed value is answered from cache, so the
+	// loop now runs in well under a millisecond and the service reported 0 —
+	// the metric losing its resolution to the improvement it was watching. The
+	// unit is unchanged, so nothing consuming it needs to know.
+	f.Value = float64(t.jitter.Microseconds()) / 1000
 	t.mu.RUnlock()
-	f.Unit = t.jitterUnit
+	f.Unit = usecases.UnitIRI(t.jitterUnit)
 	f.Timestamp = time.Now()
 	return f
 }
@@ -306,7 +322,7 @@ func (t *Traits) getJitter() (f forms.SignalA_v1a) {
 // business (components.DefaultWakeFloor): a tenth of a degree is worth
 // reporting and not worth moving a valve for.
 func (t *Traits) feedbackLoop(ctx context.Context) {
-	ticker := time.NewTicker(t.Period * time.Second)
+	ticker := time.NewTicker(time.Duration(t.Period) * time.Second)
 	defer ticker.Stop()
 
 	fresh := t.cervices["temperature"].Updated()
@@ -376,7 +392,7 @@ func (t *Traits) updateValvePosition(position float64) {
 	var of forms.SignalA_v1a
 	of.NewForm()
 	of.Value = position
-	of.Unit = t.cervices["rotation"].Details["Unit"][0]
+	of.Unit = usecases.UnitIRI(t.cervices["rotation"].Details["Unit"][0])
 	of.Timestamp = time.Now()
 
 	op, err := usecases.Pack(&of, "application/json")

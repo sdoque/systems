@@ -159,7 +159,7 @@ func (t *Traits) syncOnce(ctx context.Context, client *http.Client, caURL, cache
 }
 
 // runSyncLoop bootstraps the whitelist (cache → first fetch) and then keeps
-// it fresh on a ticker until ctx is cancelled. Failure semantics, by design:
+// it fresh on a ticker until ctx is canceled. Failure semantics, by design:
 //
 //   - cache present + fetch fails → log warning, continue with cache.
 //   - cache absent + fetch fails  → return error (caller exits the process).

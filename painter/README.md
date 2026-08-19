@@ -41,10 +41,10 @@ on their host; unit assets are dots within their system. Depth is suggested by
 shade and scale rather than drawn in perspective, because the point is to be
 understood quickly rather than to be impressive.
 
-**Colour is security, and only security.** A system is coloured by the posture it
+**Color is security, and only security.** A system is coloured by the posture it
 reports about itself — `authorized`, `identified`, `enrolling`, `open`. One
 system in the corner that never finished enrolling is visible from across a room.
-Because colour carries that meaning everywhere, nothing else uses it.
+Because color carries that meaning everywhere, nothing else uses it.
 
 **Lines are consumption.** A line runs from an asset that consumes a service to
 the asset that provides it, found by matching the URL the consumer was bound to
@@ -83,7 +83,7 @@ The wheel changes what is worth showing, not the magnification:
 | out   | the cloud and its hosts; lines bundled into one strand per pair |
 | →     | the systems on each host, coloured by posture |
 | →     | the unit assets within each system, and unsatisfied requests |
-| in    | services, with lines separated and labelled |
+| in    | services, with lines separated and labeled |
 
 ## Services
 

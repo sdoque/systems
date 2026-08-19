@@ -20,6 +20,8 @@ github.com/sdoque/mbaigo v0.1.0-alpha.8 h1:wKovBDAWMMdcJxE6kNbmtee7T3aIWa08Lkf7G
 github.com/sdoque/mbaigo v0.1.0-alpha.8/go.mod h1:sNaEleHea9b2TcroLCp+9e5cHltlo/JkT9LNag1/nmU=
 github.com/sdoque/mbaigo v0.1.0-alpha.9 h1:+Pxgw/H+Utb9Tw5pEkBHrKKDv07hPWeHUYRmYhP/mmQ=
 github.com/sdoque/mbaigo v0.1.0-alpha.9/go.mod h1:uvuQ4Q1Qdi1U8BpaoBzDvst8BsskEVaVoMZ9T+5SyYc=
+github.com/sdoque/mbaigo v0.1.0-alpha.10 h1:AqACsif+szJSJTVUXYImsuf+Pvm/324TahmPMuolB8c=
+github.com/sdoque/mbaigo v0.1.0-alpha.10/go.mod h1:uvuQ4Q1Qdi1U8BpaoBzDvst8BsskEVaVoMZ9T+5SyYc=
 github.com/spkg/bom v0.0.0-20160624110644-59b7046e48ad/go.mod h1:qLr4V1qq6nMqFKkMo8ZTx3f+BZEkzsRUY10Xsm2mwU0=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UVUgZn+9EI=

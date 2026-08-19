@@ -62,6 +62,36 @@ say why here and then delete the entry.
   title, this is why the kgrapher once refused to assemble: it needs at least
   one system to say which cloud it is in.
 
+- **`orchestrator` serves `squests` but never registers it.** `serving`
+  dispatches the path and `orchestrateMultiple` answers it, and no
+  `components.Service` declares it, so it is absent from the registry, from the
+  graph and from every AAS built out of them. A consumer can only find it by
+  reading the Go.
+
+- **The Asset Interfaces Description has not been read by AAS tooling.** It is
+  built against the published IDTA 02017-1-0 template and unit-tested against
+  it, and nothing has yet loaded it into the AASX Package Explorer or FA³ST to
+  confirm the shape is accepted rather than merely plausible.
+
+- **A system that loses its `systemconfig.json` silently stops enforcing.**
+  Found on AlphaCloud: ds18b20 was running correctly from a configuration whose
+  file had been deleted. A restart would have regenerated a template — and a
+  generated template carries the authorizer slot empty, which means absent, so
+  the system would have come back up serving without checking a token and said
+  nothing about it. The reconstructed file is in place, but the hazard is
+  general and it fails open. A provider holding a CA-signed certificate has
+  evidence it once belonged to a cloud that had a CA; coming up with no
+  authorizer configured is at least worth a line in the log, and possibly worth
+  refusing until an operator says otherwise.
+
+- **A permission cannot be withdrawn from a system that is using it.** Removing
+  a rule from `policies.json` takes effect on the next decision, but a consumer
+  holding a token keeps working until it expires — five minutes for an actuation
+  on AlphaCloud. That is the same mechanism that lets a cell survive the
+  authorizer being down, so it is a trade rather than a defect, but there is no
+  way at present to say "stop now". A revocation list checked at the provider
+  would be the obvious answer and is not written.
+
 ## Not yet run on hardware
 
 The mission type, `ServicePointList_v1`, the cervice lock, the client transport

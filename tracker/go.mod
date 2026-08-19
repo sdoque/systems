@@ -3,7 +3,7 @@ module github.com/sdoque/systems/tracker
 go 1.26.6
 
 require (
-	github.com/sdoque/mbaigo v0.1.0-alpha.9
+	github.com/sdoque/mbaigo v0.1.0-alpha.10
 	modernc.org/sqlite v1.36.1
 )
 

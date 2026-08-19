@@ -192,7 +192,7 @@ func TestSampleLoop_DeliversValues(t *testing.T) {
 }
 
 // TestSampleLoop_ContextCancel verifies that sampleLoop exits cleanly when
-// the context is cancelled (it must close trayChan so callers unblock).
+// the context is canceled (it must close trayChan so callers unblock).
 func TestSampleLoop_ContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 

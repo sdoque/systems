@@ -134,7 +134,7 @@ func TestMissionForAccess(t *testing.T) {
 func TestApplyNodeMissionsLeavesBrowseReadOnly(t *testing.T) {
 	ua := initTemplate()
 	services := usecases.MakeServiceMap(getServicesList(*ua))
-	applyNodeMissions(services)
+	applyNodeMissions(services, true)
 
 	browseServ, ok := services["browse"]
 	if !ok {
@@ -154,6 +154,11 @@ func TestApplyNodeMissionsLeavesBrowseReadOnly(t *testing.T) {
 		t.Errorf("access mission = %q; want it to inherit the asset's", accessServ.Mission)
 	}
 
+	// And browsing is never written to, whatever the node's access level says.
+	if got := browseServ.Details["Methods"]; len(got) != 0 {
+		t.Errorf("browse declares methods %v; enumerating an address space is a read", got)
+	}
+
 	writable := &components.UnitAsset{Mission: missionForAccess(true), ServicesMap: services}
 	if got := components.EffectiveMission(writable, accessServ); got.String() != "actuation" {
 		t.Errorf("access effective mission on a writable node = %q; want %q", got, "actuation")
@@ -170,4 +175,36 @@ func getServicesList(ua components.UnitAsset) []components.Service {
 		list = append(list, *s)
 	}
 	return list
+}
+
+// A node the server reports as writable says so in its registration, and one it
+// does not report as writable says the opposite. Until this existed the only
+// record was the word "[but not yet]" in an English description, so a consumer
+// generating a client — or an AAS describing the interface — had to try a PUT
+// and read the status code to find out.
+func TestAccessDeclaresWhatTheNodeAllows(t *testing.T) {
+	const get = "<http://www.w3.org/2011/http-methods#GET>"
+	const put = "<http://www.w3.org/2011/http-methods#PUT>"
+
+	for _, tc := range []struct {
+		writable bool
+		want     []string
+	}{
+		{true, []string{get, put}},
+		{false, []string{get}},
+	} {
+		ua := initTemplate()
+		services := usecases.MakeServiceMap(getServicesList(*ua))
+		applyNodeMissions(services, tc.writable)
+
+		got := services["access"].Details["Methods"]
+		if len(got) != len(tc.want) {
+			t.Fatalf("writable=%t: got %v, want %v", tc.writable, got, tc.want)
+		}
+		for i := range tc.want {
+			if got[i] != tc.want[i] {
+				t.Errorf("writable=%t: method %d is %q, want %q", tc.writable, i, got[i], tc.want[i])
+			}
+		}
+	}
 }

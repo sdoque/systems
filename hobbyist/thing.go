@@ -216,7 +216,8 @@ func servicesFor(loco Locomotive) []components.Service {
 				// PERCENT told a consumer it could ask for 1000 % — which
 				// SpeedFrame then refuses. The two disagreed and the consumer
 				// was told the wrong one.
-				"Range": {"0", "100"},
+				"Range":   {"0", "100"},
+				"Methods": components.HTTPMethods("GET", "PUT"),
 			},
 			RegPeriod:   30,
 			Description: "reads the current speed (GET) or sets it (PUT), as a percentage of the decoder's full scale",
@@ -226,8 +227,7 @@ func servicesFor(loco Locomotive) []components.Service {
 			SubPath:    "direction",
 			Mission:    components.MissionActuation,
 			Details: map[string][]string{
-				"Forms": {"SignalB_v1a"},
-			},
+				"Forms": {"SignalB_v1a"}, "Methods": components.HTTPMethods("GET", "PUT")},
 			RegPeriod:   30,
 			Description: "reads the direction of travel (GET) or sets it (PUT), true being forward",
 		},
@@ -241,6 +241,7 @@ func servicesFor(loco Locomotive) []components.Service {
 			Details: map[string][]string{
 				"Forms":    {"SignalB_v1a"},
 				"Function": {fmt.Sprint(f.Number)},
+				"Methods":  components.HTTPMethods("GET", "PUT"),
 			},
 			RegPeriod:   30,
 			Description: fmt.Sprintf("switches function %d (GET reads it, PUT sets it)", f.Number),

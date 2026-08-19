@@ -292,6 +292,15 @@ func (t *Traits) runSync() SyncResult {
 
 	env := buildAASEnv(systems)
 
+	// Concept descriptions first, so a consumer reading the store between two
+	// writes finds a semanticId that already resolves rather than one that
+	// leads nowhere for as long as this loop takes.
+	for _, cd := range env.ConceptDescriptions {
+		if err := upsertConcept(client, t.FAASTURL, cd); err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("upsert concept %s: %v", cd.IDShort, err))
+		}
+	}
+
 	// Upsert shells.
 	for _, aas := range env.AssetAdministrationShells {
 		if err := upsertShell(client, t.FAASTURL, aas); err != nil {

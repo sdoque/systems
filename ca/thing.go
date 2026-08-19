@@ -93,7 +93,7 @@ func initTemplate() *components.UnitAsset {
 	certify := components.Service{
 		Definition:  "certify",
 		SubPath:     "certify",
-		Details:     map[string][]string{"Forms": {"csr.pem"}},
+		Details:     map[string][]string{"Forms": {"csr.pem"}, "Methods": components.HTTPMethods("POST")},
 		RegPeriod:   30,
 		Description: "signs a certificate signing request (POST) from authenticated systems in its local cloud",
 	}

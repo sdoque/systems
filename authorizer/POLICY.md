@@ -246,6 +246,61 @@ and re-orchestrates only when that cache is empty
 (`usecases/consumption.go:51-56`), and nothing compels a client to consult the
 Orchestrator at all. A hand-written consumer can call any provider URL directly.
 
+### The bootstrap plane is exempt
+
+**A service whose effective mission is `core` is served without a token.**
+
+This is not a concession; without it authorization cannot be switched on at all.
+One configuration list, `Husk.CoreS`, says two different things: *this is the
+authorizer I verify against*, and *I demand tokens on my own services*. The
+Orchestrator must name the Authorizer to consult it — and doing so made
+`/squest` demand a token, when a service quest is precisely where a token comes
+from. Every discovery request would have been refused and no token could ever
+have been issued. The Service Registrar deadlocks the same way: `RegisterServices`
+sends a bare POST, and it could not do otherwise, since obtaining a token
+requires a registry to discover the provider in.
+
+So discovery, registration, certification and attestation are exempt. They are
+what make tokens possible and therefore cannot be gated by one.
+
+The exemption is decided on the **mission**, not on the system name, for two
+reasons. The mission is already the vocabulary policy is written in, so a core
+system that gains a service does not have to be remembered in a list. And a
+service's own mission overrides its asset's, so a core system offering something
+that is not core — a registrar publishing a temperature — has it gated like
+anything else. Without that, `core` would become a place to hide a service from
+policy.
+
+It is checked **before** the key is required, so a provider still fetching the
+Authorizer's public key answers core requests rather than 503. A registrar that
+refused registrations for the length of that fetch would make the cloud look as
+though it had to be started in a fixed order, which it does not.
+
+**State the boundary plainly: any system this cloud has enrolled may call a core
+service without a token.** It can register services, query the registry, request
+orchestration and ask the CA to certify it. What protects that plane is the layer
+beneath — mutual TLS with a certificate the CA signed only for a binary whose
+SHA-256 is on the whitelist (see *Composition with the security/ca whitelist*).
+Policy governs what a system may *do with* the cloud's assets; attestation
+governs whether it is in the cloud at all.
+
+This is not a hole a rogue provider can climb through by declaring itself core.
+Enforcement is already the provider's own choice — a system that did not want to
+check tokens would simply leave the Authorizer out of its configuration — so a
+provider calling its own service core weakens nothing that was not already its
+to weaken.
+
+Two consequences worth knowing before enabling anything:
+
+- The Registrar can be given the Authorizer in its core list, and registration
+  will still work. But **deregistration will not**: `ActionForMethod` maps DELETE
+  to the empty string by design, and no token claim can match it. A registrar's
+  `unregister` is core-mission and therefore exempt today; if that ever changes,
+  deregistration breaks.
+- Filtering at the Orchestrator still applies to core services. The exemption is
+  about the *provider's* token check, not about which candidates a consumer is
+  shown.
+
 ### Token delivery
 
 The token travels back to the consumer inside the orchestration response:
@@ -268,6 +323,66 @@ every cached node rather than the stale one, but no separate renewal loop is
 needed.
 
 ## Deployment constraints
+
+### Reach the Orchestrator over HTTPS
+
+**A consumer whose `coreSystems` entry for the Orchestrator is `http://…` can
+never be authorized, however the policy file is written.**
+
+The subject is the Common Name of a verified client certificate, and a client
+certificate exists only on a mutual-TLS connection. A service quest that arrives
+over plain HTTP therefore carries no subject at all, the Authorizer is asked
+about `""`, and nothing in `policies.json` names `""` — so every candidate is
+refused and the consumer is told it may use none of them.
+
+This is not hypothetical; it is what the first enabled deployment did. The
+generated configuration seeds every core system over HTTP, which is correct for
+two of the three:
+
+| Core system | Scheme | Why |
+|---|---|---|
+| `ca` | **http** | Enrollment precedes any certificate. It cannot be otherwise. |
+| `serviceregistrar` | **http** | Registration is core-mission and needs no token. |
+| `orchestrator` | **https** once authorization is adopted | This is where the subject is established. |
+
+So exactly one line changes per consumer:
+
+```json
+{ "coreSystem": "orchestrator",
+  "url": "https://192.168.1.10:30103/orchestrator/orchestration" }
+```
+
+The address rather than `localhost`: the certificate the CA issues carries the
+host's addresses and never mentions `localhost`, so `https://localhost:30103`
+fails to verify. Generated configurations now seed the host's own address for
+this reason, and the HTTPS port is the HTTP port with its leading `2` replaced
+by a `3`.
+
+The failure is quiet from the consumer's side — it looks like a policy refusal,
+which sends an operator to the one file the answer is not in — so the
+Orchestrator now says so in the refusal it returns rather than only in its own
+log.
+
+### The authorizer slot in a generated configuration
+
+`systemconfig.json` is generated with a fourth core system:
+
+```json
+{ "coreSystem": "authorizer", "url": "" }
+```
+
+An empty URL means **absent**: a cloud that has not adopted authorization
+behaves exactly as it did before, and `GetRunningCoreSystemURL` skips the entry.
+What the slot buys is discovery — an operator opening the file sees that the
+framework has an authorizer and where its URL goes, rather than needing to know
+the JSON shape and copy it from another system.
+
+It is deliberately not seeded with a real URL. `AuthorizeRequest` does not check
+whether an authorizer is *reachable*, only whether one is *configured*, so a
+seeded URL would make every newly generated system answer 503 to everything but
+its core services until an authorizer existed — breaking every cloud that has
+not adopted authorization, which is the opposite of adoption per deployment.
+
 
 **One functional location per system.** The subject is a certificate CN, which
 identifies a *system*; attributes such as `FunctionalLocation` are declared on

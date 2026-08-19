@@ -79,7 +79,7 @@ func initTemplate() *components.UnitAsset {
 			"state": &components.Service{
 				Definition:  "SwitchList",
 				SubPath:     "state",
-				Details:     map[string][]string{"Forms": {"application/json"}},
+				Details:     map[string][]string{"Forms": {"application/json"}, "Methods": components.HTTPMethods("PUT")},
 				RegPeriod:   30,
 				Description: "lists the discovered switches and their last known state (GET)",
 			},
@@ -90,7 +90,7 @@ func initTemplate() *components.UnitAsset {
 				// so: this service drives a plug, and a mission is what the
 				// authorizer writes policy against.
 				Mission:     components.MissionActuation,
-				Details:     map[string][]string{"Forms": {"SignalB_v1a"}},
+				Details:     map[string][]string{"Forms": {"SignalB_v1a"}, "Methods": components.HTTPMethods("PUT")},
 				RegPeriod:   30,
 				Description: "switches a discovered device on or off (PUT ?name=<device>&value=<true|false>)",
 			},

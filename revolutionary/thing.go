@@ -67,7 +67,7 @@ func initTemplate() *components.UnitAsset {
 	access := components.Service{
 		Definition:  "level",
 		SubPath:     "access",
-		Details:     map[string][]string{"Forms": {"SignalA_v1a"}},
+		Details:     map[string][]string{"Forms": {"SignalA_v1a"}, "Methods": components.HTTPMethods("GET", "POST", "PUT")},
 		RegPeriod:   30,
 		Description: "reads the input (GET) or changes the output (POST) of the channel",
 	}
@@ -123,7 +123,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		Traits:      t,
 	}
 	if u := configuredAsset.Details["Unit"]; len(u) > 0 {
-		t.unit = u[0]
+		// The bare IRI, not the bracketed form an operator writes.
+		t.unit = usecases.UnitIRI(u[0])
 	}
 
 	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {

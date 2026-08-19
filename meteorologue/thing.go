@@ -173,7 +173,7 @@ func (tm *TokenManager) authorizeWithBrowser() error {
 		return fmt.Errorf("timed out waiting for browser authorization (5 min)")
 	case <-ctx.Done():
 		srv.Close()
-		return fmt.Errorf("authorization cancelled")
+		return fmt.Errorf("authorization canceled")
 	}
 	srv.Close()
 
@@ -493,7 +493,7 @@ func newModuleAsset(info moduleInfo, moduleName, stationName string, sys *compon
 
 // -------------------------------------Background poller
 
-// pollNetatmo refreshes the measurement cache on every tick until the context is cancelled.
+// pollNetatmo refreshes the measurement cache on every tick until the context is canceled.
 func pollNetatmo(ctx context.Context, tm *TokenManager, cache *ModuleCache) {
 	ticker := time.NewTicker(time.Duration(tm.Period) * time.Second)
 	defer ticker.Stop()

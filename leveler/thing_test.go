@@ -35,7 +35,7 @@ func TestGetSetPoint(t *testing.T) {
 	if f.Value != 42.5 {
 		t.Errorf("getSetPoint().Value = %v, want 42.5", f.Value)
 	}
-	if f.Unit != "<http://qudt.org/vocab/unit/PERCENT>" {
+	if f.Unit != "http://qudt.org/vocab/unit/PERCENT" {
 		t.Errorf("getSetPoint().Unit = %q, want %q", f.Unit, "<http://qudt.org/vocab/unit/PERCENT>")
 	}
 }
@@ -62,7 +62,7 @@ func TestGetError(t *testing.T) {
 	if f.Value != 7.3 {
 		t.Errorf("getError().Value = %v, want 7.3", f.Value)
 	}
-	if f.Unit != "<http://qudt.org/vocab/unit/PERCENT>" {
+	if f.Unit != "http://qudt.org/vocab/unit/PERCENT" {
 		t.Errorf("getError().Unit = %q, want %q", f.Unit, "<http://qudt.org/vocab/unit/PERCENT>")
 	}
 }
@@ -74,7 +74,7 @@ func TestGetJitter(t *testing.T) {
 	if f.Value != 250 {
 		t.Errorf("getJitter().Value = %v, want 250", f.Value)
 	}
-	if f.Unit != "<http://qudt.org/vocab/unit/MilliSEC>" {
+	if f.Unit != "http://qudt.org/vocab/unit/MilliSEC" {
 		t.Errorf("getJitter().Unit = %q, want %q", f.Unit, "<http://qudt.org/vocab/unit/MilliSEC>")
 	}
 }

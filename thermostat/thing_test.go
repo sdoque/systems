@@ -38,8 +38,10 @@ func TestGetSetPoint(t *testing.T) {
 	if f.Value != 22.5 {
 		t.Errorf("expected Value 22.5, got %f", f.Value)
 	}
-	if f.Unit != "<http://qudt.org/vocab/unit/DEG_C>" {
-		t.Errorf("expected the configured unit, got %q", f.Unit)
+	// The bare IRI, not the bracketed form configuration is written in: the
+	// brackets are Turtle, and a JSON payload is not Turtle.
+	if f.Unit != "http://qudt.org/vocab/unit/DEG_C" {
+		t.Errorf("expected the configured unit unbracketed, got %q", f.Unit)
 	}
 }
 
@@ -71,8 +73,8 @@ func TestGetError(t *testing.T) {
 	if f.Value != -1.5 {
 		t.Errorf("expected Value -1.5, got %f", f.Value)
 	}
-	if f.Unit != "<http://qudt.org/vocab/unit/DEG_C>" {
-		t.Errorf("expected the setpoint's unit, got %q", f.Unit)
+	if f.Unit != "http://qudt.org/vocab/unit/DEG_C" {
+		t.Errorf("expected the setpoint's unit unbracketed, got %q", f.Unit)
 	}
 }
 
@@ -82,8 +84,8 @@ func TestGetJitter(t *testing.T) {
 	tr := &Traits{jitter: 42 * time.Millisecond, jitterUnit: "<http://qudt.org/vocab/unit/MilliSEC>"}
 	f := tr.getJitter()
 
-	if f.Unit != "<http://qudt.org/vocab/unit/MilliSEC>" {
-		t.Errorf("expected the configured unit, got %q", f.Unit)
+	if f.Unit != "http://qudt.org/vocab/unit/MilliSEC" {
+		t.Errorf("expected the configured unit unbracketed, got %q", f.Unit)
 	}
 	if f.Value != 42.0 {
 		t.Errorf("expected Value 42, got %f", f.Value)
@@ -252,11 +254,15 @@ func TestThermalErrorFollowsTheSetpointUnit(t *testing.T) {
 		if got := services["deviation"].Details["Unit"]; len(got) != 1 || got[0] != unit {
 			t.Errorf("the registered error unit is %v; want %q", got, unit)
 		}
-		if tr.getError().Unit != unit {
-			t.Errorf("the reported error unit is %q; want %q", tr.getError().Unit, unit)
+		// Registration keeps the configured spelling, which is Turtle and is
+		// what makes the unit an IRI in the knowledge graph. The published form
+		// carries the bare IRI, which is what makes two systems agree.
+		published := usecases.UnitIRI(unit)
+		if tr.getError().Unit != published {
+			t.Errorf("the reported error unit is %q; want %q", tr.getError().Unit, published)
 		}
-		if tr.getSetPoint().Unit != unit {
-			t.Errorf("the reported setpoint unit is %q; want %q", tr.getSetPoint().Unit, unit)
+		if tr.getSetPoint().Unit != published {
+			t.Errorf("the reported setpoint unit is %q; want %q", tr.getSetPoint().Unit, published)
 		}
 	}
 }
@@ -408,5 +414,32 @@ func TestAConfiguredUnitIsNotOverriddenByTheTemplate(t *testing.T) {
 	}
 	if _, ok := usecases.LookupUnit(tr.setpointUnit); ok {
 		t.Error("that unit resolved, so this test proves nothing")
+	}
+}
+
+// The sampling period is a count of seconds, not a duration.
+//
+// It used to be a time.Duration holding the number 10, which means ten
+// nanoseconds until something multiplies it by time.Second. That worked and
+// read as though the field were already a duration — so the obvious edit,
+// Period: time.Second for a one-second loop, would have asked for 10^9 seconds,
+// about 31 years, and compiled without complaint.
+//
+// The type now refuses that outright, which is the better guard. This holds the
+// rest: that the number means seconds, and that the default is a plausible one
+// for a control loop rather than a value someone typed in nanoseconds.
+func TestTheSamplingPeriodIsSeconds(t *testing.T) {
+	tr, ok := initTemplate().GetTraits().(*Traits)
+	if !ok {
+		t.Fatal("the template carries no traits")
+	}
+
+	got := time.Duration(tr.Period) * time.Second
+	if got < time.Second || got > time.Hour {
+		t.Errorf("the configured period is %v; a control loop is seconds, so the "+
+			"field is a count and not a duration", got)
+	}
+	if got != 10*time.Second {
+		t.Errorf("the default period is %v, want 10s", got)
 	}
 }

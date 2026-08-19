@@ -105,6 +105,7 @@ func initTemplate() *components.UnitAsset {
 			"QuantityKind": {"<http://qudt.org/vocab/quantitykind/DimensionlessRatio>"},
 			"RangeUnit":    {"<http://qudt.org/vocab/unit/DEG>"},
 			"Range":        {"0", "180"},
+			"Methods":      components.HTTPMethods("GET", "PUT"),
 		},
 		RegPeriod:   30,
 		Description: "informs of the servo's current position (GET) or updates the position (PUT)",
@@ -147,7 +148,10 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 	for _, serv := range ua.ServicesMap {
 		if values := serv.Details["Unit"]; len(values) > 0 {
-			t.unit = values[0]
+			// Resolved rather than copied: an operator writes the unit
+			// Turtle-bracketed, and publishing that verbatim served the same
+			// unit under two spellings across the cloud.
+			t.unit = usecases.UnitIRI(values[0])
 			break
 		}
 	}

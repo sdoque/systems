@@ -58,7 +58,7 @@ sequenceDiagram
 
     System->>ESR: DELETE /unregister/{id}
     ESR->>Registry: delete record
-    Note over Registry: record removed<br/>expiration timer cancelled<br/>notify()
+    Note over Registry: record removed<br/>expiration timer canceled<br/>notify()
     Registry-->>ESR: success
     ESR-->>System: 200
 ```

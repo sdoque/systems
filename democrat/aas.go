@@ -84,8 +84,10 @@ type SubmodelElement struct {
 	ModelType  string     `json:"modelType"`
 	IDShort    string     `json:"idShort"`
 	SemanticID *Reference `json:"semanticId,omitempty"`
-	ValueType  string     `json:"valueType"`
-	Value      any        `json:"value,omitempty"`
+	// ValueType is absent on a collection or a reference element, which hold
+	// other elements rather than a typed literal.
+	ValueType string `json:"valueType,omitempty"`
+	Value     any    `json:"value,omitempty"`
 }
 
 // Reference points at the concept an element means, rather than at another
@@ -141,7 +143,30 @@ type SystemInfo struct {
 type ServiceInfo struct {
 	ServiceName string // afo:hasName
 	ServiceDef  string // afo:hasServiceDefinition (optional)
-	URL         string // afo:hasUrl
+	URL         string // afo:hasUrl — the first, kept for the Services submodel
+
+	// URLs is every address this service answers on, one per protocol the husk
+	// opens. A system listening on both http and https states two, and an
+	// interface description needs both: they are different endpoints with
+	// different security, not two spellings of one.
+	URLs []string
+
+	// Unit and QuantityKind are the QUDT IRIs the service registered, which is
+	// what turns a number into a measurement.
+	Unit         string
+	QuantityKind string
+
+	// Methods is what the service answers, as W3C HTTP method IRIs. Empty means
+	// the service never said, and a consumer assumes a read.
+	Methods []string
+
+	// Subscribable says a consumer may follow this value instead of asking for
+	// it repeatedly — which is exactly what WoT calls observable.
+	Subscribable bool
+
+	// Form is the payload form the service registered, e.g. "SignalA_v1a",
+	// which is how a number is told from a boolean.
+	Form string
 }
 
 // ── What the elements mean ────────────────────────────────────────────────────
@@ -334,8 +359,19 @@ WHERE {
 	}
 
 	// 3 — services (system → unitAsset → providesService → service)
+	//
+	// The service IRI is selected as well as its name, because a service that a
+	// husk serves over both http and https states one afo:hasUrl per protocol
+	// and so comes back as two rows. Grouping on the IRI collects them into one
+	// service with two addresses; grouping on the name would work today and
+	// break the day two unit assets in one system name a service alike.
+	//
+	// Unit, quantity kind, methods and subscribability are all optional: a
+	// service that measures nothing has no unit, and one that only answers GET
+	// says nothing about methods. Each is a separate OPTIONAL rather than one
+	// block, so a service missing any one of them still returns the others.
 	qSvc := sparqlPrefixes + `
-SELECT ?system ?svcName ?svcDef ?url
+SELECT ?system ?svc ?svcName ?svcDef ?url ?unit ?quantityKind ?method ?subscribable ?form
 FROM <` + currentGraph + `>
 WHERE {
   ?system a afo:System ;
@@ -344,26 +380,76 @@ WHERE {
   ?svc afo:hasName ?svcName ;
        afo:hasUrl ?url .
   OPTIONAL { ?svc afo:hasServiceDefinition ?svcDef . }
+  OPTIONAL { ?svc alc:hasUnit ?unit . }
+  OPTIONAL { ?svc alc:hasQuantityKind ?quantityKind . }
+  OPTIONAL { ?svc alc:hasMethods ?method . }
+  OPTIONAL { ?svc afo:isSubscribable ?subscribable . }
+  OPTIONAL { ?svc alc:hasForms ?form . }
 }
 `
 	r3, err := sparqlSelect(client, sparqlEndpoint, qSvc)
 	if err != nil {
 		return nil, fmt.Errorf("query services: %w", err)
 	}
+	// One row per combination of the optionals, so the same service arrives
+	// several times over: two URLs and two methods make four rows saying the
+	// same thing. Merging by IRI is what turns them back into one service.
+	byIRI := map[string]map[string]*ServiceInfo{}
 	for _, b := range r3.Results.Bindings {
 		s, ok := systems[b["system"].Value]
 		if !ok {
 			continue
 		}
-		svcDef := ""
-		if d, ok := b["svcDef"]; ok {
-			svcDef = d.Value
+		iri := b["svc"].Value
+		if byIRI[s.SystemURI] == nil {
+			byIRI[s.SystemURI] = map[string]*ServiceInfo{}
 		}
-		s.Services = append(s.Services, ServiceInfo{
-			ServiceName: b["svcName"].Value,
-			ServiceDef:  svcDef,
-			URL:         b["url"].Value,
-		})
+		svc, seen := byIRI[s.SystemURI][iri]
+		if !seen {
+			svc = &ServiceInfo{ServiceName: b["svcName"].Value}
+			byIRI[s.SystemURI][iri] = svc
+			s.Services = append(s.Services, ServiceInfo{})
+		}
+		if d, ok := b["svcDef"]; ok {
+			svc.ServiceDef = d.Value
+		}
+		if u, ok := b["url"]; ok {
+			svc.URLs = appendOnce(svc.URLs, u.Value)
+		}
+		if u, ok := b["unit"]; ok {
+			svc.Unit = u.Value
+		}
+		if q, ok := b["quantityKind"]; ok {
+			svc.QuantityKind = q.Value
+		}
+		if m, ok := b["method"]; ok {
+			svc.Methods = appendOnce(svc.Methods, m.Value)
+		}
+		if sub, ok := b["subscribable"]; ok {
+			svc.Subscribable = sub.Value == "true"
+		}
+		if f, ok := b["form"]; ok {
+			svc.Form = localName(f.Value)
+		}
+	}
+	// Replace the placeholders with the merged services, in a stable order.
+	for uri, svcs := range byIRI {
+		s := systems[uri]
+		iris := make([]string, 0, len(svcs))
+		for iri := range svcs {
+			iris = append(iris, iri)
+		}
+		sort.Strings(iris)
+		s.Services = s.Services[:0]
+		for _, iri := range iris {
+			svc := svcs[iri]
+			sort.Strings(svc.URLs)
+			sort.Strings(svc.Methods)
+			if len(svc.URLs) > 0 {
+				svc.URL = svc.URLs[0]
+			}
+			s.Services = append(s.Services, *svc)
+		}
 	}
 
 	// Deduplicate and sort IP addresses for stable output.
@@ -411,6 +497,7 @@ func buildAASEnv(systems map[string]*SystemInfo) AASEnv {
 		smIdentity := "urn:alc:sm:" + idShort + ":Identity"
 		smHost := "urn:alc:sm:" + idShort + ":Host"
 		smServices := "urn:alc:sm:" + idShort + ":Services"
+		smInterfaces := "urn:alc:sm:" + idShort + ":AssetInterfacesDescription"
 
 		// Build submodel references for the AAS header.
 		refs := []ModelReference{
@@ -494,6 +581,21 @@ func buildAASEnv(systems map[string]*SystemInfo) AASEnv {
 				SemanticID: meaning(afo + "hasUrl"),
 				ValueType:  "xs:anyURI", Value: svc.URL,
 			})
+			// What the Asset Interfaces Description cannot say. AID 1.0 gives a
+			// property one form and one method name, so a setpoint that answers
+			// both GET and PUT states only the read there. Here there is room
+			// for the whole list, and a shell that mentions the write in one
+			// place is better than one that mentions it nowhere.
+			if len(svc.Methods) > 1 {
+				svcElems = append(svcElems, SubmodelElement{
+					ModelType: "Property",
+					IDShort:   "Methods_" + sanitizeIDShort(svc.ServiceName),
+					// Local, because afo: does not define it yet; the framework
+					// writes it as alc:hasMethods for the same reason.
+					SemanticID: meaning(alc + "hasMethods"),
+					ValueType:  "xs:string", Value: strings.Join(methodNames(svc.Methods), " "),
+				})
+			}
 		}
 		// Definition shortcuts (only when a definition maps to exactly one URL).
 		defMap := map[string][]string{}
@@ -523,6 +625,18 @@ func buildAASEnv(systems map[string]*SystemInfo) AASEnv {
 			SemanticID:       meaning(smtServices),
 			SubmodelElements: svcElems,
 		})
+
+		// Asset Interfaces Description — the one submodel here that implements
+		// a published IDTA template rather than a local convention, and the one
+		// a consumer outside this cloud has tooling for.
+		if aid, ok := buildAID(s, smInterfaces); ok {
+			env.Submodels = append(env.Submodels, aid)
+			env.AssetAdministrationShells[len(env.AssetAdministrationShells)-1].Submodels = append(
+				env.AssetAdministrationShells[len(env.AssetAdministrationShells)-1].Submodels,
+				ModelReference{Type: "ModelReference",
+					Keys: []Key{{Type: "Submodel", Value: smInterfaces}}},
+			)
+		}
 	}
 
 	return env
@@ -600,4 +714,38 @@ func upsertSubmodel(client *http.Client, faaastBase string, sm Submodel) error {
 		return nil
 	}
 	return fmt.Errorf("POST /submodels: HTTP %d", resp2.StatusCode)
+}
+
+// appendOnce adds a value to a slice unless it is already there. The SPARQL
+// result multiplies rows across every OPTIONAL, so the same URL arrives once per
+// method and the same method once per URL.
+func appendOnce(list []string, value string) []string {
+	for _, existing := range list {
+		if existing == value {
+			return list
+		}
+	}
+	return append(list, value)
+}
+
+// localName is the last segment of an IRI, and the value itself when it is not
+// one. A detail whose value is a legal name reaches the graph as an entity in
+// the local cloud's namespace — alc:SignalA_v1a — while one with a slash in it
+// stays a literal, so both shapes come back from the same query.
+func localName(value string) string {
+	if i := strings.LastIndexAny(value, "#/"); i >= 0 && i+1 < len(value) {
+		return value[i+1:]
+	}
+	return value
+}
+
+// methodNames turns W3C HTTP method IRIs back into the names a reader expects,
+// for a value that is meant to be read by a person as well as a machine.
+func methodNames(methods []string) []string {
+	out := make([]string, 0, len(methods))
+	for _, m := range methods {
+		out = append(out, localName(m))
+	}
+	sort.Strings(out)
+	return out
 }

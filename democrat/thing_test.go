@@ -110,9 +110,10 @@ func TestBuildAASEnv_OneSystem(t *testing.T) {
 		t.Errorf("GlobalAssetID = %q", aas.AssetInformation.GlobalAssetID)
 	}
 
-	// Expect 3 submodels: Identity, Host, Services
-	if len(env.Submodels) != 3 {
-		t.Errorf("expected 3 submodels, got %d", len(env.Submodels))
+	// Identity, Host, Services, and the Asset Interfaces Description, which
+	// appears for any system whose services have an address.
+	if len(env.Submodels) != 4 {
+		t.Errorf("expected 4 submodels, got %d", len(env.Submodels))
 	}
 }
 
@@ -130,14 +131,14 @@ func TestBuildAASEnv_NoHost(t *testing.T) {
 
 	env := buildAASEnv(systems)
 
-	// Without host info: only Identity + Services = 2 submodels
-	if len(env.Submodels) != 2 {
-		t.Errorf("expected 2 submodels (no Host), got %d", len(env.Submodels))
+	// Without host info: Identity, Services and the interface description.
+	if len(env.Submodels) != 3 {
+		t.Errorf("expected 3 submodels (no Host), got %d", len(env.Submodels))
 	}
-	// AAS refs should also be 2 (no Host ref)
+	// And the shell references exactly the submodels that exist.
 	aas := env.AssetAdministrationShells[0]
-	if len(aas.Submodels) != 2 {
-		t.Errorf("expected 2 submodel refs, got %d", len(aas.Submodels))
+	if len(aas.Submodels) != 3 {
+		t.Errorf("expected 3 submodel refs, got %d", len(aas.Submodels))
 	}
 }
 
@@ -457,17 +458,25 @@ func TestEverySubmodelAndPropertyMeansSomething(t *testing.T) {
 				sm.IDShort, sm.SemanticID.Type)
 		}
 
-		for _, el := range sm.SubmodelElements {
+		// Recursively, because the Asset Interfaces Description nests four deep
+		// and an element buried in a collection is exactly the one that gets
+		// added later without a meaning.
+		var check func(el SubmodelElement, path string)
+		check = func(el SubmodelElement, path string) {
+			path += "/" + el.IDShort
 			if el.SemanticID == nil {
-				t.Errorf("%s/%s has no meaning, so a consumer can only display it",
-					sm.IDShort, el.IDShort)
-				continue
+				t.Errorf("%s has no meaning, so a consumer can only display it", path)
+			} else if iri := el.SemanticID.Keys[0].Value; !strings.HasPrefix(iri, "http") {
+				t.Errorf("%s means %q, which is not something anyone can look up", path, iri)
 			}
-			iri := el.SemanticID.Keys[0].Value
-			if !strings.HasPrefix(iri, "http://") && !strings.HasPrefix(iri, "https://") {
-				t.Errorf("%s/%s means %q, which is not something anyone can look up",
-					sm.IDShort, el.IDShort, iri)
+			if kids, ok := el.Value.([]SubmodelElement); ok {
+				for _, kid := range kids {
+					check(kid, path)
+				}
 			}
+		}
+		for _, el := range sm.SubmodelElements {
+			check(el, sm.IDShort)
 		}
 	}
 }
@@ -512,11 +521,21 @@ func TestTheMeaningsComeFromTheOntologyTheValuesCameFrom(t *testing.T) {
 		}
 	}
 
-	// And nothing claims to be an IDTA template, because none of these implement
-	// one yet.
+	// A submodel claims an IDTA template only when it implements one. The three
+	// local submodels describe an Arrowhead system, which no published template
+	// covers, so they are minted in the local cloud's namespace and say so. The
+	// Asset Interfaces Description does implement IDTA 02017-1-0 and carries its
+	// identifier — that is what makes it readable by tooling that has never
+	// heard of this framework.
+	local := map[string]bool{"Identity": true, "Host": true, "Services": true}
 	for _, sm := range env.Submodels {
-		if strings.Contains(sm.SemanticID.Keys[0].Value, "admin-shell.io") {
+		claimsIDTA := strings.Contains(sm.SemanticID.Keys[0].Value, "admin-shell.io")
+		switch {
+		case local[sm.IDShort] && claimsIDTA:
 			t.Errorf("submodel %q claims an IDTA template it does not implement", sm.IDShort)
+		case !local[sm.IDShort] && !claimsIDTA:
+			t.Errorf("submodel %q is not one of ours and names no published template either",
+				sm.IDShort)
 		}
 	}
 }

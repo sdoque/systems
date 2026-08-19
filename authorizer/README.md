@@ -274,6 +274,37 @@ while the control loop runs on. That is the token doing its work: the decision
 is made once at discovery and checked locally at every provider thereafter, so
 a cell keeps running when the authorizer does not.
 
+### What it looks like when a token expires
+
+```
+14:39:11  ds18b20:    refusing GET .../temperature: the token expired at 14:39:01
+14:39:21  authorizer: "thermostat" may use 1 of 1 candidates for read
+14:40:09  thermostat: deviation -2.187, jitter 1.134 ms, valve 39%
+```
+
+Ten seconds, no intervention, no missed control cycle worth the name. The
+provider refused with 403, `askOneProvider` classified that as a stale provider,
+`forgetToken` dropped the credential for that one action, and the next call
+rediscovered and was issued a fresh one. Nothing was written for renewal: it
+falls out of treating a refused credential as a reason to discover again.
+
+This is also the cost side of the design stated plainly. A permission withdrawn
+from `policies.json` keeps working until the tokens holding it expire — five
+minutes for an actuation here — because that is the same mechanism. Revocation
+latency and outage tolerance are the same property seen from two directions.
+
+### What it looks like when a policy changes
+
+```
+14:37:23  authorizer: loaded 5 policies and 0 denials from policies.json
+14:37:23  authorizer: "painter" may use 1 of 1 candidates for read
+```
+
+No restart. `reloadPolicies` compares the file's modification time before each
+decision, so an edit takes effect on the next one. A file that does not parse
+leaves the previous rules in place rather than reverting to deny-everything,
+which would take a plant down over a typo.
+
 ## What remains
 
 - **No `policies.json` exists in most deployments.** AlphaCloud has one;
@@ -286,10 +317,11 @@ a cell keeps running when the authorizer does not.
   cross-compile it yet.
 - **Now run end to end on the testbed**, on AlphaCloud: a thermostat granted read
   on a measurement and write on an actuation, both paired by functional location,
-  driving a servo through a verified token. What has *not* been exercised is a
-  refusal in anger — every denial so far has been a misconfiguration rather than
-  a policy doing its job — nor a token expiring under load, nor a second
-  consumer competing for the same provider.
+  driving a servo through a verified token. Token renewal has since been
+  exercised in anger as well (see below). What has *not* been exercised is a
+  second consumer competing for the same provider, nor a policy narrowed while a
+  control loop runs — the hot reload is proven, revoking a permission somebody
+  is using is not.
 
 ## Related
 

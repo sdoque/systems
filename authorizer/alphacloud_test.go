@@ -32,7 +32,10 @@ const alphaCloudPolicies = `{
             "actions": ["read", "write"],
             "must_match_attribute": "FunctionalLocation",
             "ttl": "5m"
-        }
+        },
+        {"subject": "painter",  "missions": ["core"], "services": ["syslist"], "actions": ["read"], "ttl": "15m"},
+        {"subject": "kgrapher", "missions": ["core"], "services": ["syslist"], "actions": ["read"], "ttl": "15m"},
+        {"subject": "modeler",  "missions": ["core"], "services": ["syslist"], "actions": ["read"], "ttl": "15m"}
     ],
     "denials": []
 }`
@@ -86,11 +89,27 @@ func TestAlphaCloudDecisions(t *testing.T) {
 			Action: ActionWrite, Record: record("parallax", "Servo_1", "rotation", "actuation", at("Kitchen"))},
 		false,
 	}, {
-		// Nothing in this file mentions the aggregation systems, and the default
-		// is deny. They are unaffected today only because the registrar does not
-		// verify tokens; the moment it does, this is what they get.
-		"the painter cannot read the registry",
+		// The aggregation systems read the system list and nothing else. They
+		// would work without this — syslist is core-mission and served without a
+		// token — but the orchestrator still filters, so without a rule every
+		// walk is refused and logged, and a log full of denials that are not
+		// denials is how a real one gets missed.
+		"the painter may read the system list",
 		Request{Subject: "painter", SubjectAttributes: map[string][]string{}, Action: ActionRead,
+			Record: record("serviceregistrar", "registry", "syslist", "core", nil)},
+		true,
+	}, {
+		// Narrowed to that one service: reading the list of systems is not a
+		// reason to be handed the registrar's whole surface.
+		"the painter may not query the registry",
+		Request{Subject: "painter", SubjectAttributes: map[string][]string{}, Action: ActionRead,
+			Record: record("serviceregistrar", "registry", "query", "core", nil)},
+		false,
+	}, {
+		// And reading is not writing: nothing here lets an aggregator register
+		// or unregister anything.
+		"the painter may not write to the registry",
+		Request{Subject: "painter", SubjectAttributes: map[string][]string{}, Action: ActionWrite,
 			Record: record("serviceregistrar", "registry", "syslist", "core", nil)},
 		false,
 	}, {
@@ -105,9 +124,15 @@ func TestAlphaCloudDecisions(t *testing.T) {
 		if got.Allowed != tc.allowed {
 			t.Errorf("%s: allowed=%t, want %t (%s)", tc.name, got.Allowed, tc.allowed, got.Reason)
 		}
-		if got.Allowed && got.TTL.Minutes() != 5 {
-			t.Errorf("%s: ttl=%v, want the 5 minutes that bounds a stale permission on a valve",
-				tc.name, got.TTL)
+		// Five minutes bounds how long a stale permission can still drive a
+		// valve; fifteen is fine for a system that only reads a list, and costs
+		// the orchestrator less traffic.
+		wantTTL := 5.0
+		if tc.req.Subject != "thermostat" {
+			wantTTL = 15
+		}
+		if got.Allowed && got.TTL.Minutes() != wantTTL {
+			t.Errorf("%s: ttl=%v, want %v minutes", tc.name, got.TTL, wantTTL)
 		}
 	}
 }

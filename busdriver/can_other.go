@@ -36,7 +36,7 @@ func openCAN(ifname string) (int, error) {
 
 func closeCAN(_ int) {}
 
-// canPoller is a no-op stub: it blocks until the context is cancelled so the
+// canPoller is a no-op stub: it blocks until the context is canceled so the
 // goroutine started by newResource exits cleanly on shutdown.
 func canPoller(ctx context.Context, _ int, _ []pidSubscription) {
 	<-ctx.Done()

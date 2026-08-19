@@ -214,7 +214,7 @@ func (t *Traits) sampleLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("sampleLoop: context cancelled, stopping")
+			log.Println("sampleLoop: context canceled, stopping")
 			return
 
 		case v := <-sigChan:

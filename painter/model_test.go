@@ -108,7 +108,7 @@ func TestTheCloudIsDrawnFromWhatEachSystemSaysAboutItself(t *testing.T) {
 	}
 }
 
-// Colour carries the posture, so the posture has to survive the reading.
+// Color carries the posture, so the posture has to survive the reading.
 func TestEachSystemKeepsItsSecurityPosture(t *testing.T) {
 	cloud := cloudOfTwo(t)
 	levels := map[string]string{}
@@ -150,7 +150,7 @@ func TestAConsumedServiceBecomesALineBetweenTwoAssets(t *testing.T) {
 			"consumer was bound to against the URL the provider published", link.To)
 	}
 	if link.Definition != "OnOff" {
-		t.Errorf("the line is labelled %q, want OnOff", link.Definition)
+		t.Errorf("the line is labeled %q, want OnOff", link.Definition)
 	}
 	// Mission decides how the line is drawn: driving a plug must not look like
 	// reading a sensor.

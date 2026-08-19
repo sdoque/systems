@@ -123,7 +123,7 @@ func initTemplate() *components.UnitAsset {
 // matches each one to a temperature service from meteorologue, and returns one
 // UnitAsset per heater with its own feedback control loop.
 // If the dependent services are not yet available it retries every 15 s until they
-// are found or the system context is cancelled.
+// are found or the system context is canceled.
 func newResources(uac usecases.ConfigurableAsset, sys *components.System) ([]*components.UnitAsset, func()) {
 	defaults := parseTraitDefaults(uac)
 	sProtocols := components.SProtocols(sys.Husk.ProtoPort)

@@ -29,7 +29,7 @@ import (
 
 func main() {
 	// prepare for graceful shutdown
-	ctx, cancel := context.WithCancel(context.Background()) // create a context that can be cancelled
+	ctx, cancel := context.WithCancel(context.Background()) // create a context that can be canceled
 	defer cancel()                                          // make sure all paths cancel the context to avoid context leak
 
 	// instantiate the System

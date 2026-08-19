@@ -30,7 +30,7 @@ import (
 
 func main() {
 	// prepare for graceful shutdown
-	ctx, cancel := context.WithCancel(context.Background()) // create a context that can be cancelled
+	ctx, cancel := context.WithCancel(context.Background()) // create a context that can be canceled
 	defer cancel()
 
 	// instantiate the System

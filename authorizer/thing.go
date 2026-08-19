@@ -324,7 +324,7 @@ func (t *Traits) orchestratorCN() string {
 // Reading the current port meant the refusal could switch itself off. The
 // HTTPS server releases its entry when it returns, so an authorizer that had
 // been refusing plaintext for weeks would start accepting it again after a cert
-// rotation or a cancelled context, while continuing to serve on the plain port.
+// rotation or a canceled context, while continuing to serve on the plain port.
 // EverBound is the latch: once TLS has been served, it stays served as far as
 // this decision is concerned.
 // The window before TLS first binds is deliberately still open: there is no

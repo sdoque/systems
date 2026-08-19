@@ -131,8 +131,8 @@ func (t *Traits) readSignal(w http.ResponseWriter, r *http.Request) {
 		case t.trayChan <- getMeasuremet:
 			// delivered
 		case <-r.Context().Done():
-			http.Error(w, "Request cancelled", http.StatusRequestTimeout)
-			log.Println("Signal reading request cancelled by client")
+			http.Error(w, "Request canceled", http.StatusRequestTimeout)
+			log.Println("Signal reading request canceled by client")
 			return
 		case <-time.After(1 * time.Second):
 			http.Error(w, "Asset busy", http.StatusGatewayTimeout)
@@ -152,8 +152,8 @@ func (t *Traits) readSignal(w http.ResponseWriter, r *http.Request) {
 			return
 
 		case <-r.Context().Done():
-			http.Error(w, "Request cancelled", http.StatusRequestTimeout)
-			log.Println("Signal reading request cancelled while waiting for response")
+			http.Error(w, "Request canceled", http.StatusRequestTimeout)
+			log.Println("Signal reading request canceled while waiting for response")
 			return
 
 		case <-time.After(5 * time.Second):

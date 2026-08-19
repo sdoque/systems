@@ -327,7 +327,7 @@ func TestPlaintextQuestsAreRefusedOnceTLSIsServing(t *testing.T) {
 		t.Errorf("the refusal does not name the remedy: %s", strings.TrimSpace(body))
 	}
 
-	// The TLS server stops — a certificate rotation, a port taken, a cancelled
+	// The TLS server stops — a certificate rotation, a port taken, a canceled
 	// context. SetoutServers releases the entry on its way out, so a check that
 	// reads the port being served now goes back to zero and the authorizer
 	// silently starts answering plaintext quests again, on a plain port that is

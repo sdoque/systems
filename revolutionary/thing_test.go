@@ -162,7 +162,7 @@ func TestConfiguredUnitIsConvertible(t *testing.T) {
 }
 
 // TestShutdownStopsTheLoopWithoutExiting is the defect this test was written
-// for: the reader goroutine called os.Exit(0) when the context was cancelled.
+// for: the reader goroutine called os.Exit(0) when the context was canceled.
 // One channel of one unit asset shutting down took the whole system with it —
 // every other asset lost its shutdown, and the cleanup function newResource
 // returns never ran. That the test binary survives this test is half the
@@ -187,7 +187,7 @@ func TestShutdownStopsTheLoopWithoutExiting(t *testing.T) {
 	select {
 	case <-stopped:
 	case <-time.After(2 * time.Second):
-		t.Fatal("sampleSignal did not return after the context was cancelled")
+		t.Fatal("sampleSignal did not return after the context was canceled")
 	}
 }
 

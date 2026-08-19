@@ -29,12 +29,12 @@ out the rest of the period before anything moves. The second arm removes that �
 change in the process reaches the valve as soon as it is known rather than at
 the end of a period that has just begun.
 
-The ticker cannot be dropped in favour of the arrival. A provider that has died
+The ticker cannot be dropped in favor of the arrival. A provider that has died
 says nothing, and a controller waiting only for news would wait for ever,
 holding its last output while the room did as it pleased. Silence must not be
 mistaken for steadiness. So: **event-triggered, with a periodic fallback.**
 
-This is not badly-sampled periodic control; it is a recognised design. Åström
+This is not badly-sampled periodic control; it is a recognized design. Åström
 and Bernhardsson's comparison of periodic and event-based sampling found
 event-based giving lower output variance for the same *average* sampling rate.
 The service's `Threshold` is the trigger condition and `components.DefaultWakeFloor`

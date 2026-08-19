@@ -126,7 +126,7 @@ func TestParseDeviceFileSurvivesABadSensor(t *testing.T) {
 }
 
 // TestAGetDuringShutdownIsRefusedNotAPanic is the other half of the defect:
-// readTemperature closed trayChan when the context was cancelled, while the HTTP
+// readTemperature closed trayChan when the context was canceled, while the HTTP
 // handler sent on it unguarded. main cancels the context and then sleeps two
 // seconds with the servers still accepting, so any GET in that window sent on a
 // closed channel — which panics and takes the system down, on hardware in the
@@ -145,7 +145,7 @@ func TestAGetDuringShutdownIsRefusedNotAPanic(t *testing.T) {
 	select {
 	case <-stopped:
 	case <-time.After(2 * time.Second):
-		t.Fatal("readTemperature did not return after the context was cancelled")
+		t.Fatal("readTemperature did not return after the context was canceled")
 	}
 
 	// The window main leaves open: the reader has gone, the server has not.

@@ -150,7 +150,9 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 	for _, serv := range configuredAsset.Services {
 		if values := serv.Details["Unit"]; len(values) > 0 {
-			t.unit = values[0]
+			// Resolved rather than copied — see parallax: the configuration
+			// spelling is Turtle, the published spelling is the bare IRI.
+			t.unit = usecases.UnitIRI(values[0])
 			break
 		}
 	}

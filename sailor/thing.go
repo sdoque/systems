@@ -275,7 +275,7 @@ func (t *Traits) assetLoop(ctx context.Context) {
 			var f forms.SignalA_v1a
 			f.NewForm()
 			f.Value = t.value
-			f.Unit = t.unit
+			f.Unit = usecases.UnitIRI(t.unit)
 			f.Timestamp = t.tStamp
 			order.ValueP <- f
 		}

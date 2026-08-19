@@ -34,7 +34,7 @@ func TestGetSetPoint(t *testing.T) {
 	if f.Value != 21.5 {
 		t.Errorf("expected Value 21.5, got %f", f.Value)
 	}
-	if f.Unit != "<http://qudt.org/vocab/unit/DEG_C>" {
+	if f.Unit != "http://qudt.org/vocab/unit/DEG_C" {
 		t.Errorf("expected Unit %q, got %q", "<http://qudt.org/vocab/unit/DEG_C>", f.Unit)
 	}
 }
@@ -62,7 +62,7 @@ func TestGetError(t *testing.T) {
 	if f.Value != -2.0 {
 		t.Errorf("expected Value -2.0, got %f", f.Value)
 	}
-	if f.Unit != "<http://qudt.org/vocab/unit/DEG_C>" {
+	if f.Unit != "http://qudt.org/vocab/unit/DEG_C" {
 		t.Errorf("expected Unit %q, got %q", "<http://qudt.org/vocab/unit/DEG_C>", f.Unit)
 	}
 }
@@ -74,7 +74,7 @@ func TestGetJitter(t *testing.T) {
 	if f.Value != 37.0 {
 		t.Errorf("expected Value 37.0, got %f", f.Value)
 	}
-	if f.Unit != "<http://qudt.org/vocab/unit/MilliSEC>" {
+	if f.Unit != "http://qudt.org/vocab/unit/MilliSEC" {
 		t.Errorf("expected Unit %q, got %q", "<http://qudt.org/vocab/unit/MilliSEC>", f.Unit)
 	}
 }

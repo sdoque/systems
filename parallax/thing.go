@@ -148,7 +148,10 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 	for _, serv := range ua.ServicesMap {
 		if values := serv.Details["Unit"]; len(values) > 0 {
-			t.unit = values[0]
+			// Resolved rather than copied: an operator writes the unit
+			// Turtle-bracketed, and publishing that verbatim served the same
+			// unit under two spellings across the cloud.
+			t.unit = usecases.UnitIRI(values[0])
 			break
 		}
 	}

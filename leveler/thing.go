@@ -246,7 +246,7 @@ func (t *Traits) getSetPoint() (f forms.SignalA_v1a) {
 	t.mu.RLock()
 	f.Value = t.SetPt
 	t.mu.RUnlock()
-	f.Unit = t.setpointUnit
+	f.Unit = usecases.UnitIRI(t.setpointUnit)
 	f.Timestamp = time.Now()
 	return f
 }
@@ -272,7 +272,7 @@ func (t *Traits) getError() (f forms.SignalA_v1a) {
 	t.mu.RLock()
 	f.Value = t.deviation
 	t.mu.RUnlock()
-	f.Unit = t.errorUnit
+	f.Unit = usecases.UnitIRI(t.errorUnit)
 	f.Timestamp = time.Now()
 	return f
 }
@@ -281,9 +281,16 @@ func (t *Traits) getError() (f forms.SignalA_v1a) {
 func (t *Traits) getJitter() (f forms.SignalA_v1a) {
 	f.NewForm()
 	t.mu.RLock()
-	f.Value = float64(t.jitter.Milliseconds())
+	// Microseconds divided out rather than Milliseconds, which truncates.
+	//
+	// This measured whole milliseconds from when every cycle made an HTTP
+	// request for its reading. A followed value is answered from cache, so the
+	// loop now runs in well under a millisecond and the service reported 0 —
+	// the metric losing its resolution to the improvement it was watching. The
+	// unit is unchanged, so nothing consuming it needs to know.
+	f.Value = float64(t.jitter.Microseconds()) / 1000
 	t.mu.RUnlock()
-	f.Unit = t.jitterUnit
+	f.Unit = usecases.UnitIRI(t.jitterUnit)
 	f.Timestamp = time.Now()
 	return f
 }
@@ -339,7 +346,7 @@ func (t *Traits) processFeedbackLoop() {
 	var of forms.SignalA_v1a
 	of.NewForm()
 	of.Value = output
-	of.Unit = t.cervices["pumpSpeed"].Details["Unit"][0]
+	of.Unit = usecases.UnitIRI(t.cervices["pumpSpeed"].Details["Unit"][0])
 	of.Timestamp = time.Now()
 
 	op, err := usecases.Pack(&of, "application/json")

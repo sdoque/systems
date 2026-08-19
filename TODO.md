@@ -62,6 +62,17 @@ say why here and then delete the entry.
   title, this is why the kgrapher once refused to assemble: it needs at least
   one system to say which cloud it is in.
 
+- **`orchestrator` serves `squests` but never registers it.** `serving`
+  dispatches the path and `orchestrateMultiple` answers it, and no
+  `components.Service` declares it, so it is absent from the registry, from the
+  graph and from every AAS built out of them. A consumer can only find it by
+  reading the Go.
+
+- **The Asset Interfaces Description has not been read by AAS tooling.** It is
+  built against the published IDTA 02017-1-0 template and unit-tested against
+  it, and nothing has yet loaded it into the AASX Package Explorer or FA³ST to
+  confirm the shape is accepted rather than merely plausible.
+
 ## Not yet run on hardware
 
 The mission type, `ServicePointList_v1`, the cervice lock, the client transport

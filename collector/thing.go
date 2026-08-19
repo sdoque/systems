@@ -39,7 +39,16 @@ import (
 type MeasurementT struct {
 	Name    string              `json:"serviceDefinition"`
 	Details map[string][]string `json:"mdetails"`
-	Period  time.Duration       `json:"samplingPeriod"`
+	// Period is the sampling period in seconds.
+	//
+	// An int rather than a time.Duration, because a Duration holding the number
+	// 10 means ten nanoseconds and only becomes ten seconds when multiplied by
+	// time.Second — which works, and reads as if the field were already a
+	// duration. Anyone writing the obvious `Period: time.Second` for one second
+	// would get 10^9 seconds, about 31 years, and the compiler would not object.
+	// The unit belongs in the name and the conversion belongs at the point of
+	// use.
+	Period int `json:"samplingPeriod"`
 }
 
 //-------------------------------------Define the unit asset
@@ -155,7 +164,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			if err := t.collectIngest(name, period, writeAPI); err != nil {
 				log.Printf("Error in collectIngest for measurement: %v", err)
 			}
-		}(measurement.Name, measurement.Period*time.Second)
+		}(measurement.Name, time.Duration(measurement.Period)*time.Second)
 	}
 
 	return ua, func() {

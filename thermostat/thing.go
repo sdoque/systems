@@ -40,9 +40,18 @@ type Traits struct {
 	// 32-bit build stores a float64 in two words — a setpoint moving 20 to 22
 	// while the loop reads it can yield a number that was never written, and
 	// calculateOutput turns that into a fully open or fully closed valve.
-	mu        sync.RWMutex
-	SetPt     float64             `json:"setPoint"`
-	Period    time.Duration       `json:"samplingPeriod"`
+	mu    sync.RWMutex
+	SetPt float64 `json:"setPoint"`
+	// Period is the sampling period in seconds.
+	//
+	// An int rather than a time.Duration, because a Duration holding the number
+	// 10 means ten nanoseconds and only becomes ten seconds when multiplied by
+	// time.Second — which works, and reads as if the field were already a
+	// duration. Anyone writing the obvious `Period: time.Second` for one second
+	// would get 10^9 seconds, about 31 years, and the compiler would not object.
+	// The unit belongs in the name and the conversion belongs at the point of
+	// use.
+	Period    int                 `json:"samplingPeriod"`
 	Kp        float64             `json:"kp"`
 	Lambda    float64             `json:"lambda"`
 	Ki        float64             `json:"ki"`
@@ -313,7 +322,7 @@ func (t *Traits) getJitter() (f forms.SignalA_v1a) {
 // business (components.DefaultWakeFloor): a tenth of a degree is worth
 // reporting and not worth moving a valve for.
 func (t *Traits) feedbackLoop(ctx context.Context) {
-	ticker := time.NewTicker(t.Period * time.Second)
+	ticker := time.NewTicker(time.Duration(t.Period) * time.Second)
 	defer ticker.Stop()
 
 	fresh := t.cervices["temperature"].Updated()

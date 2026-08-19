@@ -416,3 +416,30 @@ func TestAConfiguredUnitIsNotOverriddenByTheTemplate(t *testing.T) {
 		t.Error("that unit resolved, so this test proves nothing")
 	}
 }
+
+// The sampling period is a count of seconds, not a duration.
+//
+// It used to be a time.Duration holding the number 10, which means ten
+// nanoseconds until something multiplies it by time.Second. That worked and
+// read as though the field were already a duration — so the obvious edit,
+// Period: time.Second for a one-second loop, would have asked for 10^9 seconds,
+// about 31 years, and compiled without complaint.
+//
+// The type now refuses that outright, which is the better guard. This holds the
+// rest: that the number means seconds, and that the default is a plausible one
+// for a control loop rather than a value someone typed in nanoseconds.
+func TestTheSamplingPeriodIsSeconds(t *testing.T) {
+	tr, ok := initTemplate().GetTraits().(*Traits)
+	if !ok {
+		t.Fatal("the template carries no traits")
+	}
+
+	got := time.Duration(tr.Period) * time.Second
+	if got < time.Second || got > time.Hour {
+		t.Errorf("the configured period is %v; a control loop is seconds, so the "+
+			"field is a count and not a duration", got)
+	}
+	if got != 10*time.Second {
+		t.Errorf("the default period is %v, want 10s", got)
+	}
+}

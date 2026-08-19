@@ -37,17 +37,26 @@ import (
 
 // -------------------------------------Define a measurement (or signal)
 type SignalT struct {
-	Name              string              `json:"serviceDefinition"`
-	Details           map[string][]string `json:"details"`
-	Period            time.Duration       `json:"samplingPeriod"`
-	LowerThreshold    float64             `json:"lowerThreshold"`
-	UpperThreshold    float64             `json:"upperThreshold"`
-	TOverCount        map[string]int      `json:"-"` // consecutive out-of-range count per source node
-	WorkRequested     map[string]bool     `json:"-"` // pending maintenance order per source node
-	Operational       bool                `json:"-"` // false when any node has a pending order
-	ValveTagByNode    map[string]string   `json:"-"` // node → actuator FL tag resolved from GraphDB (human-readable)
-	ValveIRIByNode    map[string]string   `json:"-"` // node → actuator FL IRI (used to link the work request in the STEP graph)
-	UnresolvableNodes map[string]bool     `json:"-"` // nodes whose actuator could not be resolved; skipped
+	Name    string              `json:"serviceDefinition"`
+	Details map[string][]string `json:"details"`
+	// Period is the sampling period in seconds.
+	//
+	// An int rather than a time.Duration, because a Duration holding the number
+	// 10 means ten nanoseconds and only becomes ten seconds when multiplied by
+	// time.Second — which works, and reads as if the field were already a
+	// duration. Anyone writing the obvious `Period: time.Second` for one second
+	// would get 10^9 seconds, about 31 years, and the compiler would not object.
+	// The unit belongs in the name and the conversion belongs at the point of
+	// use.
+	Period            int               `json:"samplingPeriod"`
+	LowerThreshold    float64           `json:"lowerThreshold"`
+	UpperThreshold    float64           `json:"upperThreshold"`
+	TOverCount        map[string]int    `json:"-"` // consecutive out-of-range count per source node
+	WorkRequested     map[string]bool   `json:"-"` // pending maintenance order per source node
+	Operational       bool              `json:"-"` // false when any node has a pending order
+	ValveTagByNode    map[string]string `json:"-"` // node → actuator FL tag resolved from GraphDB (human-readable)
+	ValveIRIByNode    map[string]string `json:"-"` // node → actuator FL IRI (used to link the work request in the STEP graph)
+	UnresolvableNodes map[string]bool   `json:"-"` // nodes whose actuator could not be resolved; skipped
 }
 
 //-------------------------------------Define the unit asset
@@ -189,7 +198,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 
 	// Start a monitoring goroutine for each signal.
 	for _, signal := range t.Signals {
-		go t.sigMon(signal.Name, signal.Period*time.Second)
+		go t.sigMon(signal.Name, time.Duration(signal.Period)*time.Second)
 	}
 
 	return ua, func() {

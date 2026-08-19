@@ -33,11 +33,20 @@ import (
 
 // DeconzConfig holds the connection parameters for the deCONZ gateway.
 type DeconzConfig struct {
-	Host    string        `json:"host"`
-	APIPort int           `json:"apiPort"`
-	WSPort  int           `json:"wsPort"`
-	APIKey  string        `json:"apiKey"`
-	Period  time.Duration `json:"period"` // REST poll interval in seconds
+	Host    string `json:"host"`
+	APIPort int    `json:"apiPort"`
+	WSPort  int    `json:"wsPort"`
+	APIKey  string `json:"apiKey"`
+	// Period is the sampling period in seconds.
+	//
+	// An int rather than a time.Duration, because a Duration holding the number
+	// 10 means ten nanoseconds and only becomes ten seconds when multiplied by
+	// time.Second — which works, and reads as if the field were already a
+	// duration. Anyone writing the obvious `Period: time.Second` for one second
+	// would get 10^9 seconds, about 31 years, and the compiler would not object.
+	// The unit belongs in the name and the conversion belongs at the point of
+	// use.
+	Period int `json:"period"`
 }
 
 func (c DeconzConfig) apiBase() string {
@@ -379,7 +388,7 @@ func getJSON(url string, target interface{}) error {
 // pollREST periodically refreshes the cache from the deCONZ REST API.
 // This is a fallback for devices whose WebSocket events are missed during reconnection gaps.
 func pollREST(ctx context.Context, cfg DeconzConfig, cache *DeviceCache, assetIndex map[string]string) {
-	period := cfg.Period * time.Second
+	period := time.Duration(cfg.Period) * time.Second
 	if period <= 0 {
 		period = 30 * time.Second
 	}

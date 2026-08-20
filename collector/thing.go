@@ -87,10 +87,17 @@ func initTemplate() *components.UnitAsset {
 			mqueryService.SubPath: &mqueryService,
 		},
 		Traits: &Traits{
-			FluxURL: "http://10.0.0.33:8086",
-			Token:   "K1NTWNlToyUNXdii7IwNJ1W-kMsagUr8w1r4cRVYqK-N-R9vVT1MCJwHFBxOgiW85iKiMSsUpbrxQsQZJA8IzA==",
-			Org:     "mbaigo",
-			Bucket:  "demo",
+			FluxURL: "http://localhost:8086",
+			// Deliberately empty. This field held a working token from a past
+			// deployment — checked into a public repository and copied into
+			// every generated systemconfig.json, so every deployment shipped
+			// with somebody else's credential and no sign that it was one.
+			//
+			// Empty is caught below with a message that says what to do, which
+			// is what a template value should do when it cannot be guessed.
+			Token:  "",
+			Org:    "mbaigo",
+			Bucket: "demo",
 			Measurements: []MeasurementT{
 				{
 					Name:    "temperature",
@@ -118,7 +125,11 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 
 	if t.FluxURL == "" || t.Token == "" || t.Org == "" || t.Bucket == "" {
-		log.Fatal("Invalid InfluxDB configuration: missing required parameters")
+		log.Fatalf("%s: the InfluxDB settings in systemconfig.json are incomplete "+
+			"(db_url %q, token %s, organization %q, bucket %q). A freshly installed "+
+			"InfluxDB 2 has no organization, bucket or token until `influx setup` has "+
+			"been run — see this system's README, section 3.\n",
+			configuredAsset.Name, t.FluxURL, present(t.Token), t.Org, t.Bucket)
 	}
 
 	// Create a new client for InfluxDB
@@ -284,4 +295,12 @@ func (t *Traits) q4measurements(w http.ResponseWriter) {
 	}
 
 	w.Write([]byte(text))
+}
+
+// present says whether a secret is set without putting it in a log line.
+func present(secret string) string {
+	if secret == "" {
+		return "not set"
+	}
+	return "set"
 }

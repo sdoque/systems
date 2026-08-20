@@ -113,9 +113,12 @@ func initTemplate() *components.UnitAsset {
 	}
 
 	localOntologies := components.Service{
-		Definition:  "localOntologies",
-		SubPath:     "localontologies",
-		Details:     map[string][]string{"Location": {"Files"}},
+		Definition: "localOntologies",
+		SubPath:    "localontologies",
+		// text/html because it is a page for a person: listOntologies writes
+		// markup. Saying so keeps it out of analyses that ask what depends on
+		// what — documentation has no failure mode worth reporting.
+		Details:     map[string][]string{"Location": {"Files"}, "Forms": {"text/html"}},
 		RegPeriod:   61,
 		Description: "provides the list of local ontologies (GET)",
 	}

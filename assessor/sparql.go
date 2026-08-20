@@ -166,7 +166,7 @@ WHERE {
 // readProvided fills in what each asset offers.
 func readProvided(client *http.Client, endpoint string, assets map[string]*Asset) error {
 	q := prefixes + `
-SELECT ?asset ?svc ?svcName ?definition ?subscribable ?unit ?quantityKind ?regPeriod ?url ?method ?range
+SELECT ?asset ?svc ?svcName ?definition ?subscribable ?unit ?quantityKind ?regPeriod ?url ?method ?range ?form
 FROM <` + currentGraph + `>
 WHERE {
   ?asset afo:providesService ?svc .
@@ -179,6 +179,7 @@ WHERE {
   OPTIONAL { ?svc afo:hasUrl ?url . }
   OPTIONAL { ?svc alc:hasMethods ?method . }
   OPTIONAL { ?svc alc:hasRange ?range . }
+  OPTIONAL { ?svc alc:hasForms ?form . }
 }
 `
 	r, err := ask(client, endpoint, q)
@@ -221,6 +222,9 @@ WHERE {
 		}
 		if v, ok := b["range"]; ok {
 			s.Range = appendOnce(s.Range, v.Value)
+		}
+		if v, ok := b["form"]; ok {
+			s.Forms = appendOnce(s.Forms, localName(v.Value))
 		}
 	}
 	for _, a := range assets {

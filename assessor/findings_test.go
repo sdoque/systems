@@ -106,8 +106,38 @@ func TestAServiceNobodyConsumesIsFound(t *testing.T) {
 	if f.DetectionClass != "published-not-consumed" {
 		t.Errorf("detection class %q", f.DetectionClass)
 	}
-	if !strings.Contains(f.LocalEffect, "nothing in the model consumes") {
+	if !strings.Contains(f.LocalEffect, "no declared consumer") {
 		t.Errorf("local effect %q", f.LocalEffect)
+	}
+}
+
+// A page for a person to read is documentation. Nothing downstream stops
+// working when it is unavailable, so it has no failure mode worth a row — and
+// in a cloud that enforces authorization a browser cannot reach it anyway,
+// having no client certificate to be named by a policy.
+//
+// A control deviation is the opposite case and must stay: nothing consuming it
+// is exactly the finding, because a loop drifting out of bounds is then noticed
+// by nobody.
+func TestAPageForAPersonIsNotAFailureMode(t *testing.T) {
+	c := cottageShaped()
+	page := &Service{IRI: "alc:eth_view", Definition: "view", Name: "KitchenHeater/view",
+		Forms: []string{"text/html"}}
+	deviation := &Service{IRI: "alc:eth_deviation", Definition: "deviation",
+		Name: "KitchenHeater/deviation", Forms: []string{"SignalA_v1a"}}
+	for _, a := range c.Assets {
+		if a.Name == "KitchenHeater" && a.System == "ethermostat" {
+			a.Provides = append(a.Provides, page, deviation)
+		}
+	}
+	c.resolve()
+
+	findings := Assess(c)
+	if by(t, findings, "view fails") != nil {
+		t.Error("a text/html page was reported as a failure mode")
+	}
+	if by(t, findings, "deviation fails") == nil {
+		t.Error("a control deviation nobody watches was not reported; that is the finding")
 	}
 }
 

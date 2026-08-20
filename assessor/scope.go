@@ -67,6 +67,8 @@ type Service struct {
 	// a setpoint being driven to a value the plant cannot survive.
 	Range []string
 	URLs  []string
+	// Forms is the payload form or media type the service registered.
+	Forms []string
 	// Methods is what the service declared it answers, as W3C HTTP method IRIs.
 	// Empty means it never said, and a consumer assumes a read.
 	Methods []string
@@ -198,6 +200,23 @@ func (c *Cloud) Downstream(s *Service) []*Asset {
 // unconstrained value can do harm rather than merely be wrong.
 func (s *Service) Writable() bool {
 	return s.hasMethod("PUT") || s.hasMethod("POST")
+}
+
+// ForPeople reports whether this service exists for somebody to read rather
+// than for a system to consume.
+//
+// A page describing a service is documentation, and documentation has no
+// failure mode worth an FMEA row: nothing downstream stops working when it is
+// unavailable. It is also, in a cloud that enforces authorization, not reachable
+// from a browser at all — a browser presents no client certificate, so the
+// subject is empty and no policy can name it.
+func (s *Service) ForPeople() bool {
+	for _, f := range s.Forms {
+		if strings.Contains(strings.ToLower(f), "html") {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) hasMethod(name string) bool {

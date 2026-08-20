@@ -167,20 +167,29 @@ func checkOrphanService(c *Cloud) []*Finding {
 			if len(s.Consumers) > 0 || a.Mission == "core" {
 				continue
 			}
+			// A page for a person to read is documentation, not a link in a
+			// chain: nothing downstream stops working when it is unavailable.
+			if s.ForPeople() {
+				continue
+			}
 			out = append(out, &Finding{
 				Block: blockOf(a), Item: itemOf(a) + " / " + s.Definition,
 				Function:    "Publish " + s.Definition,
 				FailureMode: s.Definition + " fails, degrades or reports wrongly",
-				LocalEffect: "None observable: nothing in the model consumes this service",
-				EndEffect: "The information it carries is not acted on. If it was meant to be " +
-					"— a power reading that would reveal a heater not heating — its failure and " +
-					"its success are indistinguishable from outside",
+				LocalEffect: "None the model can name: no declared consumer depends on this service",
+				EndEffect: "Its failure and its success look alike from outside. Either nothing " +
+					"acts on it — a control deviation nobody watches will not raise an alarm when " +
+					"it drifts — or something does and never said so, in which case the model " +
+					"understates what this cloud depends on",
 				EffectClass: "unused-information", CauseClass: "model-omission",
 				DetectionClass: "published-not-consumed",
-				Cause:          "No afo:consumesService binding was ever declared against this service",
-				Detection:      "None. A service with no consumer cannot be observed to have failed",
-				Action:         "Bind a consumer, or withdraw the service so the model stops implying it is used",
-				Evidence:       s.IRI + " is provided and appears as the object of no afo:consumes",
+				Cause: "No afo:consumesService binding names this service. Either none exists, " +
+					"or a consumer reads it by URL without declaring the dependence",
+				Detection: "None. A service with no consumer cannot be observed to have failed",
+				Action: "Bind a consumer — an analytics asset watching a deviation is how a loop " +
+					"drifting out of bounds gets noticed — or, if one already reads it, declare " +
+					"that dependence so the model shows it. Withdraw the service if neither is true",
+				Evidence: s.IRI + " is provided and appears as the object of no afo:consumes",
 			})
 		}
 	}

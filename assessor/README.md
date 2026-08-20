@@ -1,6 +1,6 @@
 # mbaigo System: assessor
 
-**Status: implemented, not yet run against a live GraphDB.**
+**Status: running against AlphaCloud.**
 
 The assessor says what can go wrong with the local cloud and what would follow
 if it did — a Failure Mode and Effects Analysis that maintains itself.
@@ -50,7 +50,7 @@ triples, so a reader can check the claim rather than trust it.
 | Check | What it finds |
 |---|---|
 | `checkDanglingConsumption` | A dependence that resolves to nothing — a failure that has already happened |
-| `checkOrphanService` | Something published and consumed by nobody: spare capacity or an omission, and the graph cannot say which |
+| `checkOrphanService` | Something published that no declared consumer depends on |
 | `checkSingleProvider` | One provider of something a controller needs |
 | `checkUnboundedWritable` | A writable quantity with a unit, a quantity kind and no permitted range |
 | `checkPolledDependence` | A value that is polled, so "unchanged" and "stopped arriving" look alike |
@@ -58,6 +58,29 @@ triples, so a reader can check the claim rather than trust it.
 | `checkLocationVocabulary` | The same room written both as an IRI and as a literal |
 | `checkLocationLiteral` | A location with a trailing space, or decoded through the wrong character set |
 | `checkSingleHost` | Every system on one machine, which no service redundancy survives |
+
+**A page for a person is not a failure mode.** A service whose form is
+`text/html` exists for somebody to read about the cloud; nothing downstream
+stops working when it is unavailable, and in a cloud that enforces
+authorization a browser cannot reach it anyway — it presents no client
+certificate, so the subject is empty and no policy can name it. Those are
+skipped.
+
+**A control deviation with no consumer is the opposite case, and stays.** It is
+precisely the finding: `deviation` and `jitter` are published by every
+controller and watched by nothing, so a loop drifting out of bounds is noticed
+by nobody. An analytics asset — the collector, or something like the nurse — is
+what would turn those into a warning before a failure.
+
+That distinction came from running the assessment against AlphaCloud rather than
+against the fixture, and it changed what the orphan finding *says*. It used to
+assert that nothing acted on the service. On the real cloud that was wrong:
+`cloudgraph`, `cloudmodel` and `cloudpicture` all have consumers — democrat, the
+painter's own page, and this system — that read them by URL without declaring an
+`afo:consumesService` binding. So the finding now reports what is actually true:
+either nothing acts on it, or something does and never said so, in which case
+**the model understates what this cloud depends on**. Both are worth an
+engineer's attention and the graph cannot distinguish them.
 
 Precision matters more than count. A boolean command is not reported as needing
 a numeric range, and a service a consumer *writes* is not reported as serving a
@@ -188,6 +211,7 @@ for it.
 | `TestAnUntrimmedLocationIsFound` | A literal that reads correctly and compares unequal |
 | `TestASingleHostIsFound` | And that two hosts are not reported |
 | `TestWhatIsNotAFinding` | The two false positives that were removed |
+| `TestAPageForAPersonIsNotAFailureMode` | And that a control deviation nobody watches still is |
 | `TestTheSameCloudAssessesIdentically` | Stable rows and IDs, so diffs mean something |
 | `TestEveryFindingNamesItsClasses` | Nothing can be emitted that cannot be scored or checked |
 
@@ -195,10 +219,11 @@ for it.
 
 ## What remains
 
-- **Never run against a live GraphDB.** The SPARQL is written against the
-  vocabulary today's kgrapher emits — `alc:hasMethods`, `alc:hasRange`,
-  `alc:hasMode`, `afo:isSubscribable` — and verified against a captured graph,
-  but no store has answered it.
+- **Now run against a live GraphDB**, on AlphaCloud: 11 unit assets, 11
+  findings, the highest being a setpoint that is writable with no declared
+  range. What it has *not* seen is a cloud on more than one host, or one where
+  two systems provide the same service definition — both are checks whose
+  negative case is only exercised by a fixture.
 - **The security posture is queried and not yet used.** `namesAuthorizer`,
   `verifiesTokens` and `acceptsPlaintext` are in the graph and belong in the
   assessment; the cottage FMEA had a row for exactly that.

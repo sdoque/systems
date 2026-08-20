@@ -79,7 +79,7 @@ func initTemplate() *components.UnitAsset {
 		// It reads what every system says and reasons over the whole, which is
 		// aggregation. It drives nothing and measures nothing.
 		Mission: components.MissionAggregation,
-		Details: map[string][]string{},
+		Details: map[string][]string{"Mobility": {components.MobilityTethered}, "TetheredTo": {"GraphDB"}},
 		ServicesMap: components.Services{
 			fmea.SubPath:  &fmea,
 			scope.SubPath: &scope,

@@ -100,7 +100,7 @@ func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:        "maitreD",
 		Mission:     components.MissionCore,
-		Details:     map[string][]string{"Role": {"host-attestation"}},
+		Details:     map[string][]string{"Role": {"host-attestation"}, "Mobility": {components.MobilityFixed}},
 		ServicesMap: map[string]*components.Service{attest.SubPath: &attest},
 		Traits:      &Traits{},
 	}

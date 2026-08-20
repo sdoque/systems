@@ -86,7 +86,7 @@ func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:    "authorization",
 		Mission: components.MissionCore,
-		Details: map[string][]string{"Platform": {"Independent"}},
+		Details: map[string][]string{"Platform": {"Independent"}, "Mobility": {components.MobilityMovable}},
 		ServicesMap: components.Services{
 			authorize.SubPath: &authorize,
 		},

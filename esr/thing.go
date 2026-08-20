@@ -178,7 +178,7 @@ func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:    "registry",
 		Mission: components.MissionCore,
-		Details: map[string][]string{"Type": {"ephemeral"}},
+		Details: map[string][]string{"Type": {"ephemeral"}, "Mobility": {components.MobilityMovable}},
 		ServicesMap: components.Services{
 			registerService.SubPath:   &registerService,
 			queryService.SubPath:      &queryService,

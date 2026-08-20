@@ -126,7 +126,7 @@ func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:        "assembler",
 		Mission:     components.MissionAggregation,
-		Details:     map[string][]string{"Type": {"Interactive"}},
+		Details:     map[string][]string{"Type": {"Interactive"}, "Mobility": {components.MobilityMovable}},
 		ServicesMap: map[string]*components.Service{cloudgraph.SubPath: &cloudgraph, localOntologies.SubPath: &localOntologies},
 		Traits: &Traits{
 			TripleStoreURL: "http://localhost:7200/repositories/Arrowhead/statements",

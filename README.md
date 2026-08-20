@@ -56,7 +56,7 @@ level actually protects.
 | System | What it adds |
 |---|---|
 | `ca` | Issues the certificates that give every system a verifiable identity |
-| `maitreD` | Attests a requesting binary's hash against the CA-mastered whitelist before the CA signs for it |
+| `maitreD` | Attests a requesting binary's hash against the CA-mastered whitelist before the CA signs for it, and reports how loaded its host is |
 | `authorizer` | Decides which system may use which service, and mints the access token that proves it |
 
 ### Sensors and gateways
@@ -123,6 +123,7 @@ level actually protects.
 | `kgrapher` | Assembles OWL/RDF knowledge graph ontologies of all systems in the local cloud |
 | `painter` | Draws the local cloud, its hosts, systems and the services connecting them, as a page an operator can zoom from cloud to service |
 | `democrat` | Bridges the Arrowhead local cloud knowledge graph to FA³ST Asset Administration Shells (AAS) |
+| `assessor` | Derives the cloud's failure modes and effects from its knowledge graph and scores them against the owner's valuation, as a CSV an engineer can diff month to month |
 
 ### Learning
 

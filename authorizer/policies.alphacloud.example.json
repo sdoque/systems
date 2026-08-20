@@ -1,0 +1,67 @@
+{
+    "policies": [
+        {
+            "subject": "thermostat",
+            "missions": [
+                "measurement"
+            ],
+            "actions": [
+                "read"
+            ],
+            "must_match_attribute": "FunctionalLocation",
+            "ttl": "5m"
+        },
+        {
+            "subject": "thermostat",
+            "missions": [
+                "actuation"
+            ],
+            "actions": [
+                "read",
+                "write"
+            ],
+            "must_match_attribute": "FunctionalLocation",
+            "ttl": "5m"
+        },
+        {
+            "subject": "painter",
+            "missions": [
+                "core"
+            ],
+            "services": [
+                "syslist"
+            ],
+            "actions": [
+                "read"
+            ],
+            "ttl": "15m"
+        },
+        {
+            "subject": "kgrapher",
+            "missions": [
+                "core"
+            ],
+            "services": [
+                "syslist"
+            ],
+            "actions": [
+                "read"
+            ],
+            "ttl": "15m"
+        },
+        {
+            "subject": "modeler",
+            "missions": [
+                "core"
+            ],
+            "services": [
+                "syslist"
+            ],
+            "actions": [
+                "read"
+            ],
+            "ttl": "15m"
+        }
+    ],
+    "denials": []
+}

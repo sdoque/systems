@@ -83,3 +83,12 @@ Kommunikationsprotokoll = "Kommunikationsprotokoll"
 # French company, which is the joke.
 "météorologue" = "météorologue"
 
+# "fpr" is GnuPG's record type for a fingerprint line, matched in the InfluxDB
+# install instructions:
+#
+#     gpg --show-keys --with-colons ./key | grep -q '^fpr:\+24C9...:$'
+#
+# It is the syntax of a command a reader will paste, so it cannot be spelled
+# "for". The whole point of that step is that the fingerprint check replaced a
+# SHA-256 digest which had gone stale and failed.
+fpr = "fpr"

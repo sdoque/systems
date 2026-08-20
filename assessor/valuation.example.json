@@ -1,0 +1,123 @@
+{
+    "scales": {
+        "severity": {
+            "10": "Hazardous. Fire, electrical or freezing damage to the building.",
+            "8": "High. Prolonged loss of temperature control in a heated zone.",
+            "6": "Moderate. Persistent comfort error, or a wrong value acted on silently.",
+            "4": "Low. One zone degraded while the rest of the cloud is unaffected.",
+            "2": "Minor. Information lost that nobody was acting on."
+        },
+        "occurrence": {
+            "10": "Already the case. The defect is in the model as deployed.",
+            "8": "Frequent. Expected several times a year.",
+            "5": "Occasional. Expected once a year or so.",
+            "3": "Infrequent. Expected once in a few years.",
+            "1": "Remote. No reason to expect it."
+        },
+        "detection": {
+            "10": "Undetectable. Nothing inside or outside the cloud would notice.",
+            "8": "Very poor. Visible only by reading the graph or the logs afterwards.",
+            "5": "Poor. A consumer sees a failure; nothing aggregates it into an alarm.",
+            "3": "Moderate. A heartbeat bounds the silence, but no alarm is raised.",
+            "1": "Certain. An alarm service reports it as it happens."
+        }
+    },
+    "severity": {
+        "total-loss": {
+            "rating": 9,
+            "means": "The whole cloud stops: control, supervision, and the means of noticing, together."
+        },
+        "loss-of-control": {
+            "rating": 8,
+            "means": "A heated zone can be driven to a value the building cannot survive, or driven not at all."
+        },
+        "loss-of-input": {
+            "rating": 7,
+            "means": "A controller runs open-loop. It holds its last output while the room does as it pleases."
+        },
+        "silent-wrong-control": {
+            "rating": 8,
+            "means": "The loop keeps running on a value that is no longer true. Worse than stopping, because nothing looks wrong."
+        },
+        "wrong-by-design": {
+            "rating": 6,
+            "means": "A zone is regulated to another zone's condition. Both loops behave correctly and one room is uncomfortable."
+        },
+        "silent-rule-failure": {
+            "rating": 6,
+            "means": "A rule that should pair two things does not, and its failure looks like a decision."
+        },
+        "unused-information": {
+            "rating": 3,
+            "means": "Something is published and acted on by nobody. Its failure and its success look alike."
+        },
+        "irreplaceable-capability": {
+            "rating": 9,
+            "means": "A capability that exists in one place only. When that place fails the capability is gone, and no amount of spare capacity elsewhere replaces it."
+        },
+        "unplannable": {
+            "rating": 4,
+            "means": "The model does not say enough for anything to plan around it, so it must be assumed to be the worst case."
+        }
+    },
+    "occurrence": {
+        "model-omission": {
+            "rating": 10,
+            "means": "Not a prediction. The omission is in the deployed model now."
+        },
+        "model-inconsistency": {
+            "rating": 10,
+            "means": "Also already the case: two systems disagree in the graph as it stands."
+        },
+        "configuration-typo": {
+            "rating": 10,
+            "means": "Present in the configuration as written."
+        },
+        "architectural-choice": {
+            "rating": 10,
+            "means": "A deliberate decision whose consequence is permanent until it is revisited."
+        },
+        "device-unavailable": {
+            "rating": 5,
+            "means": "A wireless sensor, its battery, its link or its bridge. Expected about once a year."
+        },
+        "upstream-stalled": {
+            "rating": 4,
+            "means": "A polling loop stops or a source goes quiet without saying so."
+        },
+        "host-failure": {
+            "rating": 3,
+            "means": "Grid outage or hardware failure. Rural supply, and correlated with the winter storms when heat matters most."
+        }
+    },
+    "detection": {
+        "unobservable-from-within": {
+            "rating": 10,
+            "means": "Nothing inside the cloud can report it, because the reporting stopped too."
+        },
+        "no-constraint": {
+            "rating": 9,
+            "means": "The write succeeds. The result looks like ordinary operation."
+        },
+        "no-staleness-signal": {
+            "rating": 9,
+            "means": "A value that stopped changing and a value that stopped arriving are the same value."
+        },
+        "published-not-consumed": {
+            "rating": 9,
+            "means": "Nothing consumes it, so nothing can observe that it failed."
+        },
+        "no-validation": {
+            "rating": 8,
+            "means": "Nothing checks the literal at registration or at graph assembly."
+        },
+        "graph-only": {
+            "rating": 8,
+            "means": "Visible by reading the graph. Nothing detects it at runtime."
+        },
+        "heartbeat": {
+            "rating": 3,
+            "means": "A subscriber hears silence and can treat the publisher as gone, though no alarm is raised."
+        }
+    }
+}

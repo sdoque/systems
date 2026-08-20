@@ -16,7 +16,8 @@ import (
 // rather than on the bench.
 //
 // The file itself lives in the authorizer's working directory on the Pi and is
-// gitignored, like every deployment's. This is the copy under test.
+// gitignored, like every deployment's. This is the copy under test — named
+// .example.json so .gitignore's carve-out keeps it, which it did not before.
 const alphaCloudPolicies = `{
     "policies": [
         {
@@ -142,7 +143,7 @@ func TestAlphaCloudDecisions(t *testing.T) {
 // is gitignored and a deployment's policy is not this repository's business —
 // but a copy nothing checks is a copy that drifts.
 func TestTheShippedExampleIsWhatIsTested(t *testing.T) {
-	onDisk, err := os.ReadFile("policies.alphacloud.json")
+	onDisk, err := os.ReadFile("policies.alphacloud.example.json")
 	if err != nil {
 		t.Skipf("no example file to compare: %v", err)
 	}

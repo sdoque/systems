@@ -273,27 +273,81 @@ docker pull ontotext/graphdb:10.7.4
 Pin the version explicitly — `:latest` is convenient locally but unkind
 when a fleet of Pis pulls a new image at different times.
 
+This tag publishes `linux/amd64` and `linux/arm64/v8`, so it runs on a 64-bit
+Raspberry Pi OS without emulation. (Checked against Docker Hub; 10.7.4 was
+pushed in September 2024, and 11.x is current — worth revisiting, but an old
+pin that works beats a new one that has not been tried.)
+
 ### 4. Run the container
 
-Bridged networking (recommended for most setups):
-
 ```bash
-docker run -d -p 7200:7200 --name graphdb ontotext/graphdb:10.7.4
+mkdir -p ~/graphdb-home
+
+docker run -d \
+  --name graphdb \
+  --restart unless-stopped \
+  -p 7200:7200 \
+  -v ~/graphdb-home:/opt/graphdb/home \
+  ontotext/graphdb:10.7.4
 ```
 
-Host networking (only if you need the container to bind on the host's
-IP directly — e.g., for some service-discovery setups):
+Two flags carry the weight:
+
+- **`-v ~/graphdb-home:/opt/graphdb/home`** is where GraphDB keeps its
+  repositories. Without it every triple lives inside the container, and
+  `docker rm graphdb` — step 5 below — destroys the lot silently. This
+  walkthrough used to omit it.
+- **`--restart unless-stopped`** brings the store back after a power cut. On an
+  edge deployment that is not a nicety: the cloud comes back and the knowledge
+  graph does not, and nothing complains until somebody asks a question.
+
+Bind to `127.0.0.1:7200:7200` instead if the store and the systems that read it
+are on the same host, which keeps an unauthenticated database off the LAN.
+GraphDB has no credentials configured by this walkthrough.
+
+### 5. Create the repository
+
+**A running GraphDB has no repositories.** Until one exists, kgrapher's
+`graphDBurl` returns 404 and the failure looks like a network problem.
+
+Open `http://<pi-address>:7200` and choose **Setup → Repositories → Create new
+repository → GraphDB Repository**. Two answers matter:
+
+| Field | Value | Why |
+|---|---|---|
+| Repository ID | `Arrowhead` | It becomes part of the URL, and must match the one in the configuration |
+| Ruleset | leave at **RDFS-Plus (Optimized)** | This is what does the inferring |
+
+The ruleset is the reason to use a triple store rather than reading each
+system's `/kgraph` directly. Choosing **empty** gives a store that holds exactly
+what was written and entails nothing, at which point the
+[assessor](../assessor/README.md) and [democrat](../democrat/README.md) are
+querying an expensive copy of the Turtle they could have fetched over HTTP.
+
+### 6. Point the systems at it
+
+The two roles use *different* URLs against the same repository, which is easy to
+get wrong:
+
+| System | Setting | URL | Why |
+|---|---|---|---|
+| kgrapher | `graphDBurl` | `http://<host>:7200/repositories/Arrowhead/statements` | It **writes**; the update endpoint has the `/statements` suffix |
+| democrat | `graphdbUrl` | `http://<host>:7200/repositories/Arrowhead` | It **queries**; SELECT goes to the repository itself |
+| assessor | `graphdbUrl` | `http://<host>:7200/repositories/Arrowhead` | Likewise |
+
+Confirm the repository answers before starting anything:
 
 ```bash
-docker run -d --network host --name graphdb ontotext/graphdb:10.7.4
+curl -s http://<pi-address>:7200/repositories
 ```
 
-Choose **one** of the two. The bridged form is the default; use the host
-form only when you have a specific reason.
-
-### 5. Stop and remove
+### 7. Stop and remove
 
 ```bash
 docker stop graphdb
 docker rm graphdb
 ```
+
+With the volume above, `docker rm` removes the container and leaves the data in
+`~/graphdb-home`, so the same `docker run` brings the repository back. Without
+it, this is where the graph is lost.

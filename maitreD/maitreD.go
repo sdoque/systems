@@ -113,6 +113,8 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 	switch servicePath {
 	case "attest":
 		t.attest(w, r)
+	case "loadstatus":
+		t.loadstatus(w, r)
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}

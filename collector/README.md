@@ -129,34 +129,112 @@ Copy to a Raspberry Pi:
 scp Collector_rpi64 jan@192.168.1.10:rpiExec/Collector/
 ```
 
-## Deploying InfluxDB (Linux / Raspberry Pi)
+## Deploying InfluxDB 2 (Linux / Raspberry Pi)
 
-Follow the [official instructions](https://docs.influxdata.com/influxdb/v2/install/?t=Linux):
+The collector uses `influxdb-client-go/v2` with a token, an organization and a
+bucket, so it needs **InfluxDB 2.x**. Version 1.x has no such concepts and will
+not work with this system.
+
+### 1. Add InfluxData's repository
 
 ```bash
-# 1. Download the signing key
 curl --silent --location -O https://repos.influxdata.com/influxdata-archive.key
 
-# 2. Verify the checksum
-echo "943666881a1b8d9b849b74caebf02d3465d6beb716510d86a39f6c8e8dac7515  influxdata-archive.key" \
-  | sha256sum --check -
+# Verify the key by its GPG fingerprint. This prints nothing and exits 0 when
+# the key is genuine.
+gpg --show-keys --with-fingerprint --with-colons ./influxdata-archive.key 2>&1 \
+  | grep -q '^fpr:\+24C975CBA61A024EE1B631787C3D57159FC2F927:$'
 
-# 3. Trust the key
+sudo mkdir -p /etc/apt/keyrings
 cat influxdata-archive.key | gpg --dearmor \
-  | sudo tee /etc/apt/trusted.gpg.d/influxdata-archive.gpg > /dev/null
+  | sudo tee /etc/apt/keyrings/influxdata-archive.gpg > /dev/null
 
-# 4. Add the repository
-echo 'deb [signed-by=/etc/apt/trusted.gpg.d/influxdata-archive.gpg] https://repos.influxdata.com/debian stable main' \
+echo 'deb [signed-by=/etc/apt/keyrings/influxdata-archive.gpg] https://repos.influxdata.com/debian stable main' \
   | sudo tee /etc/apt/sources.list.d/influxdata.list
-
-# 5. Install
-sudo apt-get update
-sudo apt-get install influxdb2
 ```
 
-Start and verify the service:
+> **This step used to be a SHA-256 check against a hard-coded digest, and that
+> digest went stale.** InfluxData re-published the key file, `sha256sum --check`
+> then failed, and a failing checksum on a signing key is indistinguishable from
+> an attack — so the correct response was to stop, which is where this
+> walkthrough stranded at least one reader. The fingerprint above is a property
+> of the key itself rather than of the file that carries it, so it survives
+> re-publication. It was verified against the key as served, on an aarch64
+> Raspberry Pi, when this was written.
+
+### 2. Install and start
 
 ```bash
-sudo service influxdb start
-sudo service influxdb status
+sudo apt-get update
+sudo apt-get install influxdb2
+sudo systemctl enable --now influxdb
+systemctl status influxdb
 ```
+
+`enable --now` starts it and makes it come back after a reboot, which the
+earlier `service influxdb start` did not.
+
+### 3. Set it up — the step that is easy to miss
+
+**A freshly installed InfluxDB 2 is running and refuses everything.** There is
+no user, no organization, no bucket and no token until you create them, and the
+collector will fail with an authorization error that says nothing about setup
+being incomplete.
+
+Either from the command line:
+
+```bash
+influx setup \
+  --username <you> \
+  --password '<a real password>' \
+  --org mbaigo \
+  --bucket demo \
+  --retention 0 \
+  --force
+```
+
+or in a browser at `http://<pi-address>:8086`, which walks through the same
+four answers.
+
+`--retention 0` keeps data indefinitely. The organization and bucket names are
+yours to choose; they must match `organization` and `bucket` in the collector's
+`systemconfig.json`.
+
+### 4. Get a token for the collector
+
+Setup creates an **operator token**, which can do anything to anything. Read it:
+
+```bash
+influx auth list
+# or, if the CLI is not configured:
+sudo cat /etc/influxdb2/influx-configs
+```
+
+Use it to confirm the collector's write path works, then prefer a narrower one:
+
+```bash
+influx auth create \
+  --org mbaigo \
+  --write-bucket $(influx bucket list --org mbaigo --name demo --hide-headers | cut -f1) \
+  --read-bucket  $(influx bucket list --org mbaigo --name demo --hide-headers | cut -f1) \
+  --description "collector"
+```
+
+The collector reads and writes one bucket and needs nothing else. Giving it the
+operator token means a compromised collector can delete every bucket on the
+server, and the narrower token costs one command.
+
+### 5. Check it before starting the collector
+
+```bash
+influx ping
+influx bucket list --org mbaigo
+```
+
+If both answer, the collector's four settings — `db_url`, `token`,
+`organization`, `bucket` — are the whole of what remains.
+
+> **The token in `initTemplate` is a real one from a past deployment.** It is
+> checked into this repository and written into every generated
+> `systemconfig.json`, so it must be replaced, and it should be revoked on any
+> server that still honours it: `influx auth delete --id <id>`.

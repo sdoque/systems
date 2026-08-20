@@ -22,7 +22,6 @@
             "1": "Certain. An alarm service reports it as it happens."
         }
     },
-
     "severity": {
         "total-loss": {
             "rating": 9,
@@ -51,9 +50,16 @@
         "unused-information": {
             "rating": 3,
             "means": "Something is published and acted on by nobody. Its failure and its success look alike."
+        },
+        "irreplaceable-capability": {
+            "rating": 9,
+            "means": "A capability that exists in one place only. When that place fails the capability is gone, and no amount of spare capacity elsewhere replaces it."
+        },
+        "unplannable": {
+            "rating": 4,
+            "means": "The model does not say enough for anything to plan around it, so it must be assumed to be the worst case."
         }
     },
-
     "occurrence": {
         "model-omission": {
             "rating": 10,
@@ -84,7 +90,6 @@
             "means": "Grid outage or hardware failure. Rural supply, and correlated with the winter storms when heat matters most."
         }
     },
-
     "detection": {
         "unobservable-from-within": {
             "rating": 10,

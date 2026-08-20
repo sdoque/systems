@@ -58,6 +58,8 @@ triples, so a reader can check the claim rather than trust it.
 | `checkLocationVocabulary` | The same room written both as an IRI and as a literal |
 | `checkLocationLiteral` | A location with a trailing space, or decoded through the wrong character set |
 | `checkSingleHost` | Every system on one machine, which no service redundancy survives |
+| `checkImmovableConcentration` | A host carrying work bound to it, so it is load-bearing however the rest is arranged |
+| `checkUndeclaredMobility` | Assets that have not said whether they could move, which anything planning must read as the worst case |
 
 **A page for a person is not a failure mode.** A service whose form is
 `text/html` exists for somebody to read about the cloud; nothing downstream
@@ -212,6 +214,9 @@ for it.
 | `TestASingleHostIsFound` | And that two hosts are not reported |
 | `TestWhatIsNotAFinding` | The two false positives that were removed |
 | `TestAPageForAPersonIsNotAFailureMode` | And that a control deviation nobody watches still is |
+| `TestAHostCarryingWorkThatCannotLeaveIt` | One finding per host, naming what stops with it |
+| `TestATetheredAssetThatNamesNothingIsImmovable` | And that silence is a different finding from immobility |
+| `TestUndeclaredMobilityIsItsOwnFinding` | Reported once, and gone when every asset declares |
 | `TestTheSameCloudAssessesIdentically` | Stable rows and IDs, so diffs mean something |
 | `TestEveryFindingNamesItsClasses` | Nothing can be emitted that cannot be scored or checked |
 

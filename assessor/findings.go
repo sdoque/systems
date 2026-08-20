@@ -112,6 +112,8 @@ func Assess(c *Cloud) []*Finding {
 		checkLocationVocabulary,
 		checkLocationLiteral,
 		checkSingleHost,
+		checkImmovableConcentration,
+		checkUndeclaredMobility,
 	} {
 		out = append(out, check(c)...)
 	}
@@ -502,4 +504,117 @@ func detectionProseOf(s *Service) string {
 		return "A subscriber hears nothing and can treat the publisher as gone; no alarm service aggregates that"
 	}
 	return "None modeled. The consumer sees a failed call; nothing aggregates it into an alarm"
+}
+
+// A host carrying work that cannot leave it.
+//
+// checkSingleHost says the cloud is on one machine, which is true and which a
+// balancer could in principle answer by spreading the load. This says something
+// a balancer cannot answer at all: some of what is on this host is bound to it,
+// so the host is load-bearing however the rest is arranged. On AlphaCloud that
+// is the difference between "everything runs on canbus" and "the sensor and the
+// servo cannot leave canbus, so the control loop dies with that machine no
+// matter what else is moved".
+//
+// Reported per host rather than per asset, because the fact is about the host:
+// three immovable assets on one machine is one exposure, not three.
+func checkImmovableConcentration(c *Cloud) []*Finding {
+	stuck := map[string][]*Asset{}
+	for _, a := range c.Assets {
+		if a.Host != "" && a.Immovable() {
+			stuck[a.Host] = append(stuck[a.Host], a)
+		}
+	}
+
+	hosts := make([]string, 0, len(stuck))
+	for h := range stuck {
+		hosts = append(hosts, h)
+	}
+	sort.Strings(hosts)
+
+	var out []*Finding
+	for _, host := range hosts {
+		assets := stuck[host]
+		sort.Slice(assets, func(i, j int) bool { return assets[i].IRI < assets[j].IRI })
+
+		names := make([]string, 0, len(assets))
+		lost := map[string]bool{}
+		for _, a := range assets {
+			names = append(names, itemOf(a))
+			for _, s := range a.Provides {
+				for _, reached := range c.Downstream(s) {
+					lost[itemOf(reached)] = true
+				}
+			}
+		}
+		reached := make([]string, 0, len(lost))
+		for n := range lost {
+			reached = append(reached, n)
+		}
+		sort.Strings(reached)
+
+		end := "Nothing else in the model depends on them"
+		if len(reached) > 0 {
+			end = "Everything downstream stops with them: " + strings.Join(reached, "; ") +
+				". No redistribution prevents this, because the capability cannot be provided elsewhere"
+		}
+
+		out = append(out, &Finding{
+			Block: "Platform", Item: "Host " + host,
+			Function:    "Host work that is bound to this machine",
+			FailureMode: host + " becomes unavailable, or is needed for something else",
+			LocalEffect: fmt.Sprint(len(assets)) + " asset(s) cannot be moved off it: " + strings.Join(names, "; "),
+			EndEffect:   end,
+			EffectClass: "irreplaceable-capability", CauseClass: "architectural-choice",
+			DetectionClass: "graph-only",
+			Cause: "These assets are bound to this host — its GPIO, its attached devices, or " +
+				"its identity — so no scheduler, balancer or operator can relocate them",
+			Detection: "Visible in the graph. Nothing at runtime reports that a host has become " +
+				"load-bearing, and the symptom of learning it late is an outage rather than a warning",
+			Action: "Accept the exposure knowingly, or provide the same capability from a second " +
+				"host so the cloud degrades rather than stops",
+			Evidence: "alc:hasMobility fixed on " + fmt.Sprint(len(assets)) +
+				" asset(s) whose husks name host " + host,
+		})
+	}
+	return out
+}
+
+// An asset that has not said whether it could move.
+//
+// Separate from the finding above, and deliberately: one is a fact about the
+// plant and the other is a gap in the model. A balancer facing an undeclared
+// asset must treat it as immovable — the safe reading — which means an
+// omission quietly costs the cloud the flexibility it may actually have.
+func checkUndeclaredMobility(c *Cloud) []*Finding {
+	var silent []*Asset
+	for _, a := range c.Assets {
+		if a.Mobility == "" {
+			silent = append(silent, a)
+		}
+	}
+	if len(silent) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(silent))
+	for _, a := range silent {
+		names = append(names, itemOf(a))
+	}
+
+	return []*Finding{{
+		Block: "Model", Item: fmt.Sprint(len(silent)) + " unit asset(s)",
+		Function:    "Declare whether the asset could run on another host",
+		FailureMode: "Mobility is not declared, so nothing can plan around these assets",
+		LocalEffect: "Undeclared: " + strings.Join(names, "; "),
+		EndEffect: "Anything deciding where work should run must treat them as immovable, " +
+			"which is the safe reading and may be the wrong one — an omission costs the cloud " +
+			"flexibility it may actually have",
+		EffectClass: "unplannable", CauseClass: "model-omission",
+		DetectionClass: "graph-only",
+		Cause:          "No Mobility detail is declared on the unit asset",
+		Detection:      "Visible in the graph; nothing at runtime asks",
+		Action: "Declare Mobility as fixed, tethered or movable on each — and TetheredTo " +
+			"beside it where tethered, since a move nobody can verify is a move nobody should make",
+		Evidence: "no alc:hasMobility on " + fmt.Sprint(len(silent)) + " afo:UnitAsset",
+	}}
 }

@@ -49,8 +49,17 @@ type Asset struct {
 	// the same room in two vocabularies cannot be paired by anything that
 	// compares them.
 	LocationIsIRI bool
-	Provides      []*Service
-	Consumes      []*Consumption
+	// Host is the machine this asset's system declares it runs on. Placement is
+	// the graph's to know; whether it could be otherwise is Mobility's.
+	Host string
+	// Mobility is "fixed", "tethered" or "movable", and empty when the asset has
+	// not said. TetheredTo names what a tethered asset must still reach — a
+	// tethered asset naming nothing is read as fixed, because a move nobody can
+	// check is a move nobody should make.
+	Mobility   string
+	TetheredTo []string
+	Provides   []*Service
+	Consumes   []*Consumption
 }
 
 // Service is something an asset offers.
@@ -134,6 +143,26 @@ func (c *Cloud) resolve() {
 				cons.Target.Consumers = append(cons.Target.Consumers, cons)
 			}
 		}
+	}
+}
+
+// Immovable reports whether this asset cannot be moved off its host.
+//
+// A tethered asset that names no dependency counts as immovable: the framework
+// documents TetheredTo as the obligation that comes with the claim, and a
+// balancer cannot verify reachability against a dependency nobody stated.
+//
+// An asset that has said nothing at all is *not* immovable here. It is unknown,
+// which is a different finding with a different remedy — one is a fact about the
+// plant, the other is a gap in the model.
+func (a *Asset) Immovable() bool {
+	switch a.Mobility {
+	case "fixed":
+		return true
+	case "tethered":
+		return len(a.TetheredTo) == 0
+	default:
+		return false
 	}
 }
 

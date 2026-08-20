@@ -261,3 +261,90 @@ func TestWhatIsNotAFinding(t *testing.T) {
 		}
 	}
 }
+
+// The finding a load balancer needs before it needs any load figure.
+//
+// checkSingleHost says the cloud is on one machine, which a balancer could in
+// principle answer by spreading it. This says something no balancer can answer:
+// some of what is on the host is bound to it, so the host is load-bearing
+// however the rest is arranged.
+func TestAHostCarryingWorkThatCannotLeaveIt(t *testing.T) {
+	c := cottageShaped()
+	for _, a := range c.Assets {
+		a.Host = "cottage-pi"
+		switch a.System {
+		case "meteorologue", "beekeeper":
+			a.Mobility = "fixed" // a sensor and a heater relay, on this machine
+		default:
+			a.Mobility = "movable"
+		}
+	}
+
+	f := by(t, Assess(c), "becomes unavailable")
+	if f == nil {
+		t.Fatal("a host carrying immovable assets was not reported")
+	}
+	if f.EffectClass != "irreplaceable-capability" {
+		t.Errorf("effect class %q", f.EffectClass)
+	}
+	// The end effect must name what stops, which is the traversal a balancer
+	// cannot do for itself from load figures alone.
+	for _, want := range []string{"KitchenHeater", "DiningroomHeater"} {
+		if !strings.Contains(f.EndEffect, want) {
+			t.Errorf("the end effect does not name %s: %q", want, f.EndEffect)
+		}
+	}
+
+	// One finding per host, not per asset: three immovable assets on one
+	// machine is one exposure.
+	n := 0
+	for _, x := range Assess(c) {
+		if strings.Contains(x.FailureMode, "becomes unavailable") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d findings for one host; the fact is about the host", n)
+	}
+}
+
+// A tethered asset that names nothing it depends on reads as fixed, because a
+// move nobody can verify is a move nobody should make.
+func TestATetheredAssetThatNamesNothingIsImmovable(t *testing.T) {
+	bare := &Asset{Mobility: "tethered"}
+	named := &Asset{Mobility: "tethered", TetheredTo: []string{"GraphDB"}}
+	if !bare.Immovable() {
+		t.Error("a tethered asset with no stated dependency was treated as movable")
+	}
+	if named.Immovable() {
+		t.Error("a tethered asset that named its dependency was treated as immovable")
+	}
+	if (&Asset{Mobility: "movable"}).Immovable() || !(&Asset{Mobility: "fixed"}).Immovable() {
+		t.Error("plain mobility is not read correctly")
+	}
+	// Silence is not immobility: it is a different finding with a different
+	// remedy, and conflating them would hide the gap in the model.
+	if (&Asset{}).Immovable() {
+		t.Error("an asset that said nothing was reported as immovable rather than as undeclared")
+	}
+}
+
+// And the gap itself is reported, once, naming who is silent.
+func TestUndeclaredMobilityIsItsOwnFinding(t *testing.T) {
+	c := cottageShaped() // the fixture declares none
+	f := by(t, Assess(c), "Mobility is not declared")
+	if f == nil {
+		t.Fatal("assets with no declared mobility were not reported")
+	}
+	if f.EffectClass != "unplannable" || f.CauseClass != "model-omission" {
+		t.Errorf("classes %q / %q", f.EffectClass, f.CauseClass)
+	}
+
+	// And it goes away once they say.
+	for _, a := range c.Assets {
+		a.Mobility = "movable"
+	}
+	if by(t, Assess(c), "Mobility is not declared") != nil {
+		t.Error("a cloud where every asset declares its mobility was still reported")
+	}
+}

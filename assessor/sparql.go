@@ -111,7 +111,16 @@ func ReadCloud(client *http.Client, endpoint string) (*Cloud, error) {
 		return nil, fmt.Errorf("reading hosts: %w", err)
 	}
 
+	// Placement, so a check can ask what a host would take with it. readHosts
+	// answers by system, and an asset belongs to exactly one.
+	hostOf := map[string]string{}
+	for host, systems := range cloud.Hosts {
+		for _, sys := range systems {
+			hostOf[sys] = host
+		}
+	}
 	for _, a := range assets {
+		a.Host = hostOf[a.System]
 		cloud.Assets = append(cloud.Assets, a)
 	}
 	sort.Slice(cloud.Assets, func(i, j int) bool { return cloud.Assets[i].IRI < cloud.Assets[j].IRI })
@@ -129,7 +138,7 @@ func ReadCloud(client *http.Client, endpoint string) (*Cloud, error) {
 // concerned.
 func readAssets(client *http.Client, endpoint string) (map[string]*Asset, error) {
 	q := prefixes + `
-SELECT ?asset ?assetName ?system ?systemName ?mission ?location
+SELECT ?asset ?assetName ?system ?systemName ?mission ?location ?mobility ?tetheredTo
 FROM <` + currentGraph + `>
 WHERE {
   ?system a afo:System ;
@@ -138,6 +147,8 @@ WHERE {
   ?asset afo:hasName ?assetName .
   OPTIONAL { ?asset afo:hasMission ?mission . }
   OPTIONAL { ?asset afo:hasFunctionalLocation ?location . }
+  OPTIONAL { ?asset alc:hasMobility ?mobility . }
+  OPTIONAL { ?asset alc:hasTetheredTo ?tetheredTo . }
 }
 `
 	r, err := ask(client, endpoint, q)
@@ -158,6 +169,12 @@ WHERE {
 		if l, ok := b["location"]; ok {
 			a.Location = l.Value
 			a.LocationIsIRI = l.Type == "uri"
+		}
+		if m, ok := b["mobility"]; ok {
+			a.Mobility = localName(m.Value)
+		}
+		if tt, ok := b["tetheredTo"]; ok {
+			a.TetheredTo = appendOnce(a.TetheredTo, localName(tt.Value))
 		}
 	}
 	return assets, nil

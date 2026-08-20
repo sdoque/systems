@@ -8,6 +8,12 @@
 *_imac
 *_amac
 *_ilin
+# Binaries are built with one of the suffixes above — `go build -o name_amac` —
+# and not with a bare `go build`, which names the executable after the module
+# and leaves something no pattern here matches. A rule to catch that was tried
+# and withdrawn: anything general enough to match an unsuffixed file one level
+# down also matches modboss/plc, and an ignored directory takes everything
+# inside it with it. The suffix is the rule.
 *.sh
 *.orig
 
@@ -23,7 +29,15 @@ vendor/
 .vscode/*
 
 # mbaigo
+#
+# Deployment configuration is a deployment's business: systemconfig.json,
+# policies.json, valuation.json and the rest name addresses, rooms and
+# judgments that belong to whoever runs the cloud, not to this repository.
 *.json
+# Except the worked examples, which are documentation. Without this line they
+# were silently dropped by `git add`, and a file nobody can see is a poor place
+# to keep the copy the tests check against.
+!*.example.json
 go.work
 serviceRegistry.db
 *.pem

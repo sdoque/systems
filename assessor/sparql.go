@@ -89,11 +89,11 @@ func urlEncode(s string) string {
 
 // ReadCloud assembles the assessment scope from the triple store.
 //
-// Four queries rather than one join, because a single query with five OPTIONALs
-// returns the cross product of every optional against every other — the same
-// row arriving once per combination — and reassembling that in Go costs more
-// than asking four honest questions. Each is keyed on an IRI, so merging is a
-// map lookup.
+// Four queries rather than one join, because a single query with five OPTIONAL
+// clauses returns the cross product of every optional against every other — the
+// same row arriving once per combination — and reassembling that in Go costs
+// more than asking four honest questions. Each is keyed on an IRI, so merging
+// is a map lookup.
 func ReadCloud(client *http.Client, endpoint string) (*Cloud, error) {
 	cloud := &Cloud{Hosts: map[string][]string{}}
 

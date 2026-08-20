@@ -161,5 +161,5 @@ Or add both modules to the workspace `go.work` at the repository root:
 
 ```
 use ./mbaigo
-use ./security/maitreD
+use ./systems/maitreD
 ```

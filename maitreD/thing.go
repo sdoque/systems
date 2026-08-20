@@ -17,6 +17,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -28,8 +29,11 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/sdoque/mbaigo/components"
+	"github.com/sdoque/mbaigo/forms"
 	"github.com/sdoque/mbaigo/usecases"
 )
 
@@ -48,6 +52,17 @@ type Traits struct {
 	mu        sync.RWMutex       `json:"-"` // protects Whitelist, version, loaded
 	owner     *components.System `json:"-"`
 	name      string             `json:"-"`
+
+	// LoadPeriod is how often the host is sampled, in seconds. An int rather
+	// than a Duration: the unit belongs in the name and the conversion at the
+	// point of use.
+	LoadPeriod int `json:"loadPeriod"`
+
+	// load is the last reading, swapped whole. Served from here rather than
+	// sampled per request, which is the other half of "monitoring without
+	// loading the host": ten subscribers cost one read every LoadPeriod, not
+	// ten reads per second.
+	load atomic.Pointer[forms.HostLoad_v1]
 }
 
 // resolveExecutable returns the filesystem path of the executable running as pid.
@@ -97,12 +112,40 @@ func initTemplate() *components.UnitAsset {
 		Description: "verifies (POST) the executable hash of the requesting system against the whitelist",
 	}
 
+	loadstatus := components.Service{
+		Definition: "loadstatus",
+		SubPath:    "loadstatus",
+		// Not core, on purpose, and this one field is the whole of it.
+		//
+		// A core-mission service is served without a token, because the
+		// bootstrap plane is what makes tokens possible and cannot require one.
+		// Attestation belongs there; reporting how busy a machine is does not —
+		// it is a measurement, and it is also reconnaissance. It says which host
+		// is loaded, when, and how the cloud's work is distributed, which is
+		// useful to somebody choosing a moment. EffectiveMission takes a
+		// service's own mission over its asset's, so this alone puts loadstatus
+		// behind the authorizer while attest stays exempt.
+		Mission: components.MissionMeasurement,
+		Details: map[string][]string{
+			"Forms":   {"HostLoad_v1"},
+			"Methods": components.HTTPMethods("GET"),
+		},
+		RegPeriod: 60,
+		// Followable, so a balancer hears when load moves instead of asking ten
+		// hosts every second for a number that changes slowly.
+		SubscribeAble: true,
+		Description:   "reports this host's spare capacity: headroom, load, memory, temperature and throttling (GET)",
+	}
+
 	return &components.UnitAsset{
-		Name:        "maitreD",
-		Mission:     components.MissionCore,
-		Details:     map[string][]string{"Role": {"host-attestation"}, "Mobility": {components.MobilityFixed}},
-		ServicesMap: map[string]*components.Service{attest.SubPath: &attest},
-		Traits:      &Traits{},
+		Name:    "maitreD",
+		Mission: components.MissionCore,
+		Details: map[string][]string{"Role": {"host-attestation"}, "Mobility": {components.MobilityFixed}},
+		ServicesMap: map[string]*components.Service{
+			attest.SubPath:     &attest,
+			loadstatus.SubPath: &loadstatus,
+		},
+		Traits: &Traits{LoadPeriod: 15},
 	}
 }
 
@@ -121,6 +164,10 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		}
 	}
 
+	if t.LoadPeriod <= 0 {
+		t.LoadPeriod = 15
+	}
+
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
 		Mission:     configuredAsset.Mission,
@@ -129,6 +176,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
 		Traits:      t,
 	}
+	go t.keepSampling(sys.Ctx)
 	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
 		serving(t, w, r, servicePath)
 	}
@@ -228,4 +276,63 @@ func hashFile(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+//-------------------------------------Host load
+
+// keepSampling reads the host on its own clock for as long as the system runs.
+//
+// On a timer rather than per request, which is what makes the claim "monitors
+// the host without loading it" true on both sides. Sampling costs microseconds
+// — a handful of virtual files — but a balancer following ten hosts and asking
+// each once a second would turn a free reading into 864,000 requests a day for
+// a number that moves slowly. Here every subscriber reads the same cached
+// sample, and the cost is one read per period whatever the audience.
+func (t *Traits) keepSampling(ctx context.Context) {
+	t.takeSample()
+
+	ticker := time.NewTicker(time.Duration(t.LoadPeriod) * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			t.takeSample()
+		}
+	}
+}
+
+// takeSample reads the host and publishes it to whoever is following.
+func (t *Traits) takeSample() {
+	reading, measured := sample(t.owner.Husk.Host.Name)
+	if !measured {
+		// Nothing is stored, so loadstatus answers 503 rather than serving a
+		// reading of zeros that would be read as an idle machine.
+		return
+	}
+	t.load.Store(&reading)
+
+	// Told to whoever is following, so a balancer hears the change rather than
+	// discovering it on its next poll. Publish applies the service's threshold,
+	// so a reading that has barely moved wakes nobody.
+	if ua, ok := t.owner.UAssets[t.name]; ok {
+		usecases.Publish(ua, "loadstatus", &reading)
+	}
+}
+
+// loadstatus serves the last reading.
+func (t *Traits) loadstatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method is not supported.", http.StatusMethodNotAllowed)
+		return
+	}
+	reading := t.load.Load()
+	if reading == nil {
+		// Either the first sample has not been taken, or this host cannot
+		// measure itself. Both are "ask again"; neither is "I am idle".
+		http.Error(w, "no reading of this host is available yet", http.StatusServiceUnavailable)
+		return
+	}
+	usecases.HTTPProcessGetRequest(w, r, reading)
 }

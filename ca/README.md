@@ -185,5 +185,5 @@ Or add both modules to the workspace `go.work` at the repository root:
 
 ```
 use ./mbaigo
-use ./security/ca
+use ./systems/ca
 ```

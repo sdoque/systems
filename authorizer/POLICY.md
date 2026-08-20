@@ -4,7 +4,7 @@
 
 This document defines the policy file format read by the authorizer service, the
 evaluation semantics, and the wire shape of the tokens the authorizer issues.
-It is the contract every other piece of code in the security/authorizer system
+It is the contract every other piece of code in the authorizer system
 will touch; getting it right before implementation prevents rework.
 
 ## The file: `policies.json`
@@ -21,7 +21,7 @@ A flat JSON object with two top-level keys:
 
 A missing or empty file means *deny everything* — the authorizer issues no
 tokens and every authenticated system is functionally inert. This is fail-closed
-by construction, mirroring the security/ca's whitelist semantics.
+by construction, mirroring the CA's whitelist semantics.
 
 ## Policy entries
 
@@ -280,7 +280,7 @@ though it had to be started in a fixed order, which it does not.
 service without a token.** It can register services, query the registry, request
 orchestration and ask the CA to certify it. What protects that plane is the layer
 beneath — mutual TLS with a certificate the CA signed only for a binary whose
-SHA-256 is on the whitelist (see *Composition with the security/ca whitelist*).
+SHA-256 is on the whitelist (see *Composition with the CA whitelist*).
 Policy governs what a system may *do with* the cloud's assets; attestation
 governs whether it is in the cloud at all.
 
@@ -436,13 +436,13 @@ For revocation-sensitive deployments, set short TTLs (1–5 min). For low-freque
 control loops where renewal cost matters, longer TTLs are acceptable. Trade-off
 explicit in the operator's hands.
 
-## Composition with the security/ca whitelist
+## Composition with the CA whitelist
 
 The authorizer is the *second* gate in a two-gate chain:
 
-1. **Authentication (security/ca):** the binary's hash is on `whitelist.json` →
+1. **Authentication (`systems/ca`):** the binary's hash is on `whitelist.json` →
    issue mTLS certificate. The system *exists* in the cloud.
-2. **Authorization (security/authorizer):** the system's CN matches a policy →
+2. **Authorization (this system):** the system's CN matches a policy →
    issue tokens for specific (provider, asset, service, action). The system
    *acts* in the cloud.
 

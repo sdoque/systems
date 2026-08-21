@@ -24,6 +24,8 @@ github.com/sdoque/mbaigo v0.1.0-alpha.10 h1:AqACsif+szJSJTVUXYImsuf+Pvm/324TahmP
 github.com/sdoque/mbaigo v0.1.0-alpha.10/go.mod h1:uvuQ4Q1Qdi1U8BpaoBzDvst8BsskEVaVoMZ9T+5SyYc=
 github.com/sdoque/mbaigo v0.1.0-alpha.11 h1:9j4Gapj/u97q4W1MGDa7Jmi5BtlVf5i2CrifY5f+t2M=
 github.com/sdoque/mbaigo v0.1.0-alpha.11/go.mod h1:uvuQ4Q1Qdi1U8BpaoBzDvst8BsskEVaVoMZ9T+5SyYc=
+github.com/sdoque/mbaigo v0.1.0-alpha.12 h1:gnMhYCGUWzaroorgckCf4gu2mKqFBCq99j5fF7UWOM4=
+github.com/sdoque/mbaigo v0.1.0-alpha.12/go.mod h1:uvuQ4Q1Qdi1U8BpaoBzDvst8BsskEVaVoMZ9T+5SyYc=
 github.com/spkg/bom v0.0.0-20160624110644-59b7046e48ad/go.mod h1:qLr4V1qq6nMqFKkMo8ZTx3f+BZEkzsRUY10Xsm2mwU0=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UVUgZn+9EI=

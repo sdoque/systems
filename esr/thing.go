@@ -848,6 +848,14 @@ func sseHeaders(w http.ResponseWriter) (http.Flusher, bool) {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
 		return nil, false
 	}
+	// Without this the server's WriteTimeout cuts the stream after a minute,
+	// however healthy it is. A subscriber then reconnects, and a reconnection
+	// opens with a snapshot it cannot tell from news — which is how kgrapher
+	// came to rebuild the cloud's knowledge graph twenty-five times an hour
+	// through a night in which nothing changed.
+	if err := usecases.UnlimitStreamWrite(w); err != nil {
+		log.Printf("registry stream: %v\n", err)
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")

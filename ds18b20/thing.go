@@ -263,14 +263,10 @@ func (t *Traits) readTemperature(ctx context.Context) {
 
 			case <-ticker.C: // Read temperature at regular intervals
 				deviceFile := "/sys/bus/w1/devices/" + t.name + "/w1_slave"
-				rawData, err := os.ReadFile(deviceFile)
+				celsiusValue, err := readOnce(deviceFile)
 				if err != nil {
-					log.Printf("Error reading temperature file: %s, error: %v\n", deviceFile, err)
-					continue // Retry on the next cycle
-				}
-
-				celsiusValue, err := parseDeviceFile(rawData)
-				if err != nil {
+					// Only when the retry failed too. A single bad read on a
+					// physical bus is weather, not news.
 					log.Printf("%s: %v\n", deviceFile, err)
 					continue // Retry on the next cycle
 				}
@@ -366,6 +362,46 @@ func celsius() usecases.UnitDef {
 		panic("the QUDT table has no degree Celsius")
 	}
 	return unit
+}
+
+// readOnce reads the sensor, and reads it again if the first attempt failed.
+//
+// 1-Wire is a physical bus with a real error rate: one data line, often several
+// metres of it, and a protocol with no flow control. The kernel driver returns
+// an empty file when it cannot get a clean answer, and on this deployment that
+// happened every few minutes — each occurrence costing a sample and a line in
+// the log that read like a fault.
+//
+// One retry, not several. Reading the device file starts a conversion, which
+// takes up to 750 ms at twelve-bit resolution, so each attempt is expensive and
+// the sampler runs every two seconds. Two attempts fit; three would not, and a
+// sampler that overruns its own period is a worse problem than a missed reading.
+//
+// The better fix is a layer down and not ours to apply: the w1_therm driver can
+// check the CRC and re-read by itself, which costs no second conversion, but the
+// switch is root-owned sysfs. See this system's README — where the operator can
+// set it, this retry becomes a second line of defence rather than the first.
+func readOnce(deviceFile string) (float64, error) {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			// Long enough for a bus that is briefly confused to settle, short
+			// enough to stay well inside the sampling period.
+			time.Sleep(100 * time.Millisecond)
+		}
+		rawData, err := os.ReadFile(deviceFile)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		celsius, err := parseDeviceFile(rawData)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return celsius, nil
+	}
+	return 0, lastErr
 }
 
 // parseDeviceFile turns the 1-Wire device file into degrees Celsius.

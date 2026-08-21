@@ -1,6 +1,6 @@
-# mbaigo System: Collector
+# mbaigo System: collector
 
-The Collector is an Arrowhead-compliant system whose asset is a time-series
+The collector is an Arrowhead-compliant system whose asset is a time-series
 database ([InfluxDB](https://en.wikipedia.org/wiki/InfluxDB)). It periodically
 discovers every provider of each configured measurement type via the Arrowhead
 Service Registry, queries all of them individually, and writes each reading as
@@ -10,7 +10,7 @@ a tagged data point into an InfluxDB bucket.
 
 | Sub-path | Method | Description |
 |----------|--------|-------------|
-| `mquery` | GET    | Returns the list of measurements currently present in the configured InfluxDB bucket. |
+| `mquery` | GET    | Returns the list of measurements currently present in the configured InfluxDB bucket. Answers 503 when the database cannot be reached — see *[Which InfluxDB](#which-influxdb)*, since this is the one call that will not work against InfluxDB 3. |
 
 ## How it works
 
@@ -19,7 +19,7 @@ Each measurement entry in the configuration file describes:
 - **mdetails** — optional filter details passed to the orchestrator
 - **samplingPeriod** — polling interval in seconds
 
-On every tick the Collector:
+On every tick the collector:
 1. Calls `Search4MultipleServices` to discover *all* registered providers of that measurement type.
 2. Iterates over every discovered node; for each one it performs an HTTP GET to retrieve a `SignalA_v1a` form.
 3. Writes one InfluxDB point per provider, tagged with the **source** node name and any metadata (e.g. `Unit`, `Location`) that the provider registered with the orchestrator.
@@ -81,6 +81,16 @@ sequenceDiagram
 
 ## Status
 
+**Running on AlphaCloud** against InfluxDB 2.9.1, ingesting a temperature every
+three seconds with the provider's unit, quantity kind and functional location
+carried through as tags:
+
+```
+collected temperature from canbus_ds18b20_28-00000f030344_temperature  value=23.5000
+```
+
+
+
 Prototype demonstrating that the mbaigo library can simultaneously collect the
 same measurement type from multiple distributed providers and store them as
 distinguishable time series in a single InfluxDB bucket.
@@ -129,11 +139,48 @@ Copy to a Raspberry Pi:
 scp Collector_rpi64 jan@192.168.1.10:rpiExec/Collector/
 ```
 
+## Which InfluxDB
+
+**This system targets InfluxDB 2.x**, and is developed against the 2.9 line.
+That is not the newest InfluxDB — 3.x is — and the reason is a single query
+rather than a preference.
+
+| Version | Writes | `mquery` | Verdict |
+|---|---|---|---|
+| 1.x | no | no | No token, organization or bucket. Will not work |
+| **2.x** | yes | yes | **What this system targets** |
+| 3 Core / Enterprise | **yes** | **no** | Ingests correctly, `mquery` cannot work |
+
+The trap is in that third row and it is worth understanding before pointing this
+at a v3 server. The collector writes through the **v2 line-protocol endpoint**,
+which 3.x keeps for compatibility — so **the data lands, and everything looks
+healthy**. But `mquery` asks which measurements a bucket holds using Flux:
+
+```flux
+import "influxdata/influxdb/schema"
+schema.measurements(bucket: "demo")
+```
+
+**Flux is supported by no version of InfluxDB 3**, and there is no migration
+path for it. So on v3 the collector ingests happily and the one service it
+offers to the cloud fails — a shape of failure that reads, from the outside,
+like a working system.
+
+Licensing is not the obstacle: InfluxDB 3 Core is open source, and Enterprise is
+free for at-home use. Two things argue for staying on 2.x anyway. Core bounds
+how much history a single query may span — by default about 72 hours' worth of
+stored files — which is the wrong shape for a historian. And moving `mquery` to
+SQL would produce a collector that only works on 3.x, breaking every 2.x
+deployment.
+
+If both are ever needed, the honest split is to keep writes on the
+v2-compatible endpoint, which works everywhere, and make only the measurement
+query version-aware. It is the single Flux call in the system.
+
 ## Deploying InfluxDB 2 (Linux / Raspberry Pi)
 
 The collector uses `influxdb-client-go/v2` with a token, an organization and a
-bucket, so it needs **InfluxDB 2.x**. Version 1.x has no such concepts and will
-not work with this system.
+bucket.
 
 ### 1. Add InfluxData's repository
 
@@ -166,13 +213,20 @@ echo 'deb [signed-by=/etc/apt/keyrings/influxdata-archive.gpg] https://repos.inf
 
 ```bash
 sudo apt-get update
-sudo apt-get install influxdb2
+sudo apt-get install influxdb2 influxdb2-cli
 sudo systemctl enable --now influxdb
 systemctl status influxdb
 ```
 
+**Both packages.** `influxdb2` is the server; `influx`, the command every step
+below uses, is in `influxdb2-cli`. Installing only the server leaves you at
+step 3 with `influx: command not found` and nothing to explain why — the two
+were separated upstream so a machine can hold the client without the database.
+
 `enable --now` starts it and makes it come back after a reboot, which the
 earlier `service influxdb start` did not.
+
+Verified on Raspberry Pi OS (Debian 13, aarch64): server 2.9.1, CLI 2.8.0.
 
 ### 3. Set it up — the step that is easy to miss
 

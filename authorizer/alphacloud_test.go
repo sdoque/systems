@@ -36,7 +36,8 @@ const alphaCloudPolicies = `{
         },
         {"subject": "painter",  "missions": ["core"], "services": ["syslist"], "actions": ["read"], "ttl": "15m"},
         {"subject": "kgrapher", "missions": ["core"], "services": ["syslist"], "actions": ["read"], "ttl": "15m"},
-        {"subject": "modeler",  "missions": ["core"], "services": ["syslist"], "actions": ["read"], "ttl": "15m"}
+        {"subject": "modeler",  "missions": ["core"], "services": ["syslist"], "actions": ["read"], "ttl": "15m"},
+        {"subject": "collector", "missions": ["measurement", "actuation", "state"], "actions": ["read"], "ttl": "15m"}
     ],
     "denials": []
 }`
@@ -112,6 +113,28 @@ func TestAlphaCloudDecisions(t *testing.T) {
 		"the painter may not write to the registry",
 		Request{Subject: "painter", SubjectAttributes: map[string][]string{}, Action: ActionWrite,
 			Record: record("serviceregistrar", "registry", "syslist", "core", nil)},
+		false,
+	}, {
+		// The historian reads everything and drives nothing. It is also the row
+		// that shows why the pairing constraint is per-rule rather than global:
+		// a cloud-wide collector is legitimately unpaired, so its rule omits
+		// must_match_attribute and it reaches assets in every room.
+		"the collector reads a measurement anywhere in the cloud",
+		Request{Subject: "collector", SubjectAttributes: map[string][]string{}, Action: ActionRead,
+			Record: record("ds18b20", "28-00000f030344", "temperature", "measurement", at("Kitchen"))},
+		true,
+	}, {
+		"the collector may not drive an actuator it is allowed to read",
+		Request{Subject: "collector", SubjectAttributes: map[string][]string{}, Action: ActionWrite,
+			Record: record("parallax", "Servo_1", "rotation", "actuation", at("Kitchen"))},
+		false,
+	}, {
+		// Case matters, and this is the trap the rename removed: the system used
+		// to call itself "Collector", so this rule matched nothing at all while
+		// looking exactly right.
+		"a capitalised subject does not match a lowercase rule",
+		Request{Subject: "Collector", SubjectAttributes: map[string][]string{}, Action: ActionRead,
+			Record: record("ds18b20", "28-00000f030344", "temperature", "measurement", at("Kitchen"))},
 		false,
 	}, {
 		"an unknown system gets nothing",

@@ -18,8 +18,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -428,4 +430,92 @@ func TestServing(t *testing.T) {
 // token — which in a test means reaching for an orchestrator that is not there.
 func readNode(url string, details map[string][]string) components.NodeInfo {
 	return components.NodeInfo{URL: url, Details: details, Tokens: map[string]string{"read": ""}}
+}
+
+// A query that fails must answer the caller, not end the process.
+//
+// This handler called log.Fatal on a query error, which exits. So one
+// unreachable database, one restarted server, one network blip took down a
+// collector that was otherwise ingesting correctly — and took the ingestion
+// with it, since the same process does both.
+//
+// It is also how a collector pointed at InfluxDB 3 would have died: writes use
+// the v2 line-protocol endpoint that 3.x keeps, but this query is Flux, which
+// no version of InfluxDB 3 supports. The data would have landed and the first
+// request to mquery would have killed the system.
+func TestAFailedQueryAnswersRatherThanExits(t *testing.T) {
+	// Port 1 is reserved and nothing listens on it, so the query cannot succeed.
+	tr := &Traits{
+		name:   "demo",
+		Org:    "mbaigo",
+		Bucket: "demo",
+		client: influxdb2.NewClient("http://127.0.0.1:1", "token"),
+	}
+	defer tr.client.Close()
+
+	w := httptest.NewRecorder()
+	tr.q4measurements(w) // if this exits, the test binary dies and says so
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("a failed query answered %d; want %d so a caller learns the database "+
+			"is unreachable rather than the system disappearing",
+			w.Code, http.StatusServiceUnavailable)
+	}
+	if !strings.Contains(w.Body.String(), "InfluxDB") {
+		t.Errorf("the refusal does not say what failed: %q", w.Body.String())
+	}
+}
+
+// One cervice per provider, kept across ticks.
+//
+// They used to be built fresh each tick, with Nodes pre-populated so discovery
+// was skipped — which worked until services became followable. GetState follows
+// a service that offers it, and the follow-state lives on the cervice, so a new
+// cervice every three seconds opened a new subscription every three seconds and
+// closed none. On AlphaCloud that hit the provider's limit in about ninety
+// seconds, after which ds18b20 logged "refusing a subscription; 32 are already
+// open" several times a second.
+//
+// The provider's cap is what turned an unbounded leak into a loud one — worth
+// remembering when deciding whether such a cap earns its complexity.
+func TestOneCerviceIsKeptPerProvider(t *testing.T) {
+	// Two ticks over the same node must reach GetState with the same cervice.
+	seen := map[string]*components.Cervice{}
+	nodes := map[string][]components.NodeInfo{
+		"ds18b20_sensor": {{URL: "https://192.168.1.10:30150/ds18b20/sensor/temperature"}},
+	}
+
+	perNode := map[string]*components.Cervice{}
+	build := func() {
+		for node, infos := range nodes {
+			for _, ni := range infos {
+				single, held := perNode[node]
+				if !held {
+					single = &components.Cervice{
+						Definition: "temperature",
+						Details:    ni.Details,
+						Nodes:      map[string][]components.NodeInfo{node: {ni}},
+					}
+					perNode[node] = single
+				}
+				seen[node] = single
+			}
+		}
+	}
+
+	build()
+	first := seen["ds18b20_sensor"]
+	build()
+	if seen["ds18b20_sensor"] != first {
+		t.Error("a second tick built a new cervice for the same provider, which would " +
+			"open a second subscription and never close the first")
+	}
+
+	// And discovery replaces them, because the providers may be different ones.
+	perNode = map[string]*components.Cervice{}
+	build()
+	if seen["ds18b20_sensor"] == first {
+		t.Error("re-discovery kept the old cervice, so a provider that has gone would " +
+			"still be followed")
+	}
 }

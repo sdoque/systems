@@ -207,6 +207,23 @@ func (t *Traits) collectIngest(name string, period time.Duration, writeAPI api.W
 	ticker := time.NewTicker(period)
 	defer ticker.Stop()
 
+	// One cervice per provider, kept for as long as that provider is in the
+	// node list.
+	//
+	// These used to be built fresh on every tick — the Nodes map pre-populated
+	// so discovery was skipped, which was the intent and which worked. What it
+	// did not survive is following: GetState follows a service that offers it,
+	// and the follow-state lives on the cervice, so a new cervice each tick
+	// opened a new subscription every three seconds and never closed one. On
+	// AlphaCloud that reached the provider's limit in about a minute and a half,
+	// after which ds18b20 logged "refusing a subscription; 32 are already open"
+	// several times a second.
+	//
+	// Local to this goroutine, which owns one measurement, so there is no shared
+	// state to guard. Rebuilt when discovery runs, because that is exactly when
+	// the set of providers may have changed.
+	perNode := map[string]*components.Cervice{}
+
 	for {
 		select {
 		case <-t.owner.Ctx.Done():
@@ -224,23 +241,34 @@ func (t *Traits) collectIngest(name string, period time.Duration, writeAPI api.W
 					continue
 				}
 				log.Printf("discovered %d node(s) for %s\n", len(cer.Nodes), name)
+				// The providers may be different ones. Dropping the old cervices
+				// ends their subscriptions with them.
+				perNode = map[string]*components.Cervice{}
 			}
 
 			// Query each provider individually so we can tag the point with its node name
 			// and the provider's registered details (unit, location, etc.).
 			for node, nodeInfos := range cer.Nodes {
 				for _, ni := range nodeInfos {
-					// Build a temporary single-entry cervice; pre-populated Nodes skip re-discovery.
-					tmp := &components.Cervice{
-						Definition: cer.Definition,
-						Details:    ni.Details,
-						Protos:     cer.Protos,
-						Nodes:      map[string][]components.NodeInfo{node: {ni}},
+					// One cervice per provider, made once and kept. Its
+					// pre-populated Nodes still skip re-discovery, and because
+					// it survives the tick it also holds one subscription rather
+					// than opening another.
+					single, held := perNode[node]
+					if !held {
+						single = &components.Cervice{
+							Definition: cer.Definition,
+							Details:    ni.Details,
+							Protos:     cer.Protos,
+							Nodes:      map[string][]components.NodeInfo{node: {ni}},
+						}
+						perNode[node] = single
 					}
-					tf, err := usecases.GetState(tmp, t.owner)
+					tf, err := usecases.GetState(single, t.owner)
 					if err != nil {
 						log.Printf("unable to read %s from %s: %v — re-discovering next tick\n", name, node, err)
 						cer.Nodes = make(map[string][]components.NodeInfo) // reset so next tick re-discovers
+						perNode = map[string]*components.Cervice{}
 						break
 					}
 					tup, ok := tf.(*forms.SignalA_v1a)
@@ -271,6 +299,13 @@ func (t *Traits) collectIngest(name string, period time.Duration, writeAPI api.W
 }
 
 // q4measurements queries the bucket for the list of measurements
+// q4measurements lists what the bucket holds.
+//
+// The query is Flux, which matters more than it looks: Flux is supported by
+// InfluxDB 1.8 and 2.x and by no version of InfluxDB 3. Writes are unaffected —
+// the client uses the v2 line-protocol endpoint, which 3.x keeps for
+// compatibility — so a collector pointed at a v3 server ingests happily and
+// fails only here. See this system's README.
 func (t *Traits) q4measurements(w http.ResponseWriter) {
 	text := "The list of measurements in the " + t.name + " bucket is:\n"
 	queryAPI := t.client.QueryAPI(t.Org)
@@ -280,9 +315,17 @@ func (t *Traits) q4measurements(w http.ResponseWriter) {
 		 schema.measurements(bucket: "%s")
 	 `, t.name)
 
+	// A failed query answers the caller. It used to call log.Fatal, which ends
+	// the process — so one unreachable database, one restarted server, one
+	// network blip took down a system that was otherwise ingesting correctly,
+	// and took the ingestion with it. An HTTP handler has a way to say that
+	// something went wrong, and exiting is not it.
 	results, err := queryAPI.Query(context.Background(), query)
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("%s: querying the measurements: %v\n", t.name, err)
+		http.Error(w, "cannot read the measurements from InfluxDB: "+err.Error(),
+			http.StatusServiceUnavailable)
+		return
 	}
 
 	for results.Next() {
@@ -291,10 +334,16 @@ func (t *Traits) q4measurements(w http.ResponseWriter) {
 	}
 
 	if err := results.Err(); err != nil {
-		log.Fatal(err)
+		log.Printf("%s: reading the measurements: %v\n", t.name, err)
+		http.Error(w, "cannot read the measurements from InfluxDB: "+err.Error(),
+			http.StatusServiceUnavailable)
+		return
 	}
 
-	w.Write([]byte(text))
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	if _, err := w.Write([]byte(text)); err != nil {
+		log.Printf("%s: writing the measurements: %v\n", t.name, err)
+	}
 }
 
 // present says whether a secret is set without putting it in a log line.

@@ -271,6 +271,13 @@ func (t *Traits) collectIngest(name string, period time.Duration, writeAPI api.W
 }
 
 // q4measurements queries the bucket for the list of measurements
+// q4measurements lists what the bucket holds.
+//
+// The query is Flux, which matters more than it looks: Flux is supported by
+// InfluxDB 1.8 and 2.x and by no version of InfluxDB 3. Writes are unaffected —
+// the client uses the v2 line-protocol endpoint, which 3.x keeps for
+// compatibility — so a collector pointed at a v3 server ingests happily and
+// fails only here. See this system's README.
 func (t *Traits) q4measurements(w http.ResponseWriter) {
 	text := "The list of measurements in the " + t.name + " bucket is:\n"
 	queryAPI := t.client.QueryAPI(t.Org)
@@ -280,9 +287,17 @@ func (t *Traits) q4measurements(w http.ResponseWriter) {
 		 schema.measurements(bucket: "%s")
 	 `, t.name)
 
+	// A failed query answers the caller. It used to call log.Fatal, which ends
+	// the process — so one unreachable database, one restarted server, one
+	// network blip took down a system that was otherwise ingesting correctly,
+	// and took the ingestion with it. An HTTP handler has a way to say that
+	// something went wrong, and exiting is not it.
 	results, err := queryAPI.Query(context.Background(), query)
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("%s: querying the measurements: %v\n", t.name, err)
+		http.Error(w, "cannot read the measurements from InfluxDB: "+err.Error(),
+			http.StatusServiceUnavailable)
+		return
 	}
 
 	for results.Next() {
@@ -291,10 +306,16 @@ func (t *Traits) q4measurements(w http.ResponseWriter) {
 	}
 
 	if err := results.Err(); err != nil {
-		log.Fatal(err)
+		log.Printf("%s: reading the measurements: %v\n", t.name, err)
+		http.Error(w, "cannot read the measurements from InfluxDB: "+err.Error(),
+			http.StatusServiceUnavailable)
+		return
 	}
 
-	w.Write([]byte(text))
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	if _, err := w.Write([]byte(text)); err != nil {
+		log.Printf("%s: writing the measurements: %v\n", t.name, err)
+	}
 }
 
 // present says whether a secret is set without putting it in a log line.

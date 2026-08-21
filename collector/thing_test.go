@@ -18,8 +18,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -428,4 +430,38 @@ func TestServing(t *testing.T) {
 // token — which in a test means reaching for an orchestrator that is not there.
 func readNode(url string, details map[string][]string) components.NodeInfo {
 	return components.NodeInfo{URL: url, Details: details, Tokens: map[string]string{"read": ""}}
+}
+
+// A query that fails must answer the caller, not end the process.
+//
+// This handler called log.Fatal on a query error, which exits. So one
+// unreachable database, one restarted server, one network blip took down a
+// collector that was otherwise ingesting correctly — and took the ingestion
+// with it, since the same process does both.
+//
+// It is also how a collector pointed at InfluxDB 3 would have died: writes use
+// the v2 line-protocol endpoint that 3.x keeps, but this query is Flux, which
+// no version of InfluxDB 3 supports. The data would have landed and the first
+// request to mquery would have killed the system.
+func TestAFailedQueryAnswersRatherThanExits(t *testing.T) {
+	// Port 1 is reserved and nothing listens on it, so the query cannot succeed.
+	tr := &Traits{
+		name:   "demo",
+		Org:    "mbaigo",
+		Bucket: "demo",
+		client: influxdb2.NewClient("http://127.0.0.1:1", "token"),
+	}
+	defer tr.client.Close()
+
+	w := httptest.NewRecorder()
+	tr.q4measurements(w) // if this exits, the test binary dies and says so
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("a failed query answered %d; want %d so a caller learns the database "+
+			"is unreachable rather than the system disappearing",
+			w.Code, http.StatusServiceUnavailable)
+	}
+	if !strings.Contains(w.Body.String(), "InfluxDB") {
+		t.Errorf("the refusal does not say what failed: %q", w.Body.String())
+	}
 }

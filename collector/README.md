@@ -10,7 +10,7 @@ a tagged data point into an InfluxDB bucket.
 
 | Sub-path | Method | Description |
 |----------|--------|-------------|
-| `mquery` | GET    | Returns the list of measurements currently present in the configured InfluxDB bucket. |
+| `mquery` | GET    | Returns the list of measurements currently present in the configured InfluxDB bucket. Answers 503 when the database cannot be reached — see *[Which InfluxDB](#which-influxdb)*, since this is the one call that will not work against InfluxDB 3. |
 
 ## How it works
 
@@ -129,11 +129,48 @@ Copy to a Raspberry Pi:
 scp Collector_rpi64 jan@192.168.1.10:rpiExec/Collector/
 ```
 
+## Which InfluxDB
+
+**This system targets InfluxDB 2.x**, and is developed against the 2.9 line.
+That is not the newest InfluxDB — 3.x is — and the reason is a single query
+rather than a preference.
+
+| Version | Writes | `mquery` | Verdict |
+|---|---|---|---|
+| 1.x | no | no | No token, organization or bucket. Will not work |
+| **2.x** | yes | yes | **What this system targets** |
+| 3 Core / Enterprise | **yes** | **no** | Ingests correctly, `mquery` cannot work |
+
+The trap is in that third row and it is worth understanding before pointing this
+at a v3 server. The collector writes through the **v2 line-protocol endpoint**,
+which 3.x keeps for compatibility — so **the data lands, and everything looks
+healthy**. But `mquery` asks which measurements a bucket holds using Flux:
+
+```flux
+import "influxdata/influxdb/schema"
+schema.measurements(bucket: "demo")
+```
+
+**Flux is supported by no version of InfluxDB 3**, and there is no migration
+path for it. So on v3 the collector ingests happily and the one service it
+offers to the cloud fails — a shape of failure that reads, from the outside,
+like a working system.
+
+Licensing is not the obstacle: InfluxDB 3 Core is open source, and Enterprise is
+free for at-home use. Two things argue for staying on 2.x anyway. Core bounds
+how much history a single query may span — by default about 72 hours' worth of
+stored files — which is the wrong shape for a historian. And moving `mquery` to
+SQL would produce a collector that only works on 3.x, breaking every 2.x
+deployment.
+
+If both are ever needed, the honest split is to keep writes on the
+v2-compatible endpoint, which works everywhere, and make only the measurement
+query version-aware. It is the single Flux call in the system.
+
 ## Deploying InfluxDB 2 (Linux / Raspberry Pi)
 
 The collector uses `influxdb-client-go/v2` with a token, an organization and a
-bucket, so it needs **InfluxDB 2.x**. Version 1.x has no such concepts and will
-not work with this system.
+bucket.
 
 ### 1. Add InfluxData's repository
 

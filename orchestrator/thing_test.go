@@ -512,3 +512,29 @@ func pointListFor(recordList []byte) string {
 	}
 	return string(out)
 }
+
+// Every path the orchestrator answers must be a service it registers.
+//
+// squests was served and never declared. That was a documentation problem
+// until authorization arrived and became an outage: permitted() refuses a path
+// with no registered service, because a request it cannot classify is one it
+// cannot authorize. The collector discovers every provider of a definition
+// rather than one, so it uses that path — and was refused on every attempt,
+// with a message about certificates that pointed nowhere near the cause.
+//
+// The check walks the dispatcher's own cases rather than naming services, so a
+// path added later without a declaration fails here instead of in a cloud.
+func TestEveryDispatchedPathIsARegisteredService(t *testing.T) {
+	registered := map[string]bool{}
+	for subPath := range initTemplate().GetServices() {
+		registered[subPath] = true
+	}
+
+	// The paths serving() answers. Kept beside the switch it mirrors.
+	for _, path := range []string{"squest", "squests"} {
+		if !registered[path] {
+			t.Errorf("serving() answers %q and no service declares it: it is absent from "+
+				"the registry and, in an authorized cloud, refused before it is reached", path)
+		}
+	}
+}

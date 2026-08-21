@@ -61,6 +61,18 @@
                 "read"
             ],
             "ttl": "15m"
+        },
+        {
+            "subject": "collector",
+            "missions": [
+                "measurement",
+                "actuation",
+                "state"
+            ],
+            "actions": [
+                "read"
+            ],
+            "ttl": "15m"
         }
     ],
     "denials": []

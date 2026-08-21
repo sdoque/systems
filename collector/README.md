@@ -1,6 +1,6 @@
-# mbaigo System: Collector
+# mbaigo System: collector
 
-The Collector is an Arrowhead-compliant system whose asset is a time-series
+The collector is an Arrowhead-compliant system whose asset is a time-series
 database ([InfluxDB](https://en.wikipedia.org/wiki/InfluxDB)). It periodically
 discovers every provider of each configured measurement type via the Arrowhead
 Service Registry, queries all of them individually, and writes each reading as
@@ -19,7 +19,7 @@ Each measurement entry in the configuration file describes:
 - **mdetails** — optional filter details passed to the orchestrator
 - **samplingPeriod** — polling interval in seconds
 
-On every tick the Collector:
+On every tick the collector:
 1. Calls `Search4MultipleServices` to discover *all* registered providers of that measurement type.
 2. Iterates over every discovered node; for each one it performs an HTTP GET to retrieve a `SignalA_v1a` form.
 3. Writes one InfluxDB point per provider, tagged with the **source** node name and any metadata (e.g. `Unit`, `Location`) that the provider registered with the orchestrator.

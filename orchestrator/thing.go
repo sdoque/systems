@@ -60,13 +60,32 @@ func initTemplate() *components.UnitAsset {
 		Description: "looks for the desired service described in a quest form (POST)",
 	}
 
+	// The plural. orchestrateMultiple has answered this path since it was
+	// written, and nothing declared it — so it was absent from the registry,
+	// from the knowledge graph and from every shell built out of them, and a
+	// consumer could only find it by reading the Go.
+	//
+	// That was a documentation problem until authorization arrived, and then it
+	// became an outage. permitted() refuses a path with no registered service,
+	// because a request it cannot classify is one it cannot authorize — so the
+	// collector, which discovers every provider of a definition rather than
+	// one, was refused on every attempt with a message about certificates that
+	// pointed nowhere near the cause.
+	squests := components.Service{
+		Definition:  "squests",
+		SubPath:     "squests",
+		Details:     map[string][]string{"DefaultForm": {"ServiceRecord_v1"}, "Methods": components.HTTPMethods("POST")},
+		Description: "looks for every provider of the desired service described in a quest form (POST)",
+	}
+
 	return &components.UnitAsset{
 		Name:    "orchestration",
 		Mission: components.MissionCore,
 		Details: map[string][]string{"Platform": {"Independent"}, "Mobility": {components.MobilityMovable}},
 		Traits:  &Traits{},
 		ServicesMap: components.Services{
-			squest.SubPath: &squest,
+			squest.SubPath:  &squest,
+			squests.SubPath: &squests,
 		},
 	}
 }

@@ -34,7 +34,12 @@ func main() {
 	defer cancel()                                          // make sure all paths cancel the context to avoid context leak
 
 	// instantiate the System
-	sys := components.NewSystem("Collector", ctx)
+	// Lowercase, like every other system in this repository. The name becomes the
+	// certificate common name, the first segment of every URL, and the subject a
+	// policy matches on — and policy matching is exact. This was the one
+	// capitalised system, so the authorizer README's own worked example,
+	// "subject": "collector", was a rule that could never match.
+	sys := components.NewSystem("collector", ctx)
 
 	// Watch for SIGINT immediately so Ctrl+C interrupts blocking startup steps.
 	usecases.WatchShutdown(&sys, cancel)

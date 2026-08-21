@@ -20,6 +20,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -203,5 +205,65 @@ func TestNoReadingIsNotZeroDegrees(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "21.5") {
 		t.Errorf("the reading did not reach the caller: %s", strings.TrimSpace(w.Body.String()))
+	}
+}
+
+// A bus that fails once must not cost a sample.
+//
+// 1-Wire is one data line, often metres of it, with no flow control. The kernel
+// driver returns an empty file when it cannot get a clean answer, and on
+// AlphaCloud that happened every few minutes — each time costing a reading and
+// a log line that looked like a fault.
+func TestATransientBusFailureIsRetried(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "w1_slave")
+
+	// First read empty, second read good: what a briefly confused bus looks
+	// like. The file is rewritten by a watcher so the second attempt differs.
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(40 * time.Millisecond)
+		_ = os.WriteFile(path,
+			[]byte("6f 01 4b 46 7f ff 01 10 67 : crc=67 YES\n6f 01 4b 46 7f ff 01 10 67 t=22937\n"),
+			0o644)
+	}()
+
+	got, err := readOnce(path)
+	if err != nil {
+		t.Fatalf("a bus that answered on the second attempt still failed: %v", err)
+	}
+	if got < 22.9 || got > 23.0 {
+		t.Errorf("read %.3f C, want about 22.937", got)
+	}
+}
+
+// And a sensor that is genuinely gone still reports, rather than retrying for
+// ever or claiming a temperature.
+func TestASensorThatIsGoneIsReported(t *testing.T) {
+	_, err := readOnce(filepath.Join(t.TempDir(), "not-there"))
+	if err == nil {
+		t.Fatal("a missing sensor produced a reading")
+	}
+}
+
+// Two attempts, not three: reading the file starts a conversion that takes up
+// to 750 ms, and the sampler runs every two seconds. A third attempt would
+// overrun the period, which is a worse fault than a missed reading.
+func TestTheRetryFitsInsideTheSamplingPeriod(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "w1_slave")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	if _, err := readOnce(path); err == nil {
+		t.Fatal("an always-empty file produced a reading")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("a failed read took %v; the sampler ticks every 2s and each attempt "+
+			"costs a conversion, so this must stay well inside that", elapsed)
 	}
 }

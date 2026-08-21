@@ -70,6 +70,55 @@ network — slower data, never no data.
 | `fastestHeartbeat` | 2 s | it is only read every two seconds |
 | `finestThreshold` | 0.0625 °C | the chip's resolution; below this is noise |
 
+## When the bus fails
+
+1-Wire is one data line, often several metres of it, with no flow control. The
+kernel driver returns an **empty file** when it cannot get a clean answer, and
+on a real deployment that happens every few minutes — a sample lost and a line
+in the log that reads like a fault.
+
+The reader therefore **reads again** before giving up. One retry, not several:
+reading `w1_slave` starts a conversion that takes up to 750 ms at twelve-bit
+resolution, and the sampler ticks every two seconds, so two attempts fit and
+three would overrun the period. A sampler that overruns its own period is a
+worse fault than a missed reading.
+
+### The better fix, which needs root
+
+The `w1_therm` driver can check the CRC and re-read **by itself**, without
+paying for a second conversion. It is off by default:
+
+```bash
+cat /sys/bus/w1/devices/28-*/features     # 0 — nothing enabled
+echo 1 | sudo tee /sys/bus/w1/devices/28-*/features
+```
+
+| Bit | Meaning |
+|---|---|
+| `1` | Check the CRC and re-read on failure |
+| `2` | Poll the device for conversion completion instead of sleeping a fixed 750 ms |
+
+`3` enables both. This is root-owned sysfs, so the system cannot set it for
+itself, and it does not survive a reboot — a udev rule or a line in the startup
+script makes it stick.
+
+Where an operator has applied it, the retry above becomes a second line of
+defence rather than the first. Where nobody has, the retry is all there is,
+which is why it exists.
+
+### What the reader refuses to believe
+
+`parseDeviceFile` rejects more than an empty file, and each guard stands for a
+way this code once panicked or lied:
+
+- **One line instead of two** — a sensor unplugged mid-read. Indexing the second
+  line killed the system every two seconds.
+- **`crc=… NO`** — the reading arrived corrupted.
+- **Exactly 85 °C** — the DS18B20's power-on default. A chip that reset mid-read
+  hands the control loop a perfectly plausible number.
+- **Outside −55…125 °C** — the part's specified range. Beyond it, the sensor is
+  failing rather than the weather being interesting.
+
 ## Compiling
 To compile the code, one needs to get the AiGo module
 ```go get github.com/sdoque/mbaigo```

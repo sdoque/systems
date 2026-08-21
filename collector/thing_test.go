@@ -465,3 +465,57 @@ func TestAFailedQueryAnswersRatherThanExits(t *testing.T) {
 		t.Errorf("the refusal does not say what failed: %q", w.Body.String())
 	}
 }
+
+// One cervice per provider, kept across ticks.
+//
+// They used to be built fresh each tick, with Nodes pre-populated so discovery
+// was skipped — which worked until services became followable. GetState follows
+// a service that offers it, and the follow-state lives on the cervice, so a new
+// cervice every three seconds opened a new subscription every three seconds and
+// closed none. On AlphaCloud that hit the provider's limit in about ninety
+// seconds, after which ds18b20 logged "refusing a subscription; 32 are already
+// open" several times a second.
+//
+// The provider's cap is what turned an unbounded leak into a loud one — worth
+// remembering when deciding whether such a cap earns its complexity.
+func TestOneCerviceIsKeptPerProvider(t *testing.T) {
+	// Two ticks over the same node must reach GetState with the same cervice.
+	seen := map[string]*components.Cervice{}
+	nodes := map[string][]components.NodeInfo{
+		"ds18b20_sensor": {{URL: "https://192.168.1.10:30150/ds18b20/sensor/temperature"}},
+	}
+
+	perNode := map[string]*components.Cervice{}
+	build := func() {
+		for node, infos := range nodes {
+			for _, ni := range infos {
+				single, held := perNode[node]
+				if !held {
+					single = &components.Cervice{
+						Definition: "temperature",
+						Details:    ni.Details,
+						Nodes:      map[string][]components.NodeInfo{node: {ni}},
+					}
+					perNode[node] = single
+				}
+				seen[node] = single
+			}
+		}
+	}
+
+	build()
+	first := seen["ds18b20_sensor"]
+	build()
+	if seen["ds18b20_sensor"] != first {
+		t.Error("a second tick built a new cervice for the same provider, which would " +
+			"open a second subscription and never close the first")
+	}
+
+	// And discovery replaces them, because the providers may be different ones.
+	perNode = map[string]*components.Cervice{}
+	build()
+	if seen["ds18b20_sensor"] == first {
+		t.Error("re-discovery kept the old cervice, so a provider that has gone would " +
+			"still be followed")
+	}
+}

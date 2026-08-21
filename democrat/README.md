@@ -11,6 +11,19 @@ GET /democrat/assembler/sync    →  trigger immediate sync, return SyncResult J
 GET /democrat/assembler/status  →  return last SyncResult without triggering
 ```
 
+**Status: running against AlphaCloud.** Its first sync against a live GraphDB
+and a live FA³ST produced eleven shells and forty-four submodels in 2.3 seconds:
+
+```
+democrat: 11 system(s) found in knowledge graph
+democrat: sync complete — 11 AAS(s) upserted in 2.267s
+```
+
+FA³ST accepted all of it, including the Asset Interfaces Description — which had
+until then only been checked against the published IDTA template, never against
+an implementation. Reading one back returns the interfaces intact, four levels
+deep, with the semanticIds and the relative `href` unchanged.
+
 ---
 
 ## The problem: duplication of information entry
@@ -219,6 +232,12 @@ AAS  urn:alc:aas:thermostat
       ServiceUrl_thermostat_temperature = "http://192.168.1.10:20185/thermostat/sensor1/temperature"
       TemperatureUrl                    = "http://192.168.1.10:20185/thermostat/sensor1/temperature"
 ```
+
+One cosmetic consequence of AAS rules, visible in the shells FA³ST now holds:
+ds18b20's property is `S_28_00000f030344_temperature`. An AAS `idShort` may not
+begin with a digit, and that sensor's 1-wire ID does, so `sanitizeIDShort`
+prefixes it. Correct, and slightly ugly — the alternative would be to rename the
+asset, which would break the mapping between the shell and the device.
 
 The `TemperatureUrl` shortcut appears because there is exactly one service with
 definition `"temperature"`.  When a system has two services with the same
@@ -567,42 +586,83 @@ instructions.
 
 ### FA³ST
 
-FA³ST Service provides the AAS REST API that democrat writes to.  With Docker:
+FA³ST Service provides the AAS REST API that democrat writes to. The image is on
+Docker Hub, and publishes `linux/arm64` as well as `linux/amd64`, so it runs on
+a 64-bit Raspberry Pi without emulation.
 
 ```bash
-docker run -d -p 8080:8080 \
-  ghcr.io/fraunhoferioss/faaast-service:latest \
-  --config /config.json
+mkdir -p ~/faaast
+cat > ~/faaast/model.json <<'EOF'
+{ "assetAdministrationShells": [], "submodels": [], "conceptDescriptions": [] }
+EOF
 ```
 
-Or download the JAR from the
-[FA³ST releases page](https://github.com/FraunhoferIOSB/FAAAST-Service/releases)
-and run:
+An empty environment to start from — democrat creates everything in it.
 
 ```bash
-java -jar faaast-service-*.jar --config config.json
+docker run -d --name faaast --restart unless-stopped -p 8080:8080 \
+  -v ~/faaast/model.json:/app/model.json \
+  -v ~/faaast/config.json:/app/config.json \
+  fraunhoferiosb/faaast-service:1.3.0 \
+  --config /app/config.json --model /app/model.json
 ```
 
-A minimal FA³ST `config.json` that accepts the democrat upsert calls:
+> **Two things this walkthrough used to get wrong**, both of which stop a reader
+> without saying why.
+>
+> The image was named `ghcr.io/fraunhoferioss/faaast-service` — the wrong
+> registry *and* a misspelled organization. Neither `ghcr` variant exists;
+> `docker manifest inspect` on both returns nothing.
+>
+> More subtly, **FA³ST 1.3 defaults to HTTPS on port 443** with a self-signed
+> certificate it generates at startup. A config that names only `port` therefore
+> produces a container that starts, logs *"FA³ST Service successfully started"*,
+> and answers on a port you have not mapped — with nothing in the log that reads
+> like an error. `sslEnabled` is the property that decides.
+
+`config.json`, which is what makes it serve plain HTTP on the port above:
 
 ```json
 {
-  "core": {
-    "requestHandlerThreadPoolSize": 2
-  },
+  "core": { "requestHandlerThreadPoolSize": 2 },
   "endpoints": [
     {
       "@class": "de.fraunhofer.iosb.ilt.faaast.service.endpoint.http.HttpEndpoint",
-      "port": 8080
+      "port": 8080,
+      "sslEnabled": false
     }
   ],
-  "persistence": {
-    "@class": "de.fraunhofer.iosb.ilt.faaast.service.persistence.memory.PersistenceInMemory"
-  },
-  "messageBus": {
-    "@class": "de.fraunhofer.iosb.ilt.faaast.service.messageBus.internal.MessageBusInternal"
-  }
+  "persistence": { "@class": "de.fraunhofer.iosb.ilt.faaast.service.persistence.memory.PersistenceInMemory" },
+  "fileStorage": { "@class": "de.fraunhofer.iosb.ilt.faaast.service.filestorage.memory.FileStorageInMemory" },
+  "messageBus": { "@class": "de.fraunhofer.iosb.ilt.faaast.service.messagebus.internal.MessageBusInternal" }
 }
+```
+
+FA³ST says so itself on startup, and it is right to:
+
+```
+[WARN] Using HTTP endpoint with disabled SSL. Not safe for production -
+       use for development only
+```
+
+Plain HTTP is appropriate while both run on the same host and democrat reaches
+it over the loopback. Anything else wants the certificate.
+
+`PersistenceInMemory` means the shells live only as long as the container. That
+is the right default here — democrat rebuilds them from the graph on every sync,
+so the store is a cache of a derived thing rather than a system of record.
+
+Check it answers before starting democrat:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/api/v3.0/shells
+```
+
+Or run it without Docker, from the JAR on the
+[FA³ST releases page](https://github.com/FraunhoferIOSB/FAAAST-Service/releases):
+
+```bash
+java -jar faaast-service-*.jar --config config.json --model model.json
 ```
 
 ---

@@ -68,10 +68,13 @@ say why here and then delete the entry.
   graph and from every AAS built out of them. A consumer can only find it by
   reading the Go.
 
-- **The Asset Interfaces Description has not been read by AAS tooling.** It is
-  built against the published IDTA 02017-1-0 template and unit-tested against
-  it, and nothing has yet loaded it into the AASX Package Explorer or FA³ST to
-  confirm the shape is accepted rather than merely plausible.
+- **The Asset Interfaces Description has been read by FA³ST, not by a consumer.**
+  FA³ST 1.3.0 accepts all four submodels and returns the interface description
+  intact, four levels deep, so the shape is right. What that does not show is
+  whether the semantics are useful: nothing has yet taken `observable`, `unit`
+  and `valueSemantics` out of a shell and done something with them. The AASX
+  Package Explorer has still not opened one, and its view is the one an auditor
+  would use.
 
 - **A system that loses its `systemconfig.json` silently stops enforcing.**
   Found on AlphaCloud: ds18b20 was running correctly from a configuration whose

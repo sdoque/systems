@@ -388,70 +388,181 @@ func (t *Traits) assembleOntologies() (string, error) {
 
 // publishToStore writes the assembled graph to the triple store, first as a
 // timestamped snapshot and then as the current graph.
+// Where the cloud's knowledge lives in the triple store.
+//
+//	urn:state:current     the cloud as it is now — the graph everything queries
+//	urn:staging           scratch, overwritten on every rebuild, never queried
+//	urn:changes           the index of changes, one description per event
+//	urn:changes:<t>/added the triples that appeared at that moment
+//	…/removed             the triples that went
+const (
+	currentGraph = "urn:state:current"
+	stagingGraph = "urn:staging"
+	changeIndex  = "urn:changes"
+)
+
+// publishToStore records the cloud in the triple store, and records a change
+// only when there is one.
+//
+// It used to write a full timestamped snapshot on every rebuild. That is how
+// the store came to hold 490 copies of a cloud that has one — and the copies
+// were not history: two taken two minutes apart during a quiet night differed
+// by zero triples in each direction. They recorded when kgrapher ran, not when
+// anything changed.
+//
+// So: stage the new graph, ask the store whether it differs from what is
+// current, and write nothing at all when it does not. When it does, record the
+// difference — what appeared and what went — as an event with a timestamp. A
+// quiet night now leaves no trace, and every entry that exists is something
+// that happened.
+//
+// The comparison is made in the store rather than against the last graph this
+// process assembled, for two reasons. It survives a restart, so coming back up
+// does not look like a change. And it compares sets of triples rather than
+// text, which matters because the assembler emits a system's services in map
+// order — two runs over an unchanged cloud produce the same graph and not the
+// same bytes.
 func (t *Traits) publishToStore(graph string) {
-	// As in store: an empty graph is not a description of anything, and PUTting
-	// one over urn:current replaces the cloud's knowledge graph with nothing.
+	// As in store: an empty graph is not a description of anything, and putting
+	// one over the current graph replaces the cloud's knowledge with nothing.
 	if strings.TrimSpace(graph) == "" {
 		log.Println("kgrapher: refusing to publish an empty graph to the triple store")
 		return
 	}
 
-	snapshotT := time.Now().UTC().Format(time.RFC3339)
-	snapshotIRI := "urn:snapshots:" + snapshotT
-
 	statementsURL := t.TripleStoreURL
 	repoBase := strings.TrimSuffix(t.TripleStoreURL, "/statements")
+	client := &http.Client{Transport: http.DefaultClient.Transport, Timeout: 60 * time.Second}
 
-	gspURL := repoBase + "/rdf-graphs/service?graph=" + url.QueryEscape(snapshotIRI)
-
-	req, err := http.NewRequest(http.MethodPut, gspURL, bytes.NewBuffer([]byte(graph)))
-	if err != nil {
-		log.Println("Error creating snapshot PUT:", err)
+	if err := putGraph(client, repoBase, stagingGraph, graph); err != nil {
+		log.Printf("kgrapher: staging the graph: %v\n", err)
 		return
+	}
+
+	changed, err := differs(client, repoBase, stagingGraph, currentGraph)
+	if err != nil {
+		log.Printf("kgrapher: comparing the new graph with the current one: %v\n", err)
+		return
+	}
+	if !changed {
+		// Nothing to say. The staging graph is left where it is; the next
+		// rebuild overwrites it, and it is never queried.
+		return
+	}
+
+	at := time.Now().UTC().Format(time.RFC3339)
+	event := "urn:changes:" + at
+
+	// One update, so the store never holds a change recorded against a current
+	// graph that was not replaced, or the reverse.
+	update := fmt.Sprintf(`
+PREFIX alc:  <http://www.synecdoque.com/lcloud/>
+PREFIX xsd:  <http://www.w3.org/2001/XMLSchema#>
+
+INSERT { GRAPH <%[1]s/added> { ?s ?p ?o } }
+WHERE  { GRAPH <%[2]s> { ?s ?p ?o } FILTER NOT EXISTS { GRAPH <%[3]s> { ?s ?p ?o } } };
+
+INSERT { GRAPH <%[1]s/removed> { ?s ?p ?o } }
+WHERE  { GRAPH <%[3]s> { ?s ?p ?o } FILTER NOT EXISTS { GRAPH <%[2]s> { ?s ?p ?o } } };
+
+INSERT DATA { GRAPH <%[4]s> {
+  <%[1]s> a alc:Change ;
+          alc:at "%[5]s"^^xsd:dateTime ;
+          alc:added   <%[1]s/added> ;
+          alc:removed <%[1]s/removed> .
+} };
+
+CLEAR GRAPH <%[3]s>;
+ADD GRAPH <%[2]s> TO <%[3]s>;
+`, event, stagingGraph, currentGraph, changeIndex, at)
+
+	if err := postUpdate(client, statementsURL, update); err != nil {
+		log.Printf("kgrapher: recording the change: %v\n", err)
+		return
+	}
+	log.Printf("kgrapher: the cloud changed; recorded at %s\n", event)
+}
+
+// putGraph replaces one named graph with the Turtle given, through the RDF
+// Graph Store Protocol.
+func putGraph(client *http.Client, repoBase, iri, turtle string) error {
+	gspURL := repoBase + "/rdf-graphs/service?graph=" + url.QueryEscape(iri)
+	req, err := http.NewRequest(http.MethodPut, gspURL, bytes.NewBufferString(turtle))
+	if err != nil {
+		return err
 	}
 	req.Header.Set("Content-Type", "text/turtle")
 
-	// Triple-store endpoint is typically HTTP-only on localhost, but use the
-	// framework transport for consistency in case the deployment ever moves
-	// it to HTTPS.
-	client := &http.Client{Transport: http.DefaultClient.Transport}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Println("Error PUTting snapshot:", err)
-		return
+		return err
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 	if resp.StatusCode/100 != 2 {
-		log.Printf("Snapshot PUT failed: %s\n%s\n", resp.Status, string(respBody))
-		return
+		return fmt.Errorf("PUT %s: %s: %s", iri, resp.Status, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
+// differs asks whether two named graphs hold different triples, in either
+// direction.
+//
+// One ASK rather than two counts: the question is whether anything at all
+// differs, and the store can stop at the first answer.
+func differs(client *http.Client, repoBase, a, b string) (bool, error) {
+	query := fmt.Sprintf(`ASK {
+  { GRAPH <%[1]s> { ?s ?p ?o } FILTER NOT EXISTS { GRAPH <%[2]s> { ?s ?p ?o } } }
+  UNION
+  { GRAPH <%[2]s> { ?s ?p ?o } FILTER NOT EXISTS { GRAPH <%[1]s> { ?s ?p ?o } } }
+}`, a, b)
+
+	form := url.Values{"query": {query}}
+	req, err := http.NewRequest(http.MethodPost, repoBase, bytes.NewBufferString(form.Encode()))
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+	req.Header.Set("Accept", "application/sparql-results+json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode/100 != 2 {
+		return false, fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 
-	update := fmt.Sprintf(`CLEAR GRAPH <urn:state:current>;
-ADD GRAPH <%s> TO <urn:state:current>;`, snapshotIRI)
+	var answer struct {
+		Boolean bool `json:"boolean"`
+	}
+	if err := json.Unmarshal(body, &answer); err != nil {
+		return false, fmt.Errorf("reading the answer: %w", err)
+	}
+	return answer.Boolean, nil
+}
 
+// postUpdate runs a SPARQL update.
+func postUpdate(client *http.Client, statementsURL, update string) error {
 	form := url.Values{"update": {update}}
-	req2, err := http.NewRequest(http.MethodPost, statementsURL, bytes.NewBufferString(form.Encode()))
+	req, err := http.NewRequest(http.MethodPost, statementsURL, bytes.NewBufferString(form.Encode()))
 	if err != nil {
-		log.Println("Error creating update POST:", err)
-		return
+		return err
 	}
-	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
 
-	resp2, err := client.Do(req2)
+	resp, err := client.Do(req)
 	if err != nil {
-		log.Println("Error POSTing update:", err)
-		return
+		return err
 	}
-	defer resp2.Body.Close()
-	resp2Body, _ := io.ReadAll(resp2.Body)
-	if resp2.StatusCode/100 != 2 {
-		log.Printf("Update failed: %s\n%s\n", resp2.Status, string(resp2Body))
-		return
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
-
-	fmt.Println("Snapshot stored at:", snapshotIRI)
-	fmt.Println("Current graph replaced from snapshot.")
+	return nil
 }
 
 // updatePrefixes updates the prefixes in the RDF blocks with the new URIs from the local ontologies.

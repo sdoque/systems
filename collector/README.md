@@ -81,6 +81,16 @@ sequenceDiagram
 
 ## Status
 
+**Running on AlphaCloud** against InfluxDB 2.9.1, ingesting a temperature every
+three seconds with the provider's unit, quantity kind and functional location
+carried through as tags:
+
+```
+collected temperature from canbus_ds18b20_28-00000f030344_temperature  value=23.5000
+```
+
+
+
 Prototype demonstrating that the mbaigo library can simultaneously collect the
 same measurement type from multiple distributed providers and store them as
 distinguishable time series in a single InfluxDB bucket.
@@ -203,13 +213,20 @@ echo 'deb [signed-by=/etc/apt/keyrings/influxdata-archive.gpg] https://repos.inf
 
 ```bash
 sudo apt-get update
-sudo apt-get install influxdb2
+sudo apt-get install influxdb2 influxdb2-cli
 sudo systemctl enable --now influxdb
 systemctl status influxdb
 ```
 
+**Both packages.** `influxdb2` is the server; `influx`, the command every step
+below uses, is in `influxdb2-cli`. Installing only the server leaves you at
+step 3 with `influx: command not found` and nothing to explain why — the two
+were separated upstream so a machine can hold the client without the database.
+
 `enable --now` starts it and makes it come back after a reboot, which the
 earlier `service influxdb start` did not.
+
+Verified on Raspberry Pi OS (Debian 13, aarch64): server 2.9.1, CLI 2.8.0.
 
 ### 3. Set it up — the step that is easy to miss
 

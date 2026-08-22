@@ -16,9 +16,12 @@
 package main
 
 import (
+	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -436,5 +439,178 @@ func TestAHeaterNeverRunsWithoutASetpointUnit(t *testing.T) {
 	if got := firstDetail(setpoint.Details, "Unit"); got != traits.setpointUnit {
 		t.Errorf("the setpoint service registers unit %q while the controller works "+
 			"in %q, so a consumer has nothing to convert from", got, traits.setpointUnit)
+	}
+}
+
+// ── the frost guard ───────────────────────────────────────────────────────────
+
+// heaterWatchingItsPlug builds a controller whose plug is an httptest server, so
+// a test can see what it was actually told to do.
+func heaterWatchingItsPlug(t *testing.T, blindFor time.Duration, graceMinutes int) (*Traits, func() []bool) {
+	t.Helper()
+
+	var mu sync.Mutex
+	var commands []bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if f, err := usecases.Unpack(body, "application/json"); err == nil {
+			if sig, ok := f.(*forms.SignalB_v1a); ok {
+				mu.Lock()
+				commands = append(commands, sig.Value)
+				mu.Unlock()
+			}
+		}
+		// Answer like a real provider. An empty 200 cannot be unpacked, so
+		// SetState reports an error and updatePlugState clears the discovered
+		// nodes — after which the controller has nowhere to write and every
+		// later command silently goes nowhere.
+		var echo forms.SignalB_v1a
+		echo.NewForm()
+		echo.Timestamp = time.Now()
+		out, _ := usecases.Pack(&echo, "application/json")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(out)
+	}))
+	t.Cleanup(srv.Close)
+
+	sys := components.NewSystem("ethermostat", context.Background())
+	tr := &Traits{
+		SetPt: 20, Period: 10, Kp: 5,
+		FrostGuard: graceMinutes,
+		lastGood:   time.Now().Add(-blindFor),
+		name:       "KitchenHeater",
+		owner:      &sys,
+		cervices: components.Cervices{
+			"on_off": {
+				Definition: "OnOff",
+				Protos:     []string{"http"},
+				Mode:       "set",
+				// An entry with an empty token means "discovered, and this cloud
+				// issued none" — an unauthorized cloud, which is what a test is.
+				Nodes: map[string][]components.NodeInfo{
+					"plug": {{URL: srv.URL, Tokens: map[string]string{"write": ""}}},
+				},
+			},
+		},
+	}
+	return tr, func() []bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]bool(nil), commands...)
+	}
+}
+
+// TestTheFrostGuardHoldsTheHeatOnWhenBlind is the whole point of the thing.
+//
+// A ZigBee plug returns to off when mains power is restored, and the cottage's
+// temperatures come from a cloud API over a domestic line — so after a power cut
+// the reading is missing at exactly the moment the plugs are off and the house
+// is cooling. Holding the last state, which is what this used to do, means
+// holding "off" for ever.
+func TestTheFrostGuardHoldsTheHeatOnWhenBlind(t *testing.T) {
+	tr, commands := heaterWatchingItsPlug(t, 45*time.Minute, 30)
+	tr.frostGuard()
+
+	got := commands()
+	if len(got) != 1 {
+		t.Fatalf("the plug was commanded %d time(s); want 1", len(got))
+	}
+	if !got[0] {
+		t.Error("the frost guard turned the heat OFF")
+	}
+}
+
+// TestTheFrostGuardWaitsOutTheGracePeriod: a single failed poll or a brief
+// network hiccup must change nothing, or the guard would fight normal control.
+func TestTheFrostGuardWaitsOutTheGracePeriod(t *testing.T) {
+	tr, commands := heaterWatchingItsPlug(t, 29*time.Minute, 30)
+	tr.frostGuard()
+
+	if got := commands(); len(got) != 0 {
+		t.Errorf("the plug was commanded %v before the grace period elapsed", got)
+	}
+	if tr.guarding {
+		t.Error("the guard engaged early")
+	}
+}
+
+// TestTheFrostGuardCanBeTurnedOff: zero is a real answer and means the operator
+// does not want it — a summer house with the water drained, say.
+func TestTheFrostGuardCanBeTurnedOff(t *testing.T) {
+	tr, commands := heaterWatchingItsPlug(t, 100*time.Hour, 0)
+	tr.frostGuard()
+
+	if got := commands(); len(got) != 0 {
+		t.Errorf("a disabled frost guard commanded the plug: %v", got)
+	}
+}
+
+// TestTheFrostGuardAnnouncesOnceAndKeepsHolding: at a ten-second period an
+// announcement per poll would write six lines a minute for the length of the
+// outage and bury the line saying when it began. The holding itself continues.
+func TestTheFrostGuardAnnouncesOnceAndKeepsHolding(t *testing.T) {
+	tr, commands := heaterWatchingItsPlug(t, 45*time.Minute, 30)
+
+	tr.frostGuard()
+	if !tr.guarding {
+		t.Fatal("the guard did not engage")
+	}
+	tr.frostGuard()
+	tr.frostGuard()
+
+	got := commands()
+	if len(got) != 3 {
+		t.Errorf("the plug was commanded %d time(s); want 3 — holding is per poll", len(got))
+	}
+	for i, on := range got {
+		if !on {
+			t.Errorf("command %d turned the heat off while guarding", i)
+		}
+	}
+}
+
+// TestAReadingReleasesTheGuard is the half that keeps this from being a heater
+// that never switches off again. Recovery needs no code in the guard: the next
+// successful read runs the ordinary control law and sets the plug from the
+// measurement.
+func TestAReadingReleasesTheGuard(t *testing.T) {
+	tr, commands := heaterWatchingItsPlug(t, 45*time.Minute, 30)
+	tr.frostGuard()
+	if !tr.guarding {
+		t.Fatal("the guard did not engage")
+	}
+
+	// A room comfortably above the setpoint: normal control would switch off.
+	temp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		var sig forms.SignalA_v1a
+		sig.NewForm()
+		sig.Value = 24
+		sig.Unit = "<http://qudt.org/vocab/unit/DEG_C>"
+		sig.Timestamp = time.Now()
+		body, _ := usecases.Pack(&sig, "application/json")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(body)
+	}))
+	defer temp.Close()
+	tr.cervices["temperature"] = &components.Cervice{
+		Definition: "temperature",
+		Protos:     []string{"http"},
+		Mode:       "get",
+		Nodes: map[string][]components.NodeInfo{
+			"sensor": {{URL: temp.URL, Tokens: map[string]string{"read": ""}}},
+		},
+	}
+
+	tr.processFeedbackLoop()
+
+	if tr.guarding {
+		t.Error("the guard was still engaged after a temperature arrived")
+	}
+	got := commands()
+	if len(got) < 2 {
+		t.Fatalf("expected a guard command then a control command, got %v", got)
+	}
+	if got[len(got)-1] {
+		t.Error("after a reading of 24 °C against a setpoint of 20 °C the heat is still on — control did not resume")
 	}
 }

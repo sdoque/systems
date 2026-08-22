@@ -17,13 +17,17 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/sdoque/mbaigo/usecases"
+
+	"github.com/sdoque/mbaigo/components"
 )
 
 // TestInitTemplate verifies that initTemplate returns a UnitAsset with the
@@ -385,5 +389,73 @@ func TestFetchStationData_APIShape(t *testing.T) {
 	}
 	if parsed.Body.Devices[0].StationName != "TestStation" {
 		t.Errorf("StationName: got %q, want %q", parsed.Body.Devices[0].StationName, "TestStation")
+	}
+}
+
+// TestATransientlyEmptyAccountDoesNotStopTheSystem is the regression for a
+// heating outage at the cottage on 22 August 2026.
+//
+// The Netatmo API answered a restart with an empty device list — transiently,
+// seconds after a battery change. This system called log.Fatal and exited; the
+// temperatures it provides went with it; the ethermostat could then discover no
+// heaters at all and stopped controlling the heating, while every other system
+// in the cloud reported itself healthy. In January that is frozen pipes.
+func TestATransientlyEmptyAccountDoesNotStopTheSystem(t *testing.T) {
+	firstWait, maxWait = time.Millisecond, 2*time.Millisecond
+	defer func() { firstWait, maxWait = 15*time.Second, 5*time.Minute }()
+
+	sys := components.NewSystem("meteorologue", context.Background())
+	calls := 0
+	fetch := func() (*StationsDataResponse, error) {
+		calls++
+		switch calls {
+		case 1:
+			return nil, errors.New("dial tcp: lookup api.netatmo.com: no such host")
+		case 2:
+			return &StationsDataResponse{}, nil // reachable, but no stations yet
+		default:
+			d := &StationsDataResponse{}
+			d.Body.Devices = make([]Device, 1)
+			return d, nil
+		}
+	}
+
+	got, ok := stationsWhenAvailable(&sys, fetch)
+	if !ok {
+		t.Fatal("gave up on a station list that arrived on the third attempt")
+	}
+	if len(got.Body.Devices) != 1 {
+		t.Errorf("returned %d device(s); want 1", len(got.Body.Devices))
+	}
+	if calls != 3 {
+		t.Errorf("called the API %d times; want 3 (error, empty, then success)", calls)
+	}
+}
+
+// TestShutdownEndsTheWait: retrying for ever must still not outlive a Ctrl+C,
+// or stopping the cloud would hang on a system waiting for somebody's web API.
+func TestShutdownEndsTheWait(t *testing.T) {
+	firstWait, maxWait = 10*time.Millisecond, 10*time.Millisecond
+	defer func() { firstWait, maxWait = 15*time.Second, 5*time.Minute }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	sys := components.NewSystem("meteorologue", ctx)
+
+	go func() { time.Sleep(30 * time.Millisecond); cancel() }()
+
+	done := make(chan struct{})
+	go func() {
+		if _, ok := stationsWhenAvailable(&sys, func() (*StationsDataResponse, error) {
+			return &StationsDataResponse{}, nil // never any stations
+		}); ok {
+			t.Error("reported success when the system was shutting down")
+		}
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the retry loop ignored shutdown")
 	}
 }

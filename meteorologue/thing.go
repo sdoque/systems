@@ -371,6 +371,47 @@ func initTemplate() *components.UnitAsset {
 	}
 }
 
+// firstWait and maxWait bound the retry backoff. Variables rather than
+// constants so a test can drive the loop without sleeping: the retry is what
+// keeps the heating alive, and a behaviour that can only be tested by waiting
+// five minutes is one nobody tests.
+var (
+	firstWait = 15 * time.Second
+	maxWait   = 5 * time.Minute
+)
+
+// stationsWhenAvailable fetches the Netatmo station list, retrying until it
+// answers with at least one device or the system is shut down.
+//
+// The backoff starts short and settles at five minutes, which is the station's
+// own reporting period: asking faster than the data changes only spends the
+// account's rate limit. The second return is false only when the context ended,
+// so a caller can tell "shutting down" from "still trying".
+func stationsWhenAvailable(sys *components.System, fetch func() (*StationsDataResponse, error)) (*StationsDataResponse, bool) {
+	wait := firstWait
+
+	for {
+		stationData, err := fetch()
+		switch {
+		case err != nil:
+			log.Printf("Netatmo: could not fetch station data (%v); retrying in %v\n", err, wait)
+		case len(stationData.Body.Devices) == 0:
+			log.Printf("Netatmo: the account reports no stations; retrying in %v\n", wait)
+		default:
+			return stationData, true
+		}
+
+		select {
+		case <-time.After(wait):
+		case <-sys.Ctx.Done():
+			return nil, false
+		}
+		if wait *= 2; wait > maxWait {
+			wait = maxWait
+		}
+	}
+}
+
 // -------------------------------------Asset instantiation entry point
 
 // newResources is the single entry point called by main for this system.
@@ -382,12 +423,24 @@ func newResources(uac usecases.ConfigurableAsset, sys *components.System) ([]*co
 		log.Fatalf("Netatmo authentication failed: %v\n", err)
 	}
 
-	stationData, err := tm.fetchStationData()
-	if err != nil {
-		log.Fatalf("could not fetch Netatmo station data: %v\n", err)
-	}
-	if len(stationData.Body.Devices) == 0 {
-		log.Fatal("no Netatmo stations found for this account")
+	// The station list is fetched until it answers, not once.
+	//
+	// This used to be a pair of log.Fatal calls, and on 22 August the cottage
+	// found out what that costs: the Netatmo API answered a restart with an
+	// empty device list — transiently, seconds after a battery change — this
+	// system exited, and the temperatures it provides went with it. The
+	// ethermostat then had nothing to read, could not discover a single heater,
+	// and the heating stopped being controlled at all while every other system
+	// in the cloud reported itself healthy.
+	//
+	// Failing fast is right when the failure is local and permanent. This one is
+	// neither: the reading comes from somebody else's web service over a
+	// domestic internet connection, so "nothing right now" is the most ordinary
+	// answer it can give. A system that keeps asking is noisy in the log; one
+	// that exits is silent and takes the heating with it.
+	stationData, ok := stationsWhenAvailable(sys, tm.fetchStationData)
+	if !ok {
+		return nil, func() {}
 	}
 
 	cache := newModuleCache()

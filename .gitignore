@@ -63,6 +63,7 @@ serviceRegistry.db
 /ds18b20/ds18b20
 /ds18b20F/ds18b20F
 /emulator/emulator
+/envoy/envoy
 /esr/esr
 /ethermostat/ethermostat
 /filmer/filmer

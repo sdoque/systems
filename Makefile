@@ -11,7 +11,7 @@ BUILD_HASH := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 PKG        := github.com/sdoque/mbaigo/components
 
 SYSTEMS := assessor authorizer beehive beekeeper busdriver ca clerk collector democrat \
-           drafter ds18b20 ds18b20F emulator esr ethermostat filmer flattener \
+           drafter ds18b20 ds18b20F emulator envoy esr ethermostat filmer flattener \
            hobbyist kgrapher leveler maitreD meteorologue modboss \
            modeler nurse orchestrator painter parallax photographer recognizer \
            revolutionary sailor sapper telegrapher thermostat tracker \

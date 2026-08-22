@@ -312,7 +312,7 @@ func TestTheToggleIsADeclaredActuationService(t *testing.T) {
 
 // TestFetchOnOffState_Offline verifies that an unreachable URL returns (false, false).
 func TestFetchOnOffState_Offline(t *testing.T) {
-	state, online := fetchOnOffState("http://127.0.0.1:1/nonexistent")
+	state, online := fetchOnOffState("http://127.0.0.1:1/nonexistent", nil)
 	if online {
 		t.Error("expected online=false for unreachable URL")
 	}
@@ -333,12 +333,79 @@ func TestFetchOnOffState_Online(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	state, online := fetchOnOffState(srv.URL)
+	state, online := fetchOnOffState(srv.URL, nil)
 	if !online {
 		t.Error("expected online=true")
 	}
 	if !state {
 		t.Error("expected state=true")
+	}
+}
+
+// TestTheReadTokenIsPresented is the regression for a dashboard that went blank
+// the day its cloud adopted authorization.
+//
+// fetchOnOffState took a bare URL, so it had no way to reach the access tokens
+// discovery had already obtained, and issued every GET without one. Against a
+// provider with no authorizer that is served happily, which is why it survived
+// so long. Against beekeeper in an authorized cloud it is refused with "no
+// access token", fetchOnOffState reports (false, false), and every switch shows
+// as offline with nothing in beehive's own log to say why.
+func TestTheReadTokenIsPresented(t *testing.T) {
+	var seen string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Header.Get(usecases.TokenHeader)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"version":   "SignalB_v1.0",
+			"value":     true,
+			"timestamp": time.Now(),
+		})
+	}))
+	defer srv.Close()
+
+	fetchOnOffState(srv.URL, map[string]string{"read": "a-read-token", "write": "a-write-token"})
+	if seen != "a-read-token" {
+		t.Errorf("the provider saw %q; the read token is what a GET is authorized by", seen)
+	}
+}
+
+// TestAnUnauthorizedCloudSendsNoHeader keeps the fix from becoming a new
+// requirement: a cloud that issues no tokens must still be able to read a
+// switch, so an empty entry means "send nothing", not "send an empty token".
+func TestAnUnauthorizedCloudSendsNoHeader(t *testing.T) {
+	present := true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, present = r.Header[http.CanonicalHeaderKey(usecases.TokenHeader)]
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"version":   "SignalB_v1.0",
+			"value":     true,
+			"timestamp": time.Now(),
+		})
+	}))
+	defer srv.Close()
+
+	fetchOnOffState(srv.URL, map[string]string{"read": ""})
+	if present {
+		t.Error("an empty token was sent as a header; absent and empty are different answers")
+	}
+}
+
+// TestTheSwitchListDoesNotLeakTokens guards the dashboard's own JSON. SwitchList
+// is served to a browser, and an access token is a bearer credential: anything
+// that can read the list could otherwise drive every plug behind it.
+func TestTheSwitchListDoesNotLeakTokens(t *testing.T) {
+	body, err := json.Marshal([]SwitchInfo{{
+		Name: "KitchenHeater", URL: "https://host/beekeeper/KitchenHeater/on_off",
+		State: true, Online: true,
+		Tokens: map[string]string{"read": "secret-read", "write": "secret-write"},
+	}})
+	if err != nil {
+		t.Fatalf("marshalling the switch list: %v", err)
+	}
+	if strings.Contains(string(body), "secret-") {
+		t.Errorf("the switch list carries access tokens over the wire: %s", body)
 	}
 }
 

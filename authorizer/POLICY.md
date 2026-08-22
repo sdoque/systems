@@ -344,6 +344,7 @@ two of the three:
 | `ca` | **http** | Enrollment precedes any certificate. It cannot be otherwise. |
 | `serviceregistrar` | **http** | Registration is core-mission and needs no token. |
 | `orchestrator` | **https** once authorization is adopted | This is where the subject is established. |
+| `authorizer` | **https** once authorization is adopted | The `authorize` service is mTLS, so it refuses a quest that arrives over plain HTTP. |
 
 So exactly one line changes per consumer:
 
@@ -373,6 +374,25 @@ log.
 
 An empty URL means **absent**: a cloud that has not adopted authorization
 behaves exactly as it did before, and `GetRunningCoreSystemURL` skips the entry.
+
+A cloud that *has* adopted it fills the slot in, and the scheme is https on the
+TLS port — the same substitution as the orchestrator's:
+
+```json
+{ "coreSystem": "authorizer",
+  "url": "https://192.168.1.10:30104/authorizer/authorization" }
+```
+
+Writing `http://…:20104` there looks reasonable — the authorizer's certificate
+*is* fetched over plain HTTP, and safely, since nobody can forge a CA-signed
+certificate — but the two are different endpoints. `/authorizer/cert` is public;
+`/authorizer/authorization` is not, and once the authorizer holds its own
+certificate it answers a plain-HTTP quest with
+
+    authorizer: refusing an authorization quest that arrived over plain HTTP while 30104 is for TLS
+
+while the Orchestrator, which asked, reports only that it could not unmarshal
+the reply as JSON. The message naming the cause is in the log nobody is reading.
 What the slot buys is discovery — an operator opening the file sees that the
 framework has an authorizer and where its URL goes, rather than needing to know
 the JSON shape and copy it from another system.

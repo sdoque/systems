@@ -1,0 +1,37 @@
+{
+    "policies": [
+        {
+            "subject": "ethermostat",
+            "missions": ["measurement"],
+            "actions": ["read"],
+            "ttl": "5m"
+        },
+        {
+            "subject": "ethermostat",
+            "missions": ["actuation"],
+            "actions": ["read", "write"],
+            "ttl": "5m"
+        },
+        {
+            "subject": "flattener",
+            "missions": ["state"],
+            "actions": ["read", "write"],
+            "ttl": "5m"
+        },
+        {
+            "subject": "beehive",
+            "missions": ["actuation"],
+            "actions": ["read", "write"],
+            "ttl": "5m"
+        },
+        {"subject": "collector", "missions": ["measurement", "state", "actuation", "aggregation", "control"], "actions": ["read"], "ttl": "15m"},
+        {"subject": "envoy", "missions": ["measurement", "state", "actuation", "aggregation", "control"], "actions": ["read"], "ttl": "5m"},
+        {"subject": "envoy", "missions": ["core"], "services": ["syslist"], "actions": ["read"], "ttl": "5m"},
+        {"subject": "kgrapher", "missions": ["core"], "services": ["syslist"], "actions": ["read"], "ttl": "15m"},
+        {"subject": "modeler",  "missions": ["core"], "services": ["syslist"], "actions": ["read"], "ttl": "15m"},
+        {"subject": "painter",  "missions": ["core"], "services": ["syslist"], "actions": ["read"], "ttl": "15m"},
+        {"subject": "modeler",  "missions": ["aggregation"], "actions": ["read"], "ttl": "15m"},
+        {"subject": "painter",  "missions": ["aggregation"], "actions": ["read"], "ttl": "15m"}
+    ],
+    "denials": []
+}

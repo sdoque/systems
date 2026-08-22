@@ -261,19 +261,61 @@ func describe(kind, data string) {
 	log.Printf("kgrapher: %s %s from %s\n", event.Record.ServiceDefinition, event.Change, event.Record.SystemName)
 }
 
+// incompleteRetry is how long to wait before assembling again after a pass that
+// could not read every system. A variable so a test does not have to wait.
+var incompleteRetry = 30 * time.Second
+
 // rebuild assembles the graph and publishes it.
 //
 // A failure is logged and left: the next change will try again, and the graph
 // already served stays as it was rather than being replaced by nothing.
+//
+// A pass that reads only *some* systems is the more dangerous case, because it
+// succeeds. /kgraph requires an enrolled caller, and a system is registered
+// under its plain-HTTP URL for the seconds between registering and its
+// certificate arriving — so a rebuild triggered in that window silently omits
+// it. Rebuilds happen on registry changes, and once the cloud settles there are
+// none, so the omission would stand until something else moved: the authorizer
+// went missing from the cottage's graph for ten minutes this way, while this
+// function reported that the graph described the cloud.
 func (t *Traits) rebuild() {
-	graph, err := t.assembleOntologies()
+	graph, skipped, err := t.assembleOntologies()
 	if err != nil {
 		log.Printf("kgrapher: could not assemble the graph: %v\n", err)
 		return
 	}
 	t.store(graph)
 	t.publishToStore(graph)
+
+	if skipped > 0 {
+		log.Printf("kgrapher: the graph is missing %d system(s) that could not be read; assembling again in %v\n",
+			skipped, incompleteRetry)
+		t.retryIncomplete()
+		return
+	}
 	log.Printf("kgrapher: the graph now describes the cloud as of this change\n")
+}
+
+// retryIncomplete schedules one more assembly, and only one: a retry that is
+// still incomplete schedules its own, so without the guard each round would
+// multiply.
+func (t *Traits) retryIncomplete() {
+	if !t.retryPending.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer t.retryPending.Store(false)
+		ctx := t.owner.Ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		select {
+		case <-time.After(incompleteRetry):
+		case <-ctx.Done():
+			return
+		}
+		t.rebuild()
+	}()
 }
 
 // backoff is how long to wait before the next attempt, growing with consecutive

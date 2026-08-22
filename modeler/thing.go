@@ -150,6 +150,15 @@ func (t *Traits) assembleModel(w http.ResponseWriter) {
 			log.Printf("Unable to get SysML model from %s: %s\n", sysURL, err)
 			continue
 		}
+		// A refusal is not a model — see the same guard in kgrapher. /smodel now
+		// requires an enrolled caller, so a system still registered under its
+		// plain-HTTP URL answers 401, and parsing that text as SysML puts the
+		// refusal into the model as if it were a declaration.
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			resp.Body.Close()
+			log.Printf("Skipping SysML model from %s: %s\n", sysURL, resp.Status)
+			continue
+		}
 		bodyBytes, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {

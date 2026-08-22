@@ -72,6 +72,28 @@ func main() {
 	if err := json.Unmarshal(rawResources[0], &uac); err != nil {
 		log.Fatalf("resource configuration error: %v\n", err)
 	}
+	// Enrollment is started before the assets are built, which is the opposite
+	// of every other system here and deliberate.
+	//
+	// This system is the only one whose construction blocks on the network:
+	// newResources loops until a heater plug answers, because it creates one
+	// unit asset per discovered heater and cannot know its own shape until it
+	// has looked. That was harmless while the orchestrator was reached over
+	// plain HTTP. Once a cloud adopts authorization the orchestrator must be
+	// reached over HTTPS — the subject is the Common Name of a verified client
+	// certificate, and a service quest arriving over HTTP carries no subject at
+	// all — and the certificate that connection needs is the one installed by
+	// RequestCertificate. Built in the old order, discovery waits for a
+	// certificate that is only requested after discovery returns, and the
+	// system never starts: it holds no port, registers nothing, and reports
+	// only "certificate signed by unknown authority" every fifteen seconds.
+	//
+	// RequestCertificate reads nothing from sys.UAssets and returns
+	// immediately, enrolling in a goroutine, so moving it earlier costs
+	// nothing. The discovery loop's own retry is what closes the gap between
+	// the two.
+	usecases.RequestCertificate(&sys)
+
 	// Forward shutdown signals to the context immediately so that Ctrl+C
 	// unblocks the discovery retry loop inside newResources.
 	assets, cleanup := newResources(uac, &sys)
@@ -80,7 +102,6 @@ func main() {
 		sys.UAssets[ua.GetName()] = ua
 	}
 
-	usecases.RequestCertificate(&sys)
 	usecases.RegisterServices(&sys)
 	go usecases.SetoutServers(&sys)
 

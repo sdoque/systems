@@ -21,8 +21,20 @@ Each measurement entry in the configuration file describes:
 
 On every tick the collector:
 1. Calls `Search4MultipleServices` to discover *all* registered providers of that measurement type.
-2. Iterates over every discovered node; for each one it performs an HTTP GET to retrieve a `SignalA_v1a` form.
-3. Writes one InfluxDB point per provider, tagged with the **source** node name and any metadata (e.g. `Unit`, `Location`) that the provider registered with the orchestrator.
+2. Iterates over every discovered node; for each one it performs an HTTP GET to retrieve a reading — `SignalA_v1a` for a number, `SignalB_v1a` for a switch.
+3. Writes one InfluxDB point per provider, tagged with the **source** node name and any metadata (e.g. `Unit`, `Location`) that the provider registered with the orchestrator. A number is written as a float and a switch as a **boolean**, so the bucket holds what the provider actually said.
+
+A boolean field cannot be averaged, and the average is the interesting figure — the mean of a heater's state over a window is its duty cycle, or how long it actually ran. One line of Flux recovers it:
+
+```flux
+from(bucket: "cottage")
+  |> range(start: -24h)
+  |> filter(fn: (r) => r._measurement == "OnOff")
+  |> map(fn: (r) => ({r with _value: if r._value then 1.0 else 0.0}))
+  |> aggregateWindow(every: 1h, fn: mean)
+```
+
+**Changing the stored type of a field is not free.** InfluxDB fixes a field's type per shard, so a measurement that already holds `value` as a float will reject boolean points for that shard with a field-type conflict — and the write API reports it asynchronously, so the writes simply stop arriving. Delete the measurement's existing points before switching, or write to a new bucket.
 4. If a provider returns an error its node entry is cleared so re-discovery happens on the next tick.
 
 ### Sequence diagram

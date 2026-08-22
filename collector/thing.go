@@ -271,7 +271,7 @@ func (t *Traits) collectIngest(name string, period time.Duration, writeAPI api.W
 						perNode = map[string]*components.Cervice{}
 						break
 					}
-					tup, ok := tf.(*forms.SignalA_v1a)
+					value, ok := signalValue(tf)
 					if !ok {
 						log.Printf("unexpected form from %s for %s\n", node, name)
 						continue
@@ -287,14 +287,48 @@ func (t *Traits) collectIngest(name string, period time.Duration, writeAPI api.W
 					point := write.NewPoint(
 						name,
 						tags,
-						map[string]interface{}{"value": tup.Value},
+						map[string]interface{}{"value": value},
 						time.Now(),
 					)
 					writeAPI.WritePoint(point)
-					log.Printf("collected %s from %-20s  value=%.4f\n", name, node, tup.Value)
+					log.Printf("collected %s from %-20s  value=%v\n", name, node, value)
 				}
 			}
 		}
+	}
+}
+
+// signalValue reduces a reading to the value this system records, and says
+// whether it was a reading at all.
+//
+// A measurement is a number and a switch is not — but the *history* of a switch
+// is. A plug reports SignalB_v1a, and this system used to accept only
+// SignalA_v1a, so every configured OnOff discovered its providers, read them,
+// and recorded nothing but a log line per device per tick.
+//
+// A switch is stored as InfluxDB's own boolean type rather than as 0 and 1, so
+// what the bucket holds is what the provider said. The cost is that a boolean
+// field cannot be averaged directly, and the average is the interesting figure:
+// the mean of a heater's state over a window is its duty cycle, which is how
+// long it actually ran. It is still one line of Flux away —
+//
+//	|> map(fn: (r) => ({r with _value: if r._value then 1.0 else 0.0}))
+//	|> aggregateWindow(every: 1h, fn: mean)
+//
+// — so nothing is lost, and the stored form stays honest about what a switch is.
+//
+// The return is `any` because these are two different types and the point
+// carries whichever it was given. That is also why this is worth keeping in one
+// place: a caller that assumed a float would silently record `0` for every
+// switch that was off and every switch that was on.
+func signalValue(f forms.Form) (any, bool) {
+	switch sig := f.(type) {
+	case *forms.SignalA_v1a:
+		return sig.Value, true
+	case *forms.SignalB_v1a:
+		return sig.Value, true
+	default:
+		return nil, false
 	}
 }
 

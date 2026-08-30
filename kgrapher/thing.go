@@ -132,7 +132,8 @@ func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:        "assembler",
 		Mission:     components.MissionAggregation,
-		Details:     map[string][]string{"Type": {"Interactive"}, "Mobility": {components.MobilityMovable}},
+		Mobility:    components.MobilityMovable,
+		Details:     map[string][]string{"Type": {"Interactive"}},
 		ServicesMap: map[string]*components.Service{cloudgraph.SubPath: &cloudgraph, localOntologies.SubPath: &localOntologies},
 		Traits: &Traits{
 			TripleStoreURL: "http://localhost:7200/repositories/Arrowhead/statements",
@@ -170,6 +171,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
 		Mission:     configuredAsset.Mission,
+		Mobility:    configuredAsset.Mobility,
+		TetheredTo:  configuredAsset.TetheredTo,
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),

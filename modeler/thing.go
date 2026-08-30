@@ -67,7 +67,8 @@ func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:        "assembler",
 		Mission:     components.MissionAggregation,
-		Details:     map[string][]string{"Type": {"Interactive"}, "Mobility": {components.MobilityMovable}},
+		Mobility:    components.MobilityMovable,
+		Details:     map[string][]string{"Type": {"Interactive"}},
 		ServicesMap: map[string]*components.Service{cloudmodel.SubPath: &cloudmodel},
 		Traits:      &Traits{CloudName: "localCloud"},
 	}
@@ -94,6 +95,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
 		Mission:     configuredAsset.Mission,
+		Mobility:    configuredAsset.Mobility,
+		TetheredTo:  configuredAsset.TetheredTo,
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),

@@ -138,9 +138,10 @@ func initTemplate() *components.UnitAsset {
 	}
 
 	return &components.UnitAsset{
-		Name:    "maitreD",
-		Mission: components.MissionCore,
-		Details: map[string][]string{"Role": {"host-attestation"}, "Mobility": {components.MobilityFixed}},
+		Name:     "maitreD",
+		Mission:  components.MissionCore,
+		Mobility: components.MobilityFixed,
+		Details:  map[string][]string{"Role": {"host-attestation"}},
 		ServicesMap: map[string]*components.Service{
 			attest.SubPath:     &attest,
 			loadstatus.SubPath: &loadstatus,
@@ -171,6 +172,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
 		Mission:     configuredAsset.Mission,
+		Mobility:    configuredAsset.Mobility,
+		TetheredTo:  configuredAsset.TetheredTo,
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),

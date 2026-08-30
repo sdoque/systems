@@ -106,9 +106,10 @@ func initTemplate() *components.UnitAsset {
 	}
 
 	return &components.UnitAsset{
-		Name:    "certification",
-		Mission: components.MissionCore,
-		Details: map[string][]string{"PKI": {"X.509"}, "Location": {"LocalCloud"}, "Mobility": {components.MobilityMovable}},
+		Name:     "certification",
+		Mission:  components.MissionCore,
+		Mobility: components.MobilityMovable,
+		Details:  map[string][]string{"PKI": {"X.509"}, "Location": {"LocalCloud"}},
 		ServicesMap: map[string]*components.Service{
 			certify.SubPath:   &certify,
 			whitelist.SubPath: &whitelist,
@@ -176,6 +177,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
 		Mission:     configuredAsset.Mission,
+		Mobility:    configuredAsset.Mobility,
+		TetheredTo:  configuredAsset.TetheredTo,
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),

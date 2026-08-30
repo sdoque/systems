@@ -53,6 +53,8 @@ func main() {
 	dir := flag.String("dir", ".", "directory to write the captured files into")
 	wait := flag.Duration("wait", 90*time.Second, "how long to wait for enrollment before giving up")
 	stamp := flag.Bool("timestamp", true, "put a capture timestamp in each filename")
+	serveMode := flag.Bool("serve", false, "stay up and serve the named services to a browser on this host")
+	port := flag.Int("port", 8190, "loopback port to serve on with -serve")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `envoy — fetch the cloud's descriptions on behalf of a person
 
@@ -62,11 +64,17 @@ Usage:
 Examples:
   envoy cloudgraph cloudmodel
   envoy -dir /tmp/capture cloudgraph
+  envoy -serve view cloudpicture
 
 Every provider of each named service definition is discovered through the
 orchestrator, read with the access token the orchestrator issues, and written
 verbatim to one file per provider. Bodies are never parsed: what the provider
 sent is what lands on disk.
+
+With -serve the same reads are held open for a browser on this host instead of
+written to disk: each service is published on the last segment of the provider's
+own path, so a page fetching a relative URL finds it. The listener binds the
+loopback interface, answers GET only, and forwards nothing that could actuate.
 
 Flags:
 `)
@@ -130,12 +138,44 @@ Flags:
 	// policies.json is unpaired for exactly this reason, and says so.
 	usecases.RequestCertificate(&sys)
 
-	select {
-	case <-usecases.EnsureCertReady(&sys):
-	case <-time.After(*wait):
-		log.Fatalf("no certificate after %v — is the CA running, and is this binary on the whitelist?", *wait)
-	case <-ctx.Done():
-		return
+	// A capture gives up; a viewer waits.
+	//
+	// The timeout suits the one-shot shape: an operator ran this from a prompt
+	// and is watching it, so failing after a minute and a half with a sentence
+	// about the whitelist beats hanging. In -serve mode it is a system in
+	// systems.txt like any other, and every other one retries until what it
+	// needs appears — which matters most exactly when this fired: after a
+	// redeploy, when every hash has changed and the maitreD is still serving a
+	// cached whitelist for up to five minutes. Exiting there means the cloud
+	// comes back without its viewer and nobody notices until they look.
+	certReady := usecases.EnsureCertReady(&sys)
+	if *serveMode {
+		waiting := time.NewTicker(30 * time.Second)
+		defer waiting.Stop()
+		for ready := false; !ready; {
+			select {
+			case <-certReady:
+				ready = true
+			case <-waiting.C:
+				log.Printf("envoy: still waiting for a certificate — is this binary on the whitelist the CA is serving?")
+			case <-ctx.Done():
+				return
+			}
+		}
+	} else {
+		select {
+		case <-certReady:
+		case <-time.After(*wait):
+			log.Fatalf("no certificate after %v — is the CA running, and is this binary on the whitelist?", *wait)
+		case <-ctx.Done():
+			return
+		}
+	}
+
+	if *serveMode {
+		// Blocks until the process is stopped. Reaching the end of serve at all
+		// means the listener failed, which is worth exiting non-zero for.
+		log.Fatalf("envoy: %v", serve(&sys, definitions, *port))
 	}
 
 	if err := os.MkdirAll(*dir, 0o755); err != nil {

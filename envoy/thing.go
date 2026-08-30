@@ -47,21 +47,9 @@ func initTemplate() *components.UnitAsset {
 // capture reads every provider of one service definition and writes each body
 // to its own file. It returns how many were written and how many could not be.
 func capture(sys *components.System, definition, dir string, stamp bool) (written, failed int) {
-	cer := &components.Cervice{
-		Definition: definition,
-		Protos:     components.SProtocols(sys.Husk.ProtoPort),
-		Nodes:      make(map[string][]components.NodeInfo),
-	}
-
-	// "read" explicitly: a token names the action it permits, and the provider
-	// recomputes that action from the HTTP method it receives. A token minted
-	// for anything else is refused on the GET below.
-	if err := usecases.Search4MultipleServicesAs(cer, sys, "read"); err != nil {
-		log.Printf("envoy: %s: discovery failed: %v", definition, err)
-		return 0, 0
-	}
-	if len(cer.Nodes) == 0 {
-		log.Printf("envoy: %s: no provider offers this service", definition)
+	cer, err := discover(sys, definition)
+	if err != nil {
+		log.Printf("envoy: %s: %v", definition, err)
 		return 0, 0
 	}
 
@@ -93,9 +81,21 @@ func capture(sys *components.System, definition, dir string, stamp bool) (writte
 // the framework knows how to parse — a capture tool that could only save what it
 // could also interpret would be useless for exactly the documents worth saving.
 func fetch(ni components.NodeInfo) (body []byte, contentType string, err error) {
+	body, contentType, _, err = fetchStatus(ni)
+	return body, contentType, err
+}
+
+// fetchStatus is fetch, and also reports the status the provider answered with.
+//
+// The proxy needs the number rather than the sentence: a 401 or 403 means the
+// token this node was discovered with has gone stale and the read should be
+// retried after re-discovery, while any other refusal is the provider's answer
+// and belongs in front of the operator unchanged. Parsing that distinction back
+// out of an error string would be guessing.
+func fetchStatus(ni components.NodeInfo) (body []byte, contentType string, status int, err error) {
 	req, err := http.NewRequest(http.MethodGet, ni.URL, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	if token := ni.Tokens["read"]; token != "" {
 		req.Header.Set(usecases.TokenHeader, token)
@@ -107,7 +107,7 @@ func fetch(ni components.NodeInfo) (body []byte, contentType string, err error) 
 	client := &http.Client{Timeout: 60 * time.Second, Transport: http.DefaultClient.Transport}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, "", fmt.Errorf("reading %s: %w", ni.URL, err)
+		return nil, "", 0, fmt.Errorf("reading %s: %w", ni.URL, err)
 	}
 	defer resp.Body.Close()
 
@@ -118,16 +118,16 @@ func fetch(ni components.NodeInfo) (body []byte, contentType string, err error) 
 		reason, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
 		detail := strings.TrimSpace(usecases.ForLog(string(reason)))
 		if detail != "" {
-			return nil, "", fmt.Errorf("reading %s: %s: %s", ni.URL, resp.Status, detail)
+			return nil, "", resp.StatusCode, fmt.Errorf("reading %s: %s: %s", ni.URL, resp.Status, detail)
 		}
-		return nil, "", fmt.Errorf("reading %s: %s", ni.URL, resp.Status)
+		return nil, "", resp.StatusCode, fmt.Errorf("reading %s: %s", ni.URL, resp.Status)
 	}
 
 	body, err = io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, "", fmt.Errorf("reading %s: %w", ni.URL, err)
+		return nil, "", resp.StatusCode, fmt.Errorf("reading %s: %w", ni.URL, err)
 	}
-	return body, resp.Header.Get("Content-Type"), nil
+	return body, resp.Header.Get("Content-Type"), resp.StatusCode, nil
 }
 
 // filename names the capture after where it came from, so a directory of them

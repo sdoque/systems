@@ -23,6 +23,8 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -79,10 +81,11 @@ func initTemplate() *components.UnitAsset {
 	}
 
 	return &components.UnitAsset{
-		Name:    "orchestration",
-		Mission: components.MissionCore,
-		Details: map[string][]string{"Platform": {"Independent"}, "Mobility": {components.MobilityMovable}},
-		Traits:  &Traits{},
+		Name:     "orchestration",
+		Mission:  components.MissionCore,
+		Mobility: components.MobilityMovable,
+		Details:  map[string][]string{"Platform": {"Independent"}},
+		Traits:   &Traits{},
 		ServicesMap: components.Services{
 			squest.SubPath:  &squest,
 			squests.SubPath: &squests,
@@ -101,6 +104,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
 		Mission:     configuredAsset.Mission,
+		Mobility:    configuredAsset.Mobility,
+		TetheredTo:  configuredAsset.TetheredTo,
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
@@ -272,7 +277,7 @@ func (t *Traits) getServiceURL(newQuest forms.ServiceQuest_v1, subject string) (
 	}
 
 	if len(serviceList.List) == 0 {
-		return nil, fmt.Errorf("unable to locate any such service: %s", newQuest.ServiceDefinition)
+		return nil, emptyRegistry(newQuest)
 	}
 
 	permitted, tokens, err := t.authorized(subject, newQuest.Action, *serviceList)
@@ -289,6 +294,36 @@ func (t *Traits) getServiceURL(newQuest forms.ServiceQuest_v1, subject string) (
 	serviceLocation.Token = tokens[serviceLocation.ServNode]
 	payload, err := json.MarshalIndent(serviceLocation, "", "  ")
 	return payload, err
+}
+
+// emptyRegistry says the registrar found nothing, and says what was asked for.
+//
+// "unable to locate any such service" was the whole of it, and it sent three
+// separate searches for a missing system on 30 August 2026 when the service was
+// registered and the quest simply did not match it. What narrows a query is the
+// definition, the provider name and the details; a reader who cannot see those
+// cannot tell a system that is absent from a quest that is over-specified.
+func emptyRegistry(quest forms.ServiceQuest_v1) error {
+	msg := fmt.Sprintf("the registrar holds no service matching this quest: definition %q", quest.ServiceDefinition)
+	if quest.ProviderName != "" {
+		msg += fmt.Sprintf(", provider %q", quest.ProviderName)
+	}
+	if len(quest.Details) > 0 {
+		keys := make([]string, 0, len(quest.Details))
+		for k := range quest.Details {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, fmt.Sprintf("%s=%v", k, quest.Details[k]))
+		}
+		msg += ", requiring details " + strings.Join(parts, " ")
+	} else {
+		msg += ", requiring no details"
+	}
+	msg += fmt.Sprintf(" (asked by %q for %q)", quest.RequesterName, quest.Action)
+	return fmt.Errorf("%s", msg)
 }
 
 // selectService picks a provider from the registrar's answer. The conversion to a
@@ -346,7 +381,7 @@ func (t *Traits) getServicesURL(newQuest forms.ServiceQuest_v1, subject string) 
 	}
 
 	if len(serviceList.List) == 0 {
-		return nil, fmt.Errorf("unable to locate any such service: %s", newQuest.ServiceDefinition)
+		return nil, emptyRegistry(newQuest)
 	}
 
 	// Asked of the authorizer, like the single-provider path beside it. This

@@ -176,9 +176,10 @@ func initTemplate() *components.UnitAsset {
 	}
 
 	return &components.UnitAsset{
-		Name:    "registry",
-		Mission: components.MissionCore,
-		Details: map[string][]string{"Type": {"ephemeral"}, "Mobility": {components.MobilityMovable}},
+		Name:     "registry",
+		Mission:  components.MissionCore,
+		Mobility: components.MobilityMovable,
+		Details:  map[string][]string{"Type": {"ephemeral"}},
 		ServicesMap: components.Services{
 			registerService.SubPath:   &registerService,
 			queryService.SubPath:      &queryService,
@@ -206,6 +207,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
 		Mission:     configuredAsset.Mission,
+		Mobility:    configuredAsset.Mobility,
+		TetheredTo:  configuredAsset.TetheredTo,
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),

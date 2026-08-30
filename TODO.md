@@ -19,6 +19,14 @@ say why here and then delete the entry.
 
 ## Unexplained
 
+- **Correction, 30 August 2026:** an earlier reading of this — that the
+  orchestrator and authorizer "never retry" after losing a startup race with the
+  ESR — was wrong. `registration.go` re-resolves the registrar every five
+  seconds, and `CachedURL.Resolve` deliberately does not cache a failure, so both
+  recover on their own. The `failed to find lead registrar` line is one transient
+  failure being logged, not a permanent state. What actually broke that cloud was
+  configuration: an empty authorizer URL and a plaintext orchestrator URL.
+
 - **A fresh install cannot start at all.** Two defects compound, and together
   they mean a cloud this framework generates today, on one host, never comes up.
   Reproduced from nothing on a second Pi, 22 August.
@@ -136,6 +144,203 @@ say why here and then delete the entry.
   authorizer being down, so it is a trade rather than a defect, but there is no
   way at present to say "stop now". A revocation list checked at the provider
   would be the obvious answer and is not written.
+
+- **meteorologue reports success while serving frozen readings.** Confirmed on
+  the cottage 25 August 2026: every temperature flatlined at 13:58 and stayed
+  flat for hours while the pane logged `Netatmo: data refreshed` every five
+  minutes and the Netatmo phone app showed live values. Two defects compound in
+  `meteorologue/thing.go`:
+
+  **Cause confirmed 25 August, from the timing.** The cloud started at 10:58 and
+  `newTokenManager` refreshes on startup, so the access token was minted then.
+  Netatmo access tokens live 10800 s. The readings froze at 13:58 — three hours
+  to the minute. The token expired exactly on schedule and the expiry was never
+  noticed, because the pane never once printed `Netatmo: access token expired,
+  refreshing...`: Netatmo signals an expired token with **403** and
+  `{"error":{"code":3,...}}`, not 401. (The status is not logged, so it cannot be
+  read off directly — that is part of the defect.)
+
+  1. `getWithAutoRefresh` handles **only** status 401. Any other non-200 — 403,
+     429, 5xx — is returned as a body with a nil error. A Netatmo error envelope
+     (`{"error":{"code":26,...}}`) then unmarshals *successfully* into
+     `StationsDataResponse`, because Go ignores unknown fields, leaving
+     `Body.Devices` empty. `pollNetatmo` ranges over nothing, updates no cache
+     entry, and falls through to `log.Println("Netatmo: data refreshed")`. The
+     same bug class as the kgrapher/modeler error-body parse, but louder: the
+     system actively asserts success. Check the status, and treat an empty
+     device list as an error rather than a quiet no-op.
+
+  2. **Staleness is measured and then discarded.** `DashboardData.TimeUTC` is
+     parsed and `CachedMeasurement.Timestamp` is stored, and nothing ever reads
+     either. A reading older than a few poll periods should not be served as
+     current — the consumer cannot tell, and ethermostat's frost guard fires on
+     *absent* readings, not stale ones.
+
+  **Refresh-token rotation is the trap waiting at the fix.** Netatmo rotates and
+  invalidates *both* tokens on every refresh. `postToken` does persist the new
+  pair, so the happy path is correct, but three edges are sharp: (a)
+  `newTokenManager` refreshes on every startup, so any second process against the
+  same `tokens.json` — a stray instance, a copy rsynced to another Pi, a restart
+  racing a shutdown — leaves one holding an invalidated token and kills the grant
+  permanently; (b) a failed `saveTokenFile` is only a warning, leaving a live
+  token in memory and a dead one on disk; (c) the recovery path is
+  `authorizeWithBrowser`, which wants a browser on a headless Pi. Serialize the
+  refresh under the mutex with a double-check, and fail the refresh when the file
+  write fails.
+
+  Also: **`tokens.json` is not in `.gitignore`** though it is a bearer
+  credential. Nothing has leaked — no copy exists in the working tree — but it is
+  one `git add -A` from GitHub.
+
+  Safe only by luck on 25 August: the frozen values sat below setpoint, so
+  ethermostat held the plugs on and the radiators' own thermostats governed. Had
+  they frozen above setpoint the plugs would have been held off indefinitely with
+  no system reporting a fault. See the philosopher note in
+  `chronicler/README.md` — *this signal has not changed since Tuesday* is the
+  check that catches all of this from outside.
+
+- **maitreD is Linux-only, and does not say so.** Attestation resolves a PID to
+  an executable by reading `/proc/<pid>/exe` (`maitreD/hostload.go`,
+  `resolveExecutable`). That is the *entire* platform dependency — the CA passes
+  the PID in `X-Process-PID` and picks which maitreD to ask from the CSR's
+  `RemoteAddr`, so there is no socket-to-process mapping to port, which is the
+  part that would have been hard.
+
+  **The trap is that it compiles everywhere and then lies.** `GOOS=darwin` and
+  `GOOS=windows` both build today, because `os.Readlink` is portable; it simply
+  fails at runtime with ENOENT, and `describeResolutionFailure` maps that to
+  *"no process %d: it exited before it could be attested"*. An operator on a Mac
+  would be told the process vanished, not that the platform is unsupported. Fix
+  that message first, whatever else happens.
+
+  The port itself follows the convention `busdriver` and `sailor` already use
+  (`can_linux.go`): split into `hostload_linux.go` / `_darwin.go` / `_windows.go`.
+  - **darwin**: `proc_pidpath()` from `<libproc.h>`, needs cgo, unprivileged for
+    same-UID processes. Returns a *path*, so it hashes the file rather than the
+    running inode — weaker than Linux. `SecCodeCheckValidity` is the native repair.
+  - **windows**: `QueryFullProcessImageName` via `golang.org/x/sys/windows` — no
+    cgo needed, and *stronger* than Linux in one respect, since the loader locks
+    a running image so its bytes cannot change under the hash.
+
+  Three things make a Mac or Windows host awkward regardless of the code:
+  whitelist churn (a dev machine's binaries are build outputs, not deployed
+  artifacts, so every `go build` needs re-registering); reachability (the CA
+  connects *inbound* to `maitreDHosts`, and a laptop's IP changes per network —
+  see the maitreDHosts item above); and the self-declared PID (a process must be
+  on the CSR's host but may name a whitelisted sibling's PID — a narrow surface
+  on a dedicated Pi, a wide one on a general-purpose machine). The CA's attest
+  call is also plain HTTP (`ca/thing.go`).
+
+  **Decided 25 August 2026:** an admin host gets its own subject in
+  `policies.json` with read-only rights — no actuation. A weaker attestation
+  domain should be *authorized less*, not refused; that is what ABAC is for. The
+  governing principle is not macOS-versus-Linux but **a controller must be
+  present when nobody is, and reachable at the same address tomorrow** — which a
+  laptop is not, and a Mac mini on a fixed address would be. Note also that the
+  Mac already holds the most consequential position in the system as the *build
+  machine*: the whitelist attests that a binary is the one that was built, never
+  that it was built correctly.
+
+  Build the darwin port when there is a user for it (there is: `envoy` on the
+  laptop). Draw the boundary so Windows is later a file rather than a refactor,
+  and build it when a real Windows host appears — plausible in a plant, where
+  engineering workstations and Cadmatic are Windows, but nobody is asking today.
+
+- **DONE 30 August 2026: the operator can see the cloud.** `envoy -serve` proxies
+  the painter's canvas on 127.0.0.1, the canvas panel opens on a click and links
+  to each system's `/doc`, and the whole thing runs from `systems.txt` like any
+  other system. What that took, beyond the proxy itself, is worth remembering:
+  a one-shot tool promoted to a resident system needed resident behaviour in
+  three separate places — it waited 90 s for a certificate and exited, it treated
+  "nothing discovered yet" as fatal, and it had never met a token expiry. Each
+  failed only on a restart, which is exactly when somebody opens the viewer.
+
+  Still open from the original entry: `/doc` itself. See the entry below.
+
+- **A person cannot see the painter's canvas, and the fix is a delegating envoy.**
+  `view` and `model` are unit-asset services, so they go through `permitted()`
+  and want a token; on HTTPS the listener is `RequireAndVerifyClientCert`, so a
+  browser fails the handshake outright. The check therefore guards a door only
+  the wrong caller can open — nothing machine-side consumes the canvas, only a
+  human does.
+
+  **Decided 25 August 2026:** give `envoy` a proxy mode rather than giving the
+  painter a login. Delegation is the pattern already established, it changes no
+  invariant — systems hold certificates, people do not — and it keeps human
+  identity, sessions and credential storage out of the framework entirely. The
+  painter-with-a-login alternative was considered and set aside: it works from
+  any browser anywhere, but it makes the painter a confused deputy and puts
+  password handling into a system whose job is drawing.
+
+  It should be simpler than proxying usually is: the canvas fetches with a
+  **relative** URL (`fetch("model", …)` in `painter/page.go`), so serving it under
+  the same path on localhost needs no URL rewriting.
+
+  Constraints for whoever builds it:
+  - **Bind 127.0.0.1 only.** Binding the LAN would turn one delegated credential
+    into an open gateway for anyone on the network — the boundary warning from
+    `chronicler/README.md`, one level down.
+  - **GET only.** envoy already searches with `Search4MultipleServicesAs(…, "read")`
+    and registers no services; a proxy is tempting to make general, and must not be.
+  - **Guard against DNS rebinding.** A page in the operator's browser can be made
+    to issue requests to 127.0.0.1. Check `Host`/`Origin`, or require a secret in
+    the path.
+  - **A mode flag, not a second binary** — the whitelist keys on the hash, so one
+    binary means one entry to maintain.
+  - It becomes **long-lived**, unlike the one-shot capture, so it is the first
+    consumer to exercise proactive token renewal in anger. That comes free from
+    the `consumption.go` renewal work, but it is now load-bearing rather than
+    theoretical.
+
+  Runs on the Pi today; runs on the laptop once the darwin maitreD exists, which
+  is the reason to do that port. **beehive is deliberately excluded** — it
+  actuates, and a browser that can switch a heater with nothing attested behind
+  it is a different decision that has not been taken.
+
+- **`/doc` is still anonymous on every plaintext port, and now load-bearing.**
+  Trimmed on 30 August so it names only the address the request arrived on
+  rather than enumerating every address of the host — a Pi running Docker was
+  publishing `172.17.0.1`, `172.18.0.1` and `172.19.0.1` to anyone on the LAN,
+  which told a reader nothing they could use and an attacker that the host runs
+  containers.
+
+  What it still hands out: every system's name and description, each asset's
+  `FunctionalLocation`, every service with its forms, units and **methods** — so
+  which services accept a PUT — and the bound ports. The data itself is safe: a
+  value over plaintext answers 401. This is a map of the plant marked with what
+  can be written to, not access to it.
+
+  **Do not close it before the replacement exists.** Over https it already sits
+  behind `RequireAndVerifyClientCert`, so a browser cannot read it there at all —
+  plaintext is the only way a person sees it. Closing it now would take away the
+  only view of a system that has *not yet joined the cloud*, which is precisely
+  when a deployer needs one, and the canvas cannot help there because the canvas
+  is built from the graph.
+
+  The order is: (1) teach the envoy proxy to serve `/doc` — it already holds a
+  `core`/`syslist` policy, so it can enumerate; (2) make `docs.go` emit
+  **relative** links, because it builds them absolutely from `IPAddresses[0]` and
+  a proxied page would send every click back to the plaintext port — a fix worth
+  making anyway, since that URL is already wrong behind NAT or on a multi-homed
+  host; (3) then replace the plaintext page with a minimal self-status: identity,
+  enrollment state, what it is retrying. Not the cloud's structure.
+
+- **The maitreD serves a stale whitelist for up to five minutes after a redeploy.**
+  It loads `whitelist.cache.json` at startup and re-syncs from the CA every five
+  minutes, so every binary rebuilt in between fails attestation with *"Executable
+  not in whitelist"* — three times on 30 August, each time looking like a fresh
+  fault. It recovers on its own and the cache is what makes it survive a CA
+  outage, so this is a trade rather than a defect; what is missing is that
+  nothing says "the list I am judging against is N minutes old".
+
+- **System-level mobility is not derived.** Agreed 30 August: an asset declares
+  what constrains it, and a system's mobility is the most restrictive of its
+  assets — fixed if any is fixed, tethered if any is tethered (union of tethers),
+  movable only if all are. The asset half is done; the system half is not, so
+  anything reading the graph has to fold over the assets and get the rule right
+  independently. It should never be declarable on the system: a hand-written
+  value can contradict its assets, and it goes stale silently the first time an
+  asset with a GPIO pin is added to a system marked movable.
 
 ## Not yet run on hardware
 

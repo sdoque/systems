@@ -116,6 +116,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		// themselves — so flattener could not start, on a machine where the
 		// configuration named "control" all along.
 		Mission:     configuredAsset.Mission,
+		Mobility:    configuredAsset.Mobility,
+		TetheredTo:  configuredAsset.TetheredTo,
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),

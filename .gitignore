@@ -51,6 +51,7 @@ serviceRegistry.db
 # for verification and `git add -A` does not ask what a file is.
 #
 # Listed from the Makefile's SYSTEMS, so the two cannot drift apart.
+/assessor/assessor
 /authorizer/authorizer
 /beehive/beehive
 /beekeeper/beekeeper

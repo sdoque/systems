@@ -164,10 +164,12 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		Name: assetName,
 		// From the configuration, so a topic that carries something other than
 		// a reading can say so without this system being changed.
-		Mission: configuredAsset.Mission,
-		Owner:   sys,
-		Details: configuredAsset.Details,
-		Traits:  t,
+		Mission:    configuredAsset.Mission,
+		Mobility:   configuredAsset.Mobility,
+		TetheredTo: configuredAsset.TetheredTo,
+		Owner:      sys,
+		Details:    configuredAsset.Details,
+		Traits:     t,
 	}
 
 	// Make the topic an Arrowhead service (since we are subscribing to it)

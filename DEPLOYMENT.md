@@ -243,6 +243,49 @@ Expect the first five minutes to say *not in whitelist* — see below.
 
 ---
 
+## A Windows host
+
+**Status: the plan, written 30 August 2026 for a test the next day.** To be
+corrected against it.
+
+Attestation on Windows is, if anything, better than on Linux: the kernel
+locks a running image, so the file the maitreD hashes cannot be changed under
+a live process. The maitreD asks the kernel for the process's image path
+(`QueryFullProcessImageName`) and needs no privilege for a process of the
+same user; a system started with *Run as administrator* answers *access
+denied* and is refused, exactly as a `sudo`-started one is on Linux.
+
+1. **Build machine**: `make win && make whitelist`. `win` builds the portable
+   systems (`PORTABLE` in the Makefile — maitreD, registrar, thermostat,
+   painter, envoy, kgrapher, modeler, collector; add to it on the command
+   line) as `<system>_win64.exe`, and the whitelist hashes every platform's
+   binaries together: one release, one CA.
+2. **CA host**: add the Windows machine's IP to `maitreDHosts`; restart the CA.
+3. **Windows machine**: copy `rpiExec\` and, from `shells\`,
+   `start_systems.ps1` and `stop_systems.ps1`. No tmux — each system gets its
+   own console window. `systems.txt` = `maitreD`, `esr`, then its systems.
+   Run once to generate configurations, edit the table's rows, run again.
+4. **The firewall will ask.** The first time each `.exe` listens, Windows
+   Defender prompts to allow it on the network — say yes for *private*
+   networks, or nothing on the Pis can reach it. The one that matters most
+   is the maitreD's port 20101: the CA connects **inbound** to it to attest,
+   and a blocked prompt looks like *not in whitelist*.
+5. **Same user, not elevated.** Start everything from one ordinary PowerShell.
+
+`stop_systems.ps1` stops processes without a signal, so systems stopped that
+way do not unregister; their records lapse within a period. Ctrl-C in a
+window is the graceful way.
+
+## A Mac
+
+`make mac` builds the same set as `<system>_mac64`, natively (the maitreD
+needs cgo there). Tested 30 August 2026: a Mac maitreD enrolled with a Pi's
+CA, attested an `envoy` on the same laptop, and the canvas served at
+`http://127.0.0.1:8191/` with no tunnel — the same path a Windows host takes. Read what its attestation means before relying on it: macOS
+gives the maitreD a *path*, not the running image, so a binary replaced after
+it started would attest as its replacement. That is why a Mac is an
+administrative host — `envoy` on the laptop — and not a controller.
+
 ## When the lead registrar goes away
 
 Tested on 30 August 2026 by stopping aiko's registrar with two hosts running.

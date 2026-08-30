@@ -17,7 +17,33 @@ SYSTEMS := assessor authorizer beehive beekeeper busdriver ca clerk collector de
            revolutionary sailor sapper telegrapher thermostat tracker \
            uaclient weatherman
 
-.PHONY: all ci release rpi test lint clean whitelist $(SYSTEMS)
+.PHONY: all ci release rpi win mac test lint clean whitelist $(SYSTEMS)
+
+# The systems worth building for a host that is not a Raspberry Pi: a maitreD
+# to attest on it, a registrar so its systems' default is right, and the
+# systems that need no hardware. Override on the command line.
+PORTABLE ?= maitreD esr thermostat painter envoy kgrapher modeler collector
+
+# win builds them for a Windows machine, into the same staging tree as _win64.exe;
+# mac for this Mac, as _mac64 (cgo, so it builds natively and not cross).
+win: $(foreach sys,$(PORTABLE),$(STAGING)/$(sys)/$(sys)_win64.exe)
+	@echo "Windows binaries built — remember: make whitelist"
+mac: $(foreach sys,$(PORTABLE),$(STAGING)/$(sys)/$(sys)_mac64)
+	@echo "macOS binaries built — remember: make whitelist"
+
+define build_portable
+$(STAGING)/$(1)/$(1)_win64.exe: $(shell find $(1) -name '*.go' 2>/dev/null)
+	@mkdir -p $(STAGING)/$(1)
+	cd $(1) && GOOS=windows GOARCH=amd64 go build \
+		-ldflags "-X '$(PKG).AppName=$(1)' -X '$(PKG).Version=$(VERSION)' -X '$(PKG).BuildDate=$(BUILD_DATE)' -X '$(PKG).BuildHash=$(BUILD_HASH)'" \
+		-o $(STAGING)/$(1)/$(1)_win64.exe
+$(STAGING)/$(1)/$(1)_mac64: $(shell find $(1) -name '*.go' 2>/dev/null)
+	@mkdir -p $(STAGING)/$(1)
+	cd $(1) && GOOS=darwin GOARCH=arm64 go build \
+		-ldflags "-X '$(PKG).AppName=$(1)' -X '$(PKG).Version=$(VERSION)' -X '$(PKG).BuildDate=$(BUILD_DATE)' -X '$(PKG).BuildHash=$(BUILD_HASH)'" \
+		-o $(STAGING)/$(1)/$(1)_mac64
+endef
+$(foreach sys,$(PORTABLE),$(eval $(call build_portable,$(sys))))
 
 # Default target: build everything
 all: rpi
@@ -115,11 +141,12 @@ whitelist: $(STAGING)/ca/whitelist.json $(STAGING)/ca/whitelist-manifest.txt
 # Flat JSON array — the wire format expected by the CA's loadWhitelist().
 # Depends on every staged binary, so editing any system's source and
 # re-running `make rpi` causes the whitelist to regenerate automatically.
+# Every staged binary of every platform: a Windows or macOS build placed
+# beside the Pi ones is part of the same release and attested by the same CA.
 $(STAGING)/ca/whitelist.json: $(foreach sys,$(SYSTEMS),$(STAGING)/$(sys)/$(sys)_rpi64)
 	@mkdir -p $(STAGING)/ca
 	@printf '[\n' > $@
-	@first=1; for sys in $(SYSTEMS); do \
-		bin=$(STAGING)/$$sys/$${sys}_rpi64; \
+	@first=1; for bin in $$(ls $(STAGING)/*/*_rpi64 $(STAGING)/*/*_win64.exe $(STAGING)/*/*_mac64 2>/dev/null); do \
 		hash=$$(shasum -a 256 $$bin | cut -d' ' -f1); \
 		if [ $$first -eq 1 ]; then first=0; else printf ',\n' >> $@; fi; \
 		printf '  "%s"' "$$hash" >> $@; \
@@ -131,12 +158,10 @@ $(STAGING)/ca/whitelist.json: $(foreach sys,$(SYSTEMS),$(STAGING)/$(sys)/$(sys)_
 # Use this to answer "what binary is hash e3b0c44…?" during ops review.
 $(STAGING)/ca/whitelist-manifest.txt: $(foreach sys,$(SYSTEMS),$(STAGING)/$(sys)/$(sys)_rpi64)
 	@mkdir -p $(STAGING)/ca
-	@printf 'Whitelist manifest — VERSION=%s built %s\n\n' \
-		"$(VERSION)" "$(BUILD_DATE)" > $@
-	@for sys in $(SYSTEMS); do \
-		bin=$(STAGING)/$$sys/$${sys}_rpi64; \
+	@printf '# mbaigo whitelist manifest\n# VERSION=%s BUILD_DATE=%s\n# every staged binary, every platform\n\n' "$(VERSION)" "$(BUILD_DATE)" > $@
+	@for bin in $$(ls $(STAGING)/*/*_rpi64 $(STAGING)/*/*_win64.exe $(STAGING)/*/*_mac64 2>/dev/null); do \
 		hash=$$(shasum -a 256 $$bin | cut -d' ' -f1); \
-		printf '%-20s  %s\n' "$$sys" "$$hash" >> $@; \
+		printf '%-40s %s\n' "$$(basename $$bin)" "$$hash" >> $@; \
 	done
 	@echo "Wrote $@"
 

@@ -1,10 +1,4 @@
-github.com/sdoque/mbaigo v0.1.0-alpha.8 h1:wKovBDAWMMdcJxE6kNbmtee7T3aIWa08Lkf7GmQohIQ=
-github.com/sdoque/mbaigo v0.1.0-alpha.8/go.mod h1:sNaEleHea9b2TcroLCp+9e5cHltlo/JkT9LNag1/nmU=
-github.com/sdoque/mbaigo v0.1.0-alpha.9 h1:+Pxgw/H+Utb9Tw5pEkBHrKKDv07hPWeHUYRmYhP/mmQ=
-github.com/sdoque/mbaigo v0.1.0-alpha.9/go.mod h1:uvuQ4Q1Qdi1U8BpaoBzDvst8BsskEVaVoMZ9T+5SyYc=
-github.com/sdoque/mbaigo v0.1.0-alpha.10 h1:AqACsif+szJSJTVUXYImsuf+Pvm/324TahmPMuolB8c=
-github.com/sdoque/mbaigo v0.1.0-alpha.10/go.mod h1:uvuQ4Q1Qdi1U8BpaoBzDvst8BsskEVaVoMZ9T+5SyYc=
-github.com/sdoque/mbaigo v0.1.0-alpha.11 h1:9j4Gapj/u97q4W1MGDa7Jmi5BtlVf5i2CrifY5f+t2M=
-github.com/sdoque/mbaigo v0.1.0-alpha.11/go.mod h1:uvuQ4Q1Qdi1U8BpaoBzDvst8BsskEVaVoMZ9T+5SyYc=
 github.com/sdoque/mbaigo v0.1.0-alpha.12 h1:gnMhYCGUWzaroorgckCf4gu2mKqFBCq99j5fF7UWOM4=
 github.com/sdoque/mbaigo v0.1.0-alpha.12/go.mod h1:uvuQ4Q1Qdi1U8BpaoBzDvst8BsskEVaVoMZ9T+5SyYc=
+golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
+golang.org/x/sys v0.47.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=

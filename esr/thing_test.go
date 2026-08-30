@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -992,5 +994,57 @@ func TestARenewalWithAForeignIdIsRegisteredAfresh(t *testing.T) {
 	}
 	if got := ua.serviceRegistry[13]; got == nil || got.SystemName != "parallax" {
 		t.Fatal("the record that legitimately held id 13 was disturbed")
+	}
+}
+
+// A registrar of another cloud is not a peer: the election refuses it and
+// this registrar leads its own cloud. One of the same cloud that leads is
+// deferred to.
+func TestElectionRefusesAPeerOfAnotherCloud(t *testing.T) {
+	answer := func(cloud string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set(components.LocalCloudHeader, cloud)
+			fmt.Fprint(w, components.ServiceRegistrarLeader+" now")
+		}))
+	}
+	settle := func(tr *Traits) *registrarRole {
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if r := tr.role.Load(); r != nil {
+				return r
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatal("the election never decided")
+		return nil
+	}
+	peerOf := func(cloud string, peer *httptest.Server) (*Traits, func()) {
+		sys := createNewSys()
+		if sys.Husk.Details == nil {
+			sys.Husk.Details = map[string][]string{}
+		}
+		sys.Husk.Details["LocalCloud"] = []string{cloud}
+		sys.Husk.CoreS = append(sys.Husk.CoreS, &components.CoreSystem{Name: components.ServiceRegistrarName, Url: peer.URL})
+		temp, cancel := newResource(createConfAssetMultipleTraits(), &sys)
+		return temp.Traits.(*Traits), cancel
+	}
+
+	other := answer("Cottage")
+	defer other.Close()
+	tr, cancel := peerOf("Home", other)
+	if role := settle(tr); !role.leading {
+		t.Fatal("deferred to a registrar that declares another cloud")
+	}
+	if tr.foreign[other.URL] != "Cottage" {
+		t.Fatal("the foreign registrar was not recorded as such")
+	}
+	cancel()
+
+	same := answer("Home")
+	defer same.Close()
+	tr, cancel = peerOf("Home", same)
+	defer cancel()
+	if role := settle(tr); role.leading {
+		t.Fatal("took the lead over a registrar of the same cloud that leads")
 	}
 }

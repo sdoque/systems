@@ -262,6 +262,14 @@ func (t *Traits) getServiceURL(newQuest forms.ServiceQuest_v1, subject string) (
 		return servLoc, err
 	}
 	defer resp.Body.Close()
+	// A refusal is as good a reason to forget the registrar as a dead socket:
+	// after a lead change the address this holds is a standby's, and a standby
+	// says so with a 503. Kept, it would be asked forever.
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		t.leadingRegistrar.Forget()
+		reason, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return servLoc, fmt.Errorf("the registrar at %s refused: %s: %s", registrar, resp.Status, strings.TrimSpace(string(reason)))
+	}
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return servLoc, err
@@ -366,6 +374,14 @@ func (t *Traits) getServicesURL(newQuest forms.ServiceQuest_v1, subject string) 
 		return servLoc, err
 	}
 	defer resp.Body.Close()
+	// A refusal is as good a reason to forget the registrar as a dead socket:
+	// after a lead change the address this holds is a standby's, and a standby
+	// says so with a 503. Kept, it would be asked forever.
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		t.leadingRegistrar.Forget()
+		reason, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return servLoc, fmt.Errorf("the registrar at %s refused: %s: %s", registrar, resp.Status, strings.TrimSpace(string(reason)))
+	}
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return servLoc, err

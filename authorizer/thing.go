@@ -543,6 +543,16 @@ func (t *Traits) recordsOf(systemName string) ([]forms.ServiceRecord_v1, error) 
 		return nil, err
 	}
 	defer resp.Body.Close()
+	// A refusal is as good a reason to forget the registrar as a dead socket.
+	// After a lead change the address held here is a standby's; a standby says
+	// so with a 503, and used to say it with a 200 and an empty list — which
+	// this took for "the subject has no attributes" and refused every request
+	// in the cloud until the process was restarted.
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		t.leadingRegistrar.Forget()
+		reason, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return nil, fmt.Errorf("the registrar at %s refused: %s: %s", registrar, resp.Status, strings.TrimSpace(string(reason)))
+	}
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {

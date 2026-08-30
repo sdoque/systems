@@ -49,10 +49,14 @@ func main() {
 	// Instantiate the Capsule
 	sys.Husk = &components.Husk{
 		Description: "is an Arrowhead mandatory core system that keeps track of the currently available services.",
-		Details:     map[string][]string{"Developer": {"Synecdoque"}, "LocalCloud": {"AlphaCloud"}},
-		Host:        components.NewDevice(),
-		ProtoPort:   map[string]int{"https": 30102, "http": 20102, "coap": 0},
-		InfoLink:    "https://github.com/sdoque/systems/tree/main/esr",
+		// The cloud's name defaults to this host's name, below, once the host
+		// is known. It was "AlphaCloud" for every deployment ever generated,
+		// which read like a demo and meant that two clouds nobody had renamed
+		// collided the moment their graphs met in one store.
+		Details:   map[string][]string{"Developer": {"Synecdoque"}},
+		Host:      components.NewDevice(),
+		ProtoPort: map[string]int{"https": 30102, "http": 20102, "coap": 0},
+		InfoLink:  "https://github.com/sdoque/systems/tree/main/esr",
 		DName: pkix.Name{
 			CommonName:         sys.Name,
 			Organization:       []string{"Synecdoque"},
@@ -64,6 +68,7 @@ func main() {
 		RegistrarChan: make(chan *components.CoreSystem, 1),
 		Messengers:    make(map[string]int),
 	}
+	sys.Husk.Details["LocalCloud"] = []string{sys.Husk.Host.Name}
 
 	// instantiate a template unit asset
 	assetTemplate := initTemplate()
@@ -221,7 +226,15 @@ func peersList(sys *components.System) (peers []*components.CoreSystem, err erro
 		if err != nil {
 			fmt.Println(err)
 		}
-		if (u.Hostname() == sys.Husk.Host.IPAddresses[0] || u.Hostname() == "localhost") && uPort == sys.Husk.ProtoPort[u.Scheme] {
+		own := u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1"
+		if sys.Husk.Host != nil {
+			for _, ip := range sys.Husk.Host.IPAddresses {
+				if u.Hostname() == ip {
+					own = true
+				}
+			}
+		}
+		if own && uPort == sys.Husk.ProtoPort[u.Scheme] {
 			continue
 		}
 		peers = append(peers, cs)

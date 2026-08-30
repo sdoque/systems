@@ -69,6 +69,17 @@ func (r *registration) sameRegistration(rec *forms.ServiceRecord_v1) bool {
 // errNotOwner is answered to a system removing a registration it did not make.
 var errNotOwner = errors.New("the record belongs to another system")
 
+// cloudName is what this registrar's configuration calls the cloud.
+func cloudName(sys *components.System) string {
+	if sys == nil || sys.Husk == nil {
+		return ""
+	}
+	if v := sys.Husk.Details["LocalCloud"]; len(v) > 0 {
+		return strings.TrimSpace(v[0])
+	}
+	return ""
+}
+
 // registration is one record and the timer that will retire it.
 //
 // The timer is a field of the record rather than an entry in a scheduler of
@@ -92,8 +103,12 @@ type registration struct {
 // mu protects the fields it shares with concurrent goroutines.
 type Traits struct {
 	serviceRegistry map[int]*registration
-	recCount        int64
-	requests        chan ServiceRegistryRequest
+	// cloud is the LocalCloud this registrar declares; foreign records peers
+	// that declared another, so the refusal is logged once and not every tick.
+	cloud    string
+	foreign  map[string]string
+	recCount int64
+	requests chan ServiceRegistryRequest
 	// role is who leads the registry. Written by the election goroutine and read
 	// by every request handler, so it is swapped as a whole rather than held as
 	// three fields: read separately, /status could answer "leading since" the
@@ -238,6 +253,8 @@ func initTemplate() *components.UnitAsset {
 func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (*components.UnitAsset, func()) {
 	t := &Traits{
 		serviceRegistry: make(map[int]*registration),
+		foreign:         make(map[string]string),
+		cloud:           cloudName(sys),
 		recCount:        1, // 0 is used for non-registered services
 		requests:        make(chan ServiceRegistryRequest),
 		subscribers:     make(map[int]*subscriber),
@@ -600,6 +617,9 @@ func (t *Traits) updateDB(w http.ResponseWriter, r *http.Request) {
 
 // queryDB looks for service records in the service registry.
 func (t *Traits) queryDB(w http.ResponseWriter, r *http.Request) {
+	if t.standsBy(w) {
+		return
+	}
 	switch r.Method {
 	case "GET":
 		if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
@@ -697,6 +717,30 @@ func (t *Traits) registryDB(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// standsBy refuses a registry read while this registrar is not the lead,
+// answering as /status does — 503, naming the lead — so a caller that cached
+// this address forgets it and follows the referral.
+//
+// A standby's registry is empty by design, and it used to answer reads from
+// it: 200, an empty list. After a lead change every core system that had
+// cached the old lead's address went on asking it, was told the cloud held
+// nothing, and believed it — the authorizer refused every request for
+// thirteen minutes while the thermostat it was refusing was registered and
+// running. An empty answer from a standby is not an answer; it is the
+// wrong registrar.
+func (t *Traits) standsBy(w http.ResponseWriter) bool {
+	if t.leads() {
+		return false
+	}
+	w.Header().Set(components.LocalCloudHeader, t.cloud)
+	if role := t.role.Load(); role != nil && role.registrar != nil {
+		http.Error(w, components.ServiceRegistrarStandby+role.registrar.Url, http.StatusServiceUnavailable)
+		return true
+	}
+	http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
+	return true
+}
+
 // cleanDB deletes service records upon request (e.g., when a system shuts down).
 func (t *Traits) cleanDB(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -736,6 +780,9 @@ func (t *Traits) cleanDB(w http.ResponseWriter, r *http.Request) {
 func (t *Traits) roleStatus(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
+		// The cloud this registrar belongs to, so a peer can tell whether it
+		// is one. See startRole.
+		w.Header().Set(components.LocalCloudHeader, t.cloud)
 		// One load, so the answer describes a single election outcome.
 		role := t.role.Load()
 		if role != nil && role.leading {
@@ -776,10 +823,27 @@ func (t *Traits) startRole(sys *components.System) {
 					break
 				}
 				status := resp.StatusCode
+				theirs := resp.Header.Get(components.LocalCloudHeader)
 				// Closed here rather than deferred: this loop never returns, so
 				// a deferred close held one response body per peer per tick for
 				// the life of the process.
 				resp.Body.Close()
+
+				// A registrar of another cloud is not a peer, whatever it
+				// answers. Two hosts whose registrars named different clouds
+				// used to elect and register across the boundary without
+				// complaint, and were caught only when the kgrapher refused to
+				// assemble a graph with two clouds in it — if a kgrapher ran.
+				// The name is a membership fact and this is where membership
+				// is decided.
+				if theirs != "" && theirs != t.cloud {
+					if t.foreign[cSys.Url] == "" {
+						log.Printf("serviceregistrar: %s declares the cloud %q and this is %q — not a peer, and it will not be asked again until it says otherwise\n", cSys.Url, theirs, t.cloud)
+					}
+					t.foreign[cSys.Url] = theirs
+					continue
+				}
+				delete(t.foreign, cSys.Url)
 
 				switch status {
 				case http.StatusOK:
@@ -804,6 +868,9 @@ func (t *Traits) startRole(sys *components.System) {
 
 // systemList returns the list of unique systems registered in the local cloud.
 func (t *Traits) systemList(w http.ResponseWriter, r *http.Request) {
+	if t.standsBy(w) {
+		return
+	}
 	switch r.Method {
 	case "GET":
 		// Same resource, two representations: ask for the list and you get it

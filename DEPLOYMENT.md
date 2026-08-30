@@ -151,6 +151,17 @@ template could not know:
 | the CA's URL | every host but the CA's | the template writes *this host*; the CA is elsewhere |
 | the authorizer's URL | every host, if the cloud enforces | naming one turns enforcement on — a decision, not a default |
 | the other registrars | the registrar's own file only | the election needs a seed |
+| the cloud's name (`localcloud`) | the registrar's file on every host, all agreeing | it defaults to the host's name, which is right for one host and wrong for the second |
+
+**The cloud's name lives in the registrars, and only there.** Membership is
+decided where the election is: a registrar whose `/status` names another
+cloud is not a peer, is refused with one line in the log, and is not asked
+again. So two hosts whose registrars disagree do not quietly form one cloud —
+the second host's registrar takes its own lead and its systems join nothing
+you meant. Set the name on every host's registrar before the second host
+starts. And name it for *where it is*, not what it is for: two clouds both
+called by the default of some demo collide the moment their graphs meet in
+one store.
 
 Nothing else. The registrar defaults to this host and is right; the
 orchestrator and the standby registrars are learned from the lead once the
@@ -239,14 +250,23 @@ Tested on 30 August 2026 by stopping aiko's registrar with two hosts running.
 - **The standby takes the lead within a second** of the lead stopping to
   answer, and every system finds it on its next five-second tick — the file's
   entry refuses, the learned one leads.
-- **A standby's registry is empty.** It does not replicate the lead's records.
-  Systems re-register within their registration period — thirty seconds for
-  most, two minutes for a controller — and until each has, a *new* discovery
-  of its services finds nothing. Existing bindings do not notice: the
-  thermostat on the second host went on reading and driving throughout.
+- **A standby's registry is empty.** It does not replicate the lead's records,
+  on purpose: a registry that can disagree with itself is worse than one that
+  is briefly empty and says so. Systems re-register **within seconds** of
+  noticing the lead has moved — they used to wait out their registration
+  period, up to two minutes for a controller — and until each has, a *new*
+  discovery of its services finds nothing. Existing bindings do not notice:
+  the thermostat on the second host went on reading and driving throughout.
 - **A renewal carries the old lead's id.** The new lead may hold that number
   for another service; it registers the renewal afresh rather than refusing
   it. Before that fix every system took a 500 and waited out a full period.
+- **A standby refuses to be read, and says where the lead is.** It used to
+  answer a query with an empty list, and every core system that had cached
+  the old lead's address went on asking it and believing it: the authorizer
+  refused every request in the cloud for thirteen minutes while the system it
+  was refusing was registered and running. Now a standby answers every read
+  and write with the referral, and the orchestrator and authorizer forget a
+  registrar that refuses them.
 - **When the old lead returns it stands by**, because the election consults
   the registrars it has learned and not only the ones its file names. Before
   that fix a first host's registrar — whose file named no peer — retook the

@@ -41,11 +41,18 @@ type ServiceRegistryRequest struct {
 	Action string
 	Record forms.Form
 	Id     int64
+	// Owner is the verified name of the system asking, for a delete. Empty when
+	// the request arrived without a certificate, which a cloud without a CA is
+	// entitled to do; the check is then not made rather than failed.
+	Owner  string
 	Result chan []forms.ServiceRecord_v1
 	Error  chan error
 }
 
 // -------------------------------------Define the unit asset
+
+// errNotOwner is answered to a system removing a registration it did not make.
+var errNotOwner = errors.New("the record belongs to another system")
 
 // registration is one record and the timer that will retire it.
 //
@@ -153,25 +160,28 @@ const maxSubscribers = 64
 // whether the cloud has an authorizer.
 const systemListPath = "syslist"
 
+// registryPath is the sub-path a service is registered on, renewed on and
+// removed from.
+const registryPath = "registry"
+
 // initTemplate initializes a UnitAsset with default values.
 func initTemplate() *components.UnitAsset {
-	registerService := components.Service{
-		Definition:  "register",
-		SubPath:     "register",
-		Details:     map[string][]string{"Forms": usecases.ServiceRegistrationFormsList(), "Methods": components.HTTPMethods("POST")},
-		Description: "registers a service (POST) or updates its expiration time (PUT)",
+	// One resource, and the method says what is being done to it — as every
+	// other system here models a resource, and as the authorizer mints tokens:
+	// per action, on one service. The registry used to name the verb in the
+	// path instead, with a service called register and another called
+	// unregister, and was the one place in the framework that did.
+	registryService := components.Service{
+		Definition:  registryPath,
+		SubPath:     registryPath,
+		Details:     map[string][]string{"Forms": append(usecases.ServiceRegistrationFormsList(), "ID_only"), "Methods": components.HTTPMethods("POST", "PUT", "DELETE")},
+		Description: "registers a service (POST), renews its validity (PUT), or removes it by record ID (DELETE /registry/{id}) — only the system that registered it may remove it",
 	}
 	queryService := components.Service{
 		Definition:  "query",
 		SubPath:     "query",
 		Details:     map[string][]string{"Forms": usecases.ServQuestForms(), "Methods": components.HTTPMethods("GET", "POST")},
 		Description: "retrieves all currently available services using a GET request [accessed via a browser by a deployment technician] or retrieves a specific set of services using a POST request with a payload [initiated by the Orchestrator]",
-	}
-	unregisterService := components.Service{
-		Definition:  "unregister",
-		SubPath:     "unregister",
-		Details:     map[string][]string{"Forms": {"ID_only"}, "Methods": components.HTTPMethods("DELETE")},
-		Description: "removes a record (DELETE) based on record ID",
 	}
 	statusService := components.Service{
 		Definition:  "status",
@@ -199,9 +209,8 @@ func initTemplate() *components.UnitAsset {
 		Mobility: components.MobilityMovable,
 		Details:  map[string][]string{"Type": {"ephemeral"}},
 		ServicesMap: components.Services{
-			registerService.SubPath:   &registerService,
+			registryService.SubPath:   &registryService,
 			queryService.SubPath:      &queryService,
-			unregisterService.SubPath: &unregisterService,
 			statusService.SubPath:     &statusService,
 			systemListService.SubPath: &systemListService,
 		},
@@ -241,6 +250,27 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	if _, configured := ua.ServicesMap[systemListPath]; !configured {
 		s := initTemplate().ServicesMap[systemListPath]
 		ua.ServicesMap[systemListPath] = s
+	}
+	// The same, for the registry service that replaced register and unregister.
+	// A configuration written before the merge declares the two old names and
+	// not the new one; left alone, every system in the cloud would POST to a
+	// path this registrar no longer serves. The old declarations are dropped so
+	// the graph does not go on advertising services nothing answers.
+	if _, configured := ua.ServicesMap[registryPath]; !configured {
+		ua.ServicesMap[registryPath] = initTemplate().ServicesMap[registryPath]
+	}
+	// Unconditionally, not only when registry had to be added. Configure's
+	// fillServicesFromTemplates has already supplied registry from the
+	// template by the time this runs, so the guard above never fires on an old
+	// file — and a drop placed inside it left the file's register and
+	// unregister alive beside the new service, advertised in the registry and
+	// the graph and answered by nothing. Which is exactly what happened on the
+	// first deployment of this change.
+	for _, old := range []string{"register", "unregister"} {
+		if _, declared := ua.ServicesMap[old]; declared {
+			delete(ua.ServicesMap, old)
+			log.Printf("serviceregistrar: the %q service is now %q — dropped from the configuration file's declaration; remove it from the file to silence this\n", old, registryPath)
+		}
 	}
 
 	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
@@ -377,6 +407,16 @@ func (t *Traits) serviceRegistryHandler() {
 			// stood, so a subscriber can act on what left without having held
 			// its own copy of the registry.
 			gone, existed := t.serviceRegistry[int(request.Id)]
+			// The registry's services are core-mission and so exempt from
+			// tokens, which left any enrolled system free to remove any other's
+			// registration by guessing a number. A verified caller may remove
+			// only what it registered. An unverified one — a cloud with no CA —
+			// is not checked, because there is nothing to check it against.
+			if existed && request.Owner != "" && request.Owner != gone.SystemName {
+				t.mu.Unlock()
+				request.Error <- errNotOwner
+				continue
+			}
 			if existed {
 				gone.expiry.Stop()
 				delete(t.serviceRegistry, int(request.Id))
@@ -643,6 +683,19 @@ func (t *Traits) queryDB(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// registryDB is the resource: POST and PUT go to updateDB, DELETE to cleanDB.
+func (t *Traits) registryDB(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "POST", "PUT":
+		t.updateDB(w, r)
+	case "DELETE":
+		t.cleanDB(w, r)
+	default:
+		w.Header().Set("Allow", "POST, PUT, DELETE")
+		http.Error(w, "Unsupported HTTP request method", http.StatusMethodNotAllowed)
+	}
+}
+
 // cleanDB deletes service records upon request (e.g., when a system shuts down).
 func (t *Traits) cleanDB(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -654,13 +707,20 @@ func (t *Traits) cleanDB(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid record ID", http.StatusBadRequest)
 			return
 		}
+		owner, _ := usecases.PeerCN(r)
 		addRecord := ServiceRegistryRequest{
 			Action: "delete",
 			Id:     int64(id),
+			Owner:  owner,
 			Error:  make(chan error),
 		}
 		t.requests <- addRecord
 		err = <-addRecord.Error
+		if errors.Is(err, errNotOwner) {
+			log.Printf("serviceregistrar: %q asked to delete record %d, which belongs to another system\n", owner, id)
+			http.Error(w, "only the system that registered a service may remove it", http.StatusForbidden)
+			return
+		}
 		if err != nil {
 			log.Printf("Error deleting the service with id: %d, %s\n", id, err)
 			http.Error(w, "Error deleting service", http.StatusInternalServerError)

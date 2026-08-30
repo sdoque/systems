@@ -295,7 +295,7 @@ Two consequences worth knowing before enabling anything:
 - The Registrar can be given the Authorizer in its core list, and registration
   will still work. But **deregistration will not**: `ActionForMethod` maps DELETE
   to the empty string by design, and no token claim can match it. A registrar's
-  `unregister` is core-mission and therefore exempt today; if that ever changes,
+  `registry` is core-mission and therefore exempt today; if that ever changes,
   deregistration breaks.
 - Filtering at the Orchestrator still applies to core services. The exemption is
   about the *provider's* token check, not about which candidates a consumer is

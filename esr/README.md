@@ -20,7 +20,7 @@ the right complement.
 
 ## Registration service
 
-An Arrowhead system registers itself by sending a POST to `/register` with a
+An Arrowhead system registers itself by sending a POST to `/registry` with a
 `ServiceRecord_v1` payload. The ESR assigns an ID, sets the validity window, and
 returns the completed record. The system must renew its registration before the
 `EndOfValidity` time passes by sending a PUT with the same record (including the
@@ -36,7 +36,7 @@ sequenceDiagram
 
     Note over System,Registry: Initial registration (POST)
 
-    System->>ESR: POST /register  (ServiceRecord_v1, Id=0)
+    System->>ESR: POST /registry  (ServiceRecord_v1, Id=0)
     ESR->>Registry: add record
     Note over Registry: new ID assigned<br/>EndOfValidity = now + RegLife<br/>expiration timer scheduled
     Registry-->>ESR: success
@@ -44,7 +44,7 @@ sequenceDiagram
 
     Note over System,Registry: Renewal before expiry (PUT)
 
-    System->>ESR: PUT /register  (ServiceRecord_v1, same Id)
+    System->>ESR: PUT /registry  (ServiceRecord_v1, same Id)
     ESR->>Registry: add record
     Note over Registry: Id exists → renew<br/>EndOfValidity extended<br/>expiration timer rescheduled
     Registry-->>ESR: success
@@ -56,7 +56,7 @@ sequenceDiagram
 
     Note over System,Registry: Graceful unregistration (DELETE)
 
-    System->>ESR: DELETE /unregister/{id}
+    System->>ESR: DELETE /registry/{id}
     ESR->>Registry: delete record
     Note over Registry: record removed<br/>expiration timer canceled<br/>notify()
     Registry-->>ESR: success
@@ -95,7 +95,7 @@ sequenceDiagram
 
     Note over Browser,Registry: New system registers
 
-    System->>ESR: POST /register (ServiceRecord_v1)
+    System->>ESR: POST /registry (ServiceRecord_v1)
     ESR->>Registry: add record
     Registry-->>ESR: success + notify()
     ESR->>Registry: read all records

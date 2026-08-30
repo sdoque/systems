@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509/pkix"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -915,5 +916,45 @@ func TestRenewalOutlivesAFiredTimer(t *testing.T) {
 	ua.expire(7)
 	if _, present := ua.serviceRegistry[7]; present {
 		t.Fatal("a lapsed registration survived expire")
+	}
+}
+
+// A verified system may remove only what it registered.
+//
+// The registry's services are core-mission and so exempt from tokens, which
+// left any enrolled system free to delete any other's registration by
+// guessing a number. An unverified caller is not checked — a cloud with no CA
+// has nothing to check against — which is the case the httptest requests
+// above exercise; this one supplies an owner.
+func TestOnlyTheRegistrantMayDelete(t *testing.T) {
+	sys := createNewSys()
+	temp, cancel := newResource(createConfAssetMultipleTraits(), &sys)
+	defer cancel()
+	ua := temp.Traits.(*Traits)
+
+	var rec forms.ServiceRecord_v1
+	rec.SystemName = "thermostat"
+	rec.ServiceDefinition = "setpoint"
+	ua.mu.Lock()
+	ua.serviceRegistry = map[int]*registration{5: held(rec)}
+	ua.mu.Unlock()
+
+	ask := func(owner string) error {
+		req := ServiceRegistryRequest{Action: "delete", Id: 5, Owner: owner, Error: make(chan error)}
+		ua.requests <- req
+		return <-req.Error
+	}
+
+	if err := ask("collector"); !errors.Is(err, errNotOwner) {
+		t.Fatalf("another system deleted the thermostat's registration: err=%v", err)
+	}
+	if _, present := ua.serviceRegistry[5]; !present {
+		t.Fatal("the record was removed by a system that did not own it")
+	}
+	if err := ask("thermostat"); err != nil {
+		t.Fatalf("the owner could not delete its own registration: %v", err)
+	}
+	if _, present := ua.serviceRegistry[5]; present {
+		t.Fatal("the owner's delete did not remove the record")
 	}
 }

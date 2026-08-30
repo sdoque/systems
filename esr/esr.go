@@ -105,12 +105,10 @@ func main() {
 // serving dispatches an incoming HTTP request to the appropriate handler.
 func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath string) {
 	switch servicePath {
-	case "register":
-		t.updateDB(w, r)
+	case registryPath:
+		t.registryDB(w, r)
 	case "query":
 		t.queryDB(w, r)
-	case "unregister":
-		t.cleanDB(w, r)
 	case "status":
 		t.roleStatus(w, r)
 	case systemListPath:

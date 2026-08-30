@@ -176,7 +176,9 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 			"Bad case, unable to convert to correct form",
 		},
 		{
-			true,
+			false,
+			// Registered afresh since 30 August 2026: an id this registrar
+			// holds for another record was issued elsewhere, before a failover.
 			func(ua *Traits) error {
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
 				if err != nil {
@@ -185,10 +187,12 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 				err = sendAddRequest(1, "testDef2", "subP", time.Now().Format(time.RFC3339), ua.requests)
 				return err
 			},
-			"Bad case, exists with different service definition",
+			"Good case (registered afresh), exists with different service definition",
 		},
 		{
-			true,
+			false,
+			// Registered afresh since 30 August 2026: an id this registrar
+			// holds for another record was issued elsewhere, before a failover.
 			func(ua *Traits) error {
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
 				if err != nil {
@@ -197,10 +201,12 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 				err = sendAddRequest(1, "testDef", "subPa", time.Now().Format(time.RFC3339), ua.requests)
 				return err
 			},
-			"Bad case, exists with different subpath",
+			"Good case (registered afresh), exists with different subpath",
 		},
 		{
-			true,
+			false,
+			// Registered afresh since 30 August 2026: an id this registrar
+			// holds for another record was issued elsewhere, before a failover.
 			func(ua *Traits) error {
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
 				if err != nil {
@@ -209,10 +215,12 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 				err = sendAddRequest(1, "testDef", "subP", "", ua.requests)
 				return err
 			},
-			"Bad case, exists different creation time in updated record",
+			"Good case (registered afresh), exists different creation time in updated record",
 		},
 		{
-			true,
+			false,
+			// Registered afresh since 30 August 2026: an id this registrar
+			// holds for another record was issued elsewhere, before a failover.
 			func(ua *Traits) error {
 				ch := ua.requests
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
@@ -222,7 +230,7 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 				err = sendAddRequest(1, "testDef", "subP", time.Now().Add(1*time.Hour).Format(time.RFC3339), ch)
 				return err
 			},
-			"Bad case, mismatch between db- and received created field",
+			"Good case (registered afresh), mismatch between db- and received created field",
 		},
 		{
 			false,
@@ -956,5 +964,33 @@ func TestOnlyTheRegistrantMayDelete(t *testing.T) {
 	}
 	if _, present := ua.serviceRegistry[5]; present {
 		t.Fatal("the owner's delete did not remove the record")
+	}
+}
+
+// After a failover, a system renews with the id the old lead gave it. The new
+// lead may hold that number for someone else, and it must treat the renewal as
+// the registration it never saw rather than refuse it.
+func TestARenewalWithAForeignIdIsRegisteredAfresh(t *testing.T) {
+	sys := createNewSys()
+	temp, cancel := newResource(createConfAssetMultipleTraits(), &sys)
+	defer cancel()
+	ua := temp.Traits.(*Traits)
+
+	other := forms.ServiceRecord_v1{SystemName: "parallax", ServiceDefinition: "rotation", SubPath: "Servo_1/rotation", Created: "2026-08-30T15:00:00Z", RegLife: 30}
+	ua.mu.Lock()
+	ua.serviceRegistry = map[int]*registration{13: held(other)}
+	ua.mu.Unlock()
+
+	renewal := &forms.ServiceRecord_v1{Id: 13, SystemName: "collector", ServiceDefinition: "mquery", SubPath: "demo/mquery", Created: "2026-08-30T14:00:00Z", RegLife: 30}
+	req := ServiceRegistryRequest{Action: "add", Record: renewal, Error: make(chan error)}
+	ua.requests <- req
+	if err := <-req.Error; err != nil {
+		t.Fatalf("a renewal with a foreign id was refused: %v", err)
+	}
+	if renewal.Id == 13 || renewal.Id == 0 {
+		t.Fatalf("the renewal kept id %d instead of being registered afresh", renewal.Id)
+	}
+	if got := ua.serviceRegistry[13]; got == nil || got.SystemName != "parallax" {
+		t.Fatal("the record that legitimately held id 13 was disturbed")
 	}
 }

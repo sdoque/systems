@@ -202,8 +202,14 @@ func renderListItems(servicesList []forms.ServiceRecord_v1) string {
 }
 
 // peersList provides a list of the other service registrars in the local cloud.
+//
+// Every registrar this system knows, learned ones included. It read only the
+// configuration file, and a file that names no other registrar — a first host's
+// file, before there was a second — left the election with nobody to defer to:
+// a restarted registrar took the lead two milliseconds after starting, over a
+// peer that was leading, and every system re-registered a second time.
 func peersList(sys *components.System) (peers []*components.CoreSystem, err error) {
-	for _, cs := range sys.Husk.CoreS {
+	for _, cs := range sys.CoreSystems() {
 		if cs.Name != "serviceregistrar" {
 			continue
 		}

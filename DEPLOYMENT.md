@@ -232,6 +232,27 @@ Expect the first five minutes to say *not in whitelist* — see below.
 
 ---
 
+## When the lead registrar goes away
+
+Tested on 30 August 2026 by stopping aiko's registrar with two hosts running.
+
+- **The standby takes the lead within a second** of the lead stopping to
+  answer, and every system finds it on its next five-second tick — the file's
+  entry refuses, the learned one leads.
+- **A standby's registry is empty.** It does not replicate the lead's records.
+  Systems re-register within their registration period — thirty seconds for
+  most, two minutes for a controller — and until each has, a *new* discovery
+  of its services finds nothing. Existing bindings do not notice: the
+  thermostat on the second host went on reading and driving throughout.
+- **A renewal carries the old lead's id.** The new lead may hold that number
+  for another service; it registers the renewal afresh rather than refusing
+  it. Before that fix every system took a 500 and waited out a full period.
+- **When the old lead returns it stands by**, because the election consults
+  the registrars it has learned and not only the ones its file names. Before
+  that fix a first host's registrar — whose file named no peer — retook the
+  lead two milliseconds after starting, and every system re-registered a
+  second time.
+
 ## When it does not start
 
 **Everything says *the CA refused to certify (403): Attestation failed —

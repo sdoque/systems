@@ -51,6 +51,21 @@ type ServiceRegistryRequest struct {
 
 // -------------------------------------Define the unit asset
 
+// sameRegistration reports whether a renewal is of this record: the same
+// service, on the same path, created at the same moment. A renewal that fails
+// any of these was issued elsewhere.
+func (r *registration) sameRegistration(rec *forms.ServiceRecord_v1) bool {
+	if r == nil {
+		return false
+	}
+	if r.ServiceDefinition != rec.ServiceDefinition || r.SubPath != rec.SubPath {
+		return false
+	}
+	mine, err1 := time.Parse(time.RFC3339, r.Created)
+	theirs, err2 := time.Parse(time.RFC3339, rec.Created)
+	return err1 == nil && err2 == nil && mine.Equal(theirs)
+}
+
 // errNotOwner is answered to a system removing a registration it did not make.
 var errNotOwner = errors.New("the record belongs to another system")
 
@@ -310,6 +325,19 @@ func (t *Traits) serviceRegistryHandler() {
 			if _, exists := t.serviceRegistry[rec.Id]; !exists {
 				rec.Id = 0
 			}
+			// An id this registrar holds for a different service is not this
+			// service's id: it was issued by another registrar, before a
+			// failover, and this one has since given the same number to someone
+			// else. Refusing it sent every system through a 500 and a full
+			// registration period before it tried a fresh POST — thirty seconds
+			// to two minutes of a system the cloud could not find. A record
+			// this registrar does not recognise is a registration it has not
+			// seen, and is treated as one.
+			if rec.Id != 0 && !t.serviceRegistry[rec.Id].sameRegistration(rec) {
+				log.Printf("a renewal of %s from %s carries id %d, which is not its record here — registering it afresh\n",
+					rec.ServiceDefinition, rec.SystemName, rec.Id)
+				rec.Id = 0
+			}
 
 			// A zero Id means the registry has never seen this service. Anything
 			// else is the periodic re-registration that only extends the
@@ -335,33 +363,6 @@ func (t *Traits) serviceRegistryHandler() {
 				log.Printf("The new service %s from system %s has been registered\n", rec.ServiceDefinition, rec.SystemName)
 			} else {
 				dbRec := t.serviceRegistry[rec.Id]
-				if dbRec.ServiceDefinition != rec.ServiceDefinition {
-					request.Error <- errors.New("mismatch between definition received record and database record")
-					t.mu.Unlock()
-					continue
-				}
-				if dbRec.SubPath != rec.SubPath {
-					request.Error <- errors.New("mismatch between path received record and database record")
-					t.mu.Unlock()
-					continue
-				}
-				recCreated, err := time.Parse(time.RFC3339, rec.Created)
-				if err != nil {
-					request.Error <- errors.New("time parsing problem with updated record")
-					t.mu.Unlock()
-					continue
-				}
-				dbCreated, err := time.Parse(time.RFC3339, dbRec.Created)
-				if err != nil {
-					request.Error <- errors.New("time parsing problem with archived record")
-					t.mu.Unlock()
-					continue
-				}
-				if !recCreated.Equal(dbCreated) {
-					request.Error <- errors.New("mismatch between created received record and database record")
-					t.mu.Unlock()
-					continue
-				}
 				rec.EndOfValidity = now.Add(time.Duration(dbRec.RegLife) * time.Second).Format(time.RFC3339)
 				// The renewal replaces the sleeper. Stop may return false because
 				// the old one has already fired and is waiting on t.mu; expire
@@ -758,16 +759,18 @@ func (t *Traits) roleStatus(w http.ResponseWriter, r *http.Request) {
 
 // startRole repeatedly checks which service registrar in the local cloud is the leader.
 func (t *Traits) startRole(sys *components.System) {
-	peersList, err := peersList(sys)
-	if err != nil {
+	if _, err := peersList(sys); err != nil {
 		panic(err)
 	}
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		for {
+			// Recomputed each tick: a registrar learned after startup is a peer
+			// from then on, not from the next restart.
+			peers, _ := peersList(sys)
 			standby := false
 		foundLead:
-			for _, cSys := range peersList {
+			for _, cSys := range peers {
 				resp, err := http.Get(cSys.Url + "/status")
 				if err != nil {
 					break

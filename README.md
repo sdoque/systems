@@ -51,7 +51,9 @@ sequenceDiagram
 A local cloud needs a registrar and an orchestrator. The three below are optional
 and each raises what the cloud can protect against; a cloud without them works,
 and says so. See [SECURITY.md](SECURITY.md) for what to deploy and what each
-level actually protects.
+level actually protects, and [DEPLOYMENT.md](DEPLOYMENT.md) for how a
+technician stands a cloud up — on one host, two, or more with the CA on its
+own — and what it looks like when it has gone wrong.
 
 | System | What it adds |
 |---|---|

@@ -21,7 +21,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -65,6 +68,36 @@ type Traits struct {
 // resolveExecutable and describeResolutionFailure live in attest_<os>.go:
 // how a process is mapped to the file it runs is the one thing in this system
 // the platform decides, and it decides what the hash means — see each file.
+
+// describeResolutionFailure turns a failure to find the file behind a process
+// into something an operator can act on. One function for every platform:
+// the two outcomes — another user's process, a process that has gone — are the
+// same everywhere, only the error that means each differs, and that is all a
+// platform is asked (classifyResolutionError). A change to the wording or the
+// refuse/fault decision is then made once and tested once, on whichever
+// platform runs the tests.
+//
+// The interesting case is permission. A maitreD running as one user cannot see
+// a system started by another — with sudo on Linux, elevated on Windows — and
+// the remedy given is to drop the privilege rather than to raise maitreD's: a
+// maitreD running as root to inspect everything is a larger thing to trust than
+// the systems it is attesting.
+//
+// It returns the explanation and whether maitreD is certain enough to refuse
+// rather than report a fault of its own.
+func describeResolutionFailure(pid int, err error) (reason string, refused bool) {
+	permission, gone := classifyResolutionError(err)
+	switch {
+	case permission || errors.Is(err, fs.ErrPermission):
+		return fmt.Sprintf("cannot see what process %d is running: it belongs to another user, "+
+			"so this maitreD cannot attest it. Start that system as the same user as maitreD — "+
+			"%s — or run maitreD as the user that owns it", pid, privilegeAdvice), true
+	case gone || errors.Is(err, fs.ErrNotExist):
+		return fmt.Sprintf("no process %d: it exited before it could be attested", pid), true
+	default:
+		return fmt.Sprintf("cannot see what process %d is running: %v", pid, err), false
+	}
+}
 
 //-------------------------------------Instantiate a unit asset template
 

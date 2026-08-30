@@ -356,6 +356,23 @@ func (t *Traits) serviceRegistryHandler() {
 				rec.Id = 0
 			}
 
+			// One record per service per system. A fresh registration for a
+			// service this registrar already holds — the same system, the same
+			// definition, the same path — renews that record instead of making a
+			// second: a system that decided the lead had moved (the same lead
+			// under another spelling, or a lead it had already reached by another
+			// route) would otherwise register everything twice, and the registry
+			// would answer every quest with both until the first lapsed.
+			if rec.Id == 0 {
+				for id, held := range t.serviceRegistry {
+					if held.SystemName == rec.SystemName && held.ServiceDefinition == rec.ServiceDefinition && held.SubPath == rec.SubPath {
+						rec.Id = id
+						rec.Created = held.Created
+						break
+					}
+				}
+			}
+
 			// A zero Id means the registry has never seen this service. Anything
 			// else is the periodic re-registration that only extends the
 			// validity window — the same service, still there, saying so. That

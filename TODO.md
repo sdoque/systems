@@ -10,6 +10,10 @@ say why here and then delete the entry.
 
 ## Now redundant, to be removed
 
+- **Still there after the failover work of 30 August**, and now with a second
+  reason to remove it: a standby refuses reads, so a backfill that reads a
+  standby's list gets the referral and nothing else.
+
 - **The ESR's hand-rolled `syslist` backfill** (`esr/thing.go`, in `newResource`).
   The framework fills a configured asset's services from its template now
   (`usecases.fillServicesFromTemplates`), which covers a service the file has
@@ -199,6 +203,14 @@ say why here and then delete the entry.
   `chronicler/README.md` — *this signal has not changed since Tuesday* is the
   check that catches all of this from outside.
 
+- **DONE 30 August 2026, except the Windows run:** the maitreD attests on
+  Linux, Windows and macOS (`maitreD/attest_<os>.go`), `make win` and
+  `make mac` build the portable set, the whitelist hashes every platform, and
+  a Mac maitreD enrolled with a Pi's CA and attested an envoy on the laptop.
+  What is left is the Windows test itself, planned for 31 August, and the
+  admin-host policy subject — a Mac or Windows host should be *authorized
+  less*, and that is a `policies.json` entry nobody has written yet.
+
 - **maitreD is Linux-only, and does not say so.** Attestation resolves a PID to
   an executable by reading `/proc/<pid>/exe` (`maitreD/hostload.go`,
   `resolveExecutable`). That is the *entire* platform dependency — the CA passes
@@ -341,6 +353,21 @@ say why here and then delete the entry.
   independently. It should never be declarable on the system: a hand-written
   value can contradict its assets, and it goes stale silently the first time an
   asset with a GPIO pin is added to a system marked movable.
+
+- **CI is red until mbaigo is tagged.** The systems build against the module
+  proxy in CI and against the local checkout through `go.work` on the desk,
+  and the ESR now uses `components.LocalCloudHeader` and
+  `components.ServiceRegistrarStandby`, which exist in no tagged mbaigo. Tag
+  `v0.1.0-alpha.13` and bump the pins, as every framework change eventually
+  requires; `make rpi` on the desk does not notice, which is the trap.
+
+- **Windows: what an elevated process answers is unknown** until the first run.
+  The Linux rule — a sudo-started system is refused — rests on `/proc` hiding
+  another user's process; on Windows the limited query the maitreD makes is
+  the one granted across integrity levels, so a "Run as administrator" system
+  may attest. If it does, refusing it is a token-integrity check. On macOS the
+  same rule now rests on the owner of the file at the path, the one check the
+  platform allows.
 
 ## Not yet run on hardware
 

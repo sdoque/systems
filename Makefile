@@ -24,24 +24,21 @@ SYSTEMS := assessor authorizer beehive beekeeper busdriver ca clerk collector de
 # systems that need no hardware. Override on the command line.
 PORTABLE ?= maitreD esr thermostat painter envoy kgrapher modeler collector
 
-# win builds them for a Windows machine, into the same staging tree as _win64.exe;
-# mac for this Mac, as _mac64 (cgo, so it builds natively and not cross).
+# win builds them for a Windows machine, into the same staging tree as
+# _win64.exe; mac for this Mac, as _mac64, for whatever this Mac's own
+# architecture is — the maitreD needs cgo there, and cgo is off for a cross
+# build, so a hard-coded arm64 would have failed to compile on an Intel Mac.
+# Both regenerate the whitelist, because a binary that is built and not
+# hashed is one the CA will refuse.
+MACARCH := $(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
 win: $(foreach sys,$(PORTABLE),$(STAGING)/$(sys)/$(sys)_win64.exe)
-	@echo "Windows binaries built — remember: make whitelist"
+	@$(MAKE) --no-print-directory whitelist
 mac: $(foreach sys,$(PORTABLE),$(STAGING)/$(sys)/$(sys)_mac64)
-	@echo "macOS binaries built — remember: make whitelist"
+	@$(MAKE) --no-print-directory whitelist
 
 define build_portable
-$(STAGING)/$(1)/$(1)_win64.exe: $(shell find $(1) -name '*.go' 2>/dev/null)
-	@mkdir -p $(STAGING)/$(1)
-	cd $(1) && GOOS=windows GOARCH=amd64 go build \
-		-ldflags "-X '$(PKG).AppName=$(1)' -X '$(PKG).Version=$(VERSION)' -X '$(PKG).BuildDate=$(BUILD_DATE)' -X '$(PKG).BuildHash=$(BUILD_HASH)'" \
-		-o $(STAGING)/$(1)/$(1)_win64.exe
-$(STAGING)/$(1)/$(1)_mac64: $(shell find $(1) -name '*.go' 2>/dev/null)
-	@mkdir -p $(STAGING)/$(1)
-	cd $(1) && GOOS=darwin GOARCH=arm64 go build \
-		-ldflags "-X '$(PKG).AppName=$(1)' -X '$(PKG).Version=$(VERSION)' -X '$(PKG).BuildDate=$(BUILD_DATE)' -X '$(PKG).BuildHash=$(BUILD_HASH)'" \
-		-o $(STAGING)/$(1)/$(1)_mac64
+$(call build_for,$(1),windows,amd64,_win64.exe)
+$(call build_for,$(1),darwin,$(MACARCH),_mac64)
 endef
 $(foreach sys,$(PORTABLE),$(eval $(call build_portable,$(sys))))
 
@@ -86,18 +83,25 @@ rpi: $(SYSTEMS)
 # $(1) is replaced by the system name when the template is expanded.
 # foreach loops over SYSTEMS, calling eval to turn each expansion into a rule.
 
+# What every binary is stamped with, in one place: a flag added here reaches
+# every platform, and a Windows maitreD cannot ship reporting Version=dev
+# because the portable rule forgot it.
+LDFLAGS = -X '$(PKG).AppName=$(1)' -X '$(PKG).Version=$(VERSION)' -X '$(PKG).BuildDate=$(BUILD_DATE)' -X '$(PKG).BuildHash=$(BUILD_HASH)'
+
+# build_for: $(1) system, $(2) GOOS, $(3) GOARCH, $(4) suffix. One rule shape
+# for every platform. The source list is found once per system, below, rather
+# than once per rule per make invocation.
+define build_for
+$(STAGING)/$(1)/$(1)$(4): $$($(1)_SRC)
+	@mkdir -p $(STAGING)/$(1)
+	cd $(1) && GOOS=$(2) GOARCH=$(3) go build -ldflags "$(LDFLAGS)" -o $(STAGING)/$(1)/$(1)$(4)
+endef
+
 define build_system
+$(1)_SRC := $(shell find $(1) -name '*.go' 2>/dev/null)
 $(1): $(STAGING)/$(1)/$(1)_rpi64 $(if $(wildcard $(1)/README.md),$(STAGING)/$(1)/README.md)
 	@echo "$(1) done"
-
-$(STAGING)/$(1)/$(1)_rpi64: $(shell find $(1) -name '*.go' 2>/dev/null)
-	@mkdir -p $(STAGING)/$(1)
-	cd $(1) && GOOS=$(GOOS) GOARCH=$(GOARCH) go build \
-		-ldflags "-X '$(PKG).AppName=$(1)' \
-		          -X '$(PKG).Version=$(VERSION)' \
-		          -X '$(PKG).BuildDate=$(BUILD_DATE)' \
-		          -X '$(PKG).BuildHash=$(BUILD_HASH)'" \
-		-o $(STAGING)/$(1)/$(1)_rpi64
+$(call build_for,$(1),$(GOOS),$(GOARCH),_rpi64)
 
 $(STAGING)/$(1)/README.md: $(1)/README.md
 	@mkdir -p $(STAGING)/$(1)
@@ -143,10 +147,25 @@ whitelist: $(STAGING)/ca/whitelist.json $(STAGING)/ca/whitelist-manifest.txt
 # re-running `make rpi` causes the whitelist to regenerate automatically.
 # Every staged binary of every platform: a Windows or macOS build placed
 # beside the Pi ones is part of the same release and attested by the same CA.
-$(STAGING)/ca/whitelist.json: $(foreach sys,$(SYSTEMS),$(STAGING)/$(sys)/$(sys)_rpi64)
+#
+# STAGED_BINS is both the prerequisite list and what is hashed, so the two
+# cannot disagree. They did: the rule depended on the Pi binaries only, so a
+# rebuilt Mac or Windows binary left the whitelist "up to date" and the CA
+# serving a hash of the old one — and the first host to notice would have been
+# the Windows machine, reporting "not in whitelist" for a reason the deployment
+# document attributes to the firewall.
+#
+# Named from SYSTEMS and PORTABLE, not globbed from the directory: the
+# whitelist is exactly this release's binaries, and a system dropped from the
+# list — or something copied into staging by hand — does not stay attestable
+# because its file is still lying there.
+STAGED_BINS = $(wildcard $(foreach sys,$(SYSTEMS),$(STAGING)/$(sys)/$(sys)_rpi64) \
+                         $(foreach sys,$(PORTABLE),$(STAGING)/$(sys)/$(sys)_win64.exe $(STAGING)/$(sys)/$(sys)_mac64))
+
+$(STAGING)/ca/whitelist.json: $(foreach sys,$(SYSTEMS),$(STAGING)/$(sys)/$(sys)_rpi64) $(STAGED_BINS)
 	@mkdir -p $(STAGING)/ca
 	@printf '[\n' > $@
-	@first=1; for bin in $$(ls $(STAGING)/*/*_rpi64 $(STAGING)/*/*_win64.exe $(STAGING)/*/*_mac64 2>/dev/null); do \
+	@first=1; for bin in $(STAGED_BINS); do \
 		hash=$$(shasum -a 256 $$bin | cut -d' ' -f1); \
 		if [ $$first -eq 1 ]; then first=0; else printf ',\n' >> $@; fi; \
 		printf '  "%s"' "$$hash" >> $@; \
@@ -156,10 +175,10 @@ $(STAGING)/ca/whitelist.json: $(foreach sys,$(SYSTEMS),$(STAGING)/$(sys)/$(sys)_
 
 # Human-readable manifest — never read by code, always read by people.
 # Use this to answer "what binary is hash e3b0c44…?" during ops review.
-$(STAGING)/ca/whitelist-manifest.txt: $(foreach sys,$(SYSTEMS),$(STAGING)/$(sys)/$(sys)_rpi64)
+$(STAGING)/ca/whitelist-manifest.txt: $(foreach sys,$(SYSTEMS),$(STAGING)/$(sys)/$(sys)_rpi64) $(STAGED_BINS)
 	@mkdir -p $(STAGING)/ca
 	@printf '# mbaigo whitelist manifest\n# VERSION=%s BUILD_DATE=%s\n# every staged binary, every platform\n\n' "$(VERSION)" "$(BUILD_DATE)" > $@
-	@for bin in $$(ls $(STAGING)/*/*_rpi64 $(STAGING)/*/*_win64.exe $(STAGING)/*/*_mac64 2>/dev/null); do \
+	@for bin in $(STAGED_BINS); do \
 		hash=$$(shasum -a 256 $$bin | cut -d' ' -f1); \
 		printf '%-40s %s\n' "$$(basename $$bin)" "$$hash" >> $@; \
 	done

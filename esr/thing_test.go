@@ -1048,3 +1048,34 @@ func TestElectionRefusesAPeerOfAnotherCloud(t *testing.T) {
 		t.Fatal("took the lead over a registrar of the same cloud that leads")
 	}
 }
+
+// One record per service per system: a fresh registration of a service the
+// registrar already holds renews the record it has, and does not make a second.
+func TestAFreshRegistrationOfAHeldServiceRenewsIt(t *testing.T) {
+	sys := createNewSys()
+	temp, cancel := newResource(createConfAssetMultipleTraits(), &sys)
+	defer cancel()
+	ua := temp.Traits.(*Traits)
+
+	first := &forms.ServiceRecord_v1{SystemName: "thermostat", ServiceDefinition: "setpoint", SubPath: "controller_1/setpoint", RegLife: 30}
+	req := ServiceRegistryRequest{Action: "add", Record: first, Error: make(chan error)}
+	ua.requests <- req
+	if err := <-req.Error; err != nil {
+		t.Fatal(err)
+	}
+	again := &forms.ServiceRecord_v1{SystemName: "thermostat", ServiceDefinition: "setpoint", SubPath: "controller_1/setpoint", RegLife: 30}
+	req = ServiceRegistryRequest{Action: "add", Record: again, Error: make(chan error)}
+	ua.requests <- req
+	if err := <-req.Error; err != nil {
+		t.Fatal(err)
+	}
+	if again.Id != first.Id {
+		t.Fatalf("a second record (%d) was made beside the first (%d)", again.Id, first.Id)
+	}
+	ua.mu.Lock()
+	n := len(ua.serviceRegistry)
+	ua.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("registry holds %d records for one service", n)
+	}
+}

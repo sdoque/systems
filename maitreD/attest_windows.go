@@ -4,8 +4,6 @@ package main
 
 import (
 	"errors"
-	"io/fs"
-	"fmt"
 
 	"golang.org/x/sys/windows"
 )
@@ -20,8 +18,12 @@ import (
 // attestation and not merely a tolerated one.
 //
 // PROCESS_QUERY_LIMITED_INFORMATION is enough to ask, and is granted for a
-// process of the same user without any privilege; an elevated process or
-// another user's answers with access denied, as on Linux.
+// process of the same user without any privilege. Another user's process
+// answers access denied. What an elevated process of the same user answers is
+// not known yet: the limited query is the one Windows grants across integrity
+// levels, so a system started with "Run as administrator" may well attest —
+// to be found out on the first Windows run, and if it does, refusing it is a
+// token-integrity check and not this error.
 var resolveExecutable = func(pid int) (string, error) {
 	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 	if err != nil {
@@ -36,20 +38,14 @@ var resolveExecutable = func(pid int) (string, error) {
 	return windows.UTF16ToString(buf[:n]), nil
 }
 
-// The generic fs errors are recognised too: a test substitutes a resolver
-// that returns them, and the meaning is the same whatever produced it.
-//
-// describeResolutionFailure turns a failure to open the process into something
-// an operator can act on. The same two cases as Linux, reached differently.
-func describeResolutionFailure(pid int, err error) (reason string, refused bool) {
-	switch {
-	case errors.Is(err, windows.ERROR_ACCESS_DENIED), errors.Is(err, fs.ErrPermission):
-		return fmt.Sprintf("cannot open process %d: it belongs to another user or runs elevated, "+
-			"so this maitreD cannot see what it is running. Start that system as the same user as maitreD, "+
-			"without 'Run as administrator'", pid), true
-	case errors.Is(err, windows.ERROR_INVALID_PARAMETER), errors.Is(err, fs.ErrNotExist):
-		return fmt.Sprintf("no process %d: it exited before it could be attested", pid), true
-	default:
-		return fmt.Sprintf("cannot open process %d: %v", pid, err), false
-	}
+// classifyResolutionError says which of the two refusals an OpenProcess error is.
+func classifyResolutionError(err error) (permission, gone bool) {
+	// A process that has exited but not yet been reaped — a parent or the
+	// console still holds its object — opens, and the image query then fails
+	// with ERROR_GEN_FAILURE: gone, not a fault of this maitreD's.
+	return errors.Is(err, windows.ERROR_ACCESS_DENIED),
+		errors.Is(err, windows.ERROR_INVALID_PARAMETER) || errors.Is(err, windows.ERROR_GEN_FAILURE)
 }
+
+// privilegeAdvice is the platform's way of saying "without extra privilege".
+const privilegeAdvice = "without \"Run as administrator\""

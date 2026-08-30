@@ -10,8 +10,9 @@ import "C"
 
 import (
 	"errors"
-	"io/fs"
 	"fmt"
+	"io/fs"
+	"os"
 	"syscall"
 	"unsafe"
 )
@@ -35,22 +36,28 @@ var resolveExecutable = func(pid int) (string, error) {
 		}
 		return "", err
 	}
-	return string(buf[:n]), nil
+	path := string(buf[:n])
+	// macOS lets any user read any process's path — proc_pidpath is what ps
+	// uses — so the Linux rule, where another user's process simply cannot be
+	// seen, does not exist here. The check the platform does allow is the
+	// owner of the file at that path: a system started with sudo runs a file
+	// this maitreD's user does not own, and is refused as it would be on Linux.
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if st, ok := info.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
+		return "", fmt.Errorf("%s is owned by uid %d and this maitreD runs as %d: %w", path, st.Uid, os.Getuid(), fs.ErrPermission)
+	}
+	return path, nil
 }
 
-// The generic fs errors are recognised too: a test substitutes a resolver
-// that returns them, and the meaning is the same whatever produced it.
-//
-// describeResolutionFailure turns a proc_pidpath failure into something an
-// operator can act on: the same two cases as Linux, by errno.
-func describeResolutionFailure(pid int, err error) (reason string, refused bool) {
-	switch {
-	case errors.Is(err, syscall.EPERM), errors.Is(err, syscall.EACCES), errors.Is(err, fs.ErrPermission):
-		return fmt.Sprintf("cannot read the path of process %d: it belongs to another user, "+
-			"so this maitreD cannot see what it is running. Start that system as the same user as maitreD", pid), true
-	case errors.Is(err, syscall.ESRCH), errors.Is(err, fs.ErrNotExist):
-		return fmt.Sprintf("no process %d: it exited before it could be attested", pid), true
-	default:
-		return fmt.Sprintf("cannot read the path of process %d: %v", pid, err), false
-	}
+// classifyResolutionError says which of the two refusals a proc_pidpath errno
+// is. EPERM is rare here — see resolveExecutable — and ESRCH is the process
+// having gone.
+func classifyResolutionError(err error) (permission, gone bool) {
+	return errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES), errors.Is(err, syscall.ESRCH)
 }
+
+// privilegeAdvice is the platform's way of saying "without extra privilege".
+const privilegeAdvice = "as that user rather than sudo"

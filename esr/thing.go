@@ -742,7 +742,9 @@ func (t *Traits) roleStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if role != nil && role.registrar != nil {
-			http.Error(w, fmt.Sprintf("On standby, leading registrar is %s", role.registrar.Url), http.StatusServiceUnavailable)
+			// The framework's sentence, so a client can follow it: a standby is
+			// a referral to the lead, not a dead end.
+			http.Error(w, components.ServiceRegistrarStandby+role.registrar.Url, http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)

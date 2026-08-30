@@ -63,6 +63,42 @@ sequenceDiagram
     ESR-->>System: 200
 ```
 
+## More than one host
+
+Run a registrar on every host. A system's generated configuration names *this
+host's* registrar by default, and with one on each host that default is right
+everywhere — nobody copies the lead's address into every file any more.
+
+The registrars elect a lead among themselves; the others stand by. A standby is
+not a dead end: its `/status` answers
+
+    On standby, leading registrar is http://<lead>/serviceregistrar/registry
+
+and the framework follows that referral once, then asks the destination to
+confirm it leads before using it. A referral is taken on the standby's word only
+as far as the next question.
+
+Once enrolled, a system asks the lead which core systems the cloud has — every
+registrar, orchestrator, CA and (if its file names one) authorizer — and keeps
+them behind whatever its own file says. The file's entries always come first.
+A core system reached after enrollment is learned only once it serves TLS; the
+authorizer registers before it has enrolled, so its first record is not taken.
+What was learned is mirrored to `coresystems.cache.json` beside the
+configuration, so a restart while the lead is down can still find a standby;
+the configuration file itself is never rewritten.
+
+What a file must still say, per host:
+
+| entry | why it cannot be learned |
+|---|---|
+| one registrar (this host's, by default) | it is who you ask |
+| the CA | reached before there is a certificate to verify anything with; a CA learned from the network would be a trust root learned from an unauthenticated source |
+| the authorizer, if the cloud enforces authorization | naming one turns enforcement on, which is a decision and not a discovery; alternates are learned once one is named |
+
+And in the *registrar's* own file: the other registrars, so the election has a
+seed. That is the one multi-host entry that remains, and it lives in the file
+of the thing doing the electing.
+
 ## Live browser view (Server-Sent Events)
 
 Opening `http://<host>:<port>/serviceregistrar/registry/query` in a browser

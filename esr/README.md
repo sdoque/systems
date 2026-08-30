@@ -24,7 +24,7 @@ An Arrowhead system registers itself by sending a POST to `/register` with a
 `ServiceRecord_v1` payload. The ESR assigns an ID, sets the validity window, and
 returns the completed record. The system must renew its registration before the
 `EndOfValidity` time passes by sending a PUT with the same record (including the
-assigned ID); if it does not, `checkExpiration` removes the record automatically.
+assigned ID); if it does not, `expire` removes the record automatically.
 
 ### Sequence diagram
 
@@ -52,7 +52,7 @@ sequenceDiagram
 
     Note over System,Registry: Expiry (no renewal sent)
 
-    Note over Registry: checkExpiration() fires<br/>record deleted + notify()
+    Note over Registry: expire() fires<br/>record deleted + notify()
 
     Note over System,Registry: Graceful unregistration (DELETE)
 
@@ -104,7 +104,7 @@ sequenceDiagram
 
     Note over Browser,Registry: Service registration expires
 
-    Note over Registry: checkExpiration() fires<br/>record deleted + notify()
+    Note over Registry: expire() fires<br/>record deleted + notify()
     ESR->>Registry: read all records
     Registry-->>ESR: updated sorted list
     ESR-->>Browser: data: list items (push update)

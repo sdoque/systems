@@ -47,13 +47,31 @@ type ServiceRegistryRequest struct {
 
 // -------------------------------------Define the unit asset
 
+// registration is one record and the timer that will retire it.
+//
+// The timer is a field of the record rather than an entry in a scheduler of
+// its own, so the two cannot come apart. They used to live in separate maps
+// under separate locks, kept in step by hand at every register, renew, delete
+// and shutdown — and a record whose timer had been lost would simply never
+// expire, while a timer whose record had gone fired into nothing. Here a record
+// without a timer is not a state the type can be in.
+//
+// time.AfterFunc is already "sleep until the deadline, then run": one sleeper
+// per registration, replaced on renewal, multiplexed by the runtime. What is
+// kept as a time.Time alongside the wire field is the same instant, so expiry
+// is a comparison rather than a parse.
+type registration struct {
+	forms.ServiceRecord_v1
+	expires time.Time
+	expiry  *time.Timer
+}
+
 // Traits holds all asset-specific state for the service registrar.
 // mu protects the fields it shares with concurrent goroutines.
 type Traits struct {
-	serviceRegistry map[int]forms.ServiceRecord_v1
+	serviceRegistry map[int]*registration
 	recCount        int64
 	requests        chan ServiceRegistryRequest
-	sched           *Scheduler
 	// role is who leads the registry. Written by the election goroutine and read
 	// by every request handler, so it is swapped as a whole rather than held as
 	// three fields: read separately, /status could answer "leading since" the
@@ -194,12 +212,9 @@ func initTemplate() *components.UnitAsset {
 
 // newResource creates the unit asset with its pointers and channels based on the configuration.
 func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (*components.UnitAsset, func()) {
-	cleaningScheduler := NewScheduler()
-
 	t := &Traits{
-		serviceRegistry: make(map[int]forms.ServiceRecord_v1),
+		serviceRegistry: make(map[int]*registration),
 		recCount:        1, // 0 is used for non-registered services
-		sched:           cleaningScheduler,
 		requests:        make(chan ServiceRegistryRequest),
 		subscribers:     make(map[int]*subscriber),
 	}
@@ -238,7 +253,9 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	return ua, func() {
 		t.mu.Lock()
 		close(t.requests)
-		cleaningScheduler.Stop()
+		for _, reg := range t.serviceRegistry {
+			reg.expiry.Stop()
+		}
 		t.mu.Unlock()
 		log.Println("Closing the service registry database connection")
 	}
@@ -316,9 +333,18 @@ func (t *Traits) serviceRegistryHandler() {
 					continue
 				}
 				rec.EndOfValidity = now.Add(time.Duration(dbRec.RegLife) * time.Second).Format(time.RFC3339)
+				// The renewal replaces the sleeper. Stop may return false because
+				// the old one has already fired and is waiting on t.mu; expire
+				// then finds a record that is not yet due and leaves it alone.
+				dbRec.expiry.Stop()
 			}
-			t.sched.AddTask(now.Add(time.Duration(rec.RegLife)*time.Second), func() { checkExpiration(t, rec.Id) }, rec.Id)
-			t.serviceRegistry[rec.Id] = *rec
+			life := time.Duration(rec.RegLife) * time.Second
+			id := rec.Id
+			t.serviceRegistry[id] = &registration{
+				ServiceRecord_v1: *rec,
+				expires:          now.Add(life),
+				expiry:           time.AfterFunc(life, func() { t.expire(id) }),
+			}
 			request.Record = rec
 			t.mu.Unlock()
 			if newRegistration {
@@ -331,7 +357,7 @@ func (t *Traits) serviceRegistryHandler() {
 				var result []forms.ServiceRecord_v1
 				t.mu.Lock()
 				for _, record := range t.serviceRegistry {
-					result = append(result, record)
+					result = append(result, record.ServiceRecord_v1)
 				}
 				t.mu.Unlock()
 				request.Result <- result
@@ -347,18 +373,18 @@ func (t *Traits) serviceRegistryHandler() {
 
 		case "delete":
 			t.mu.Lock()
-			t.sched.RemoveTask(int(request.Id))
 			// Kept before the delete: the event carries the record as it last
 			// stood, so a subscriber can act on what left without having held
 			// its own copy of the registry.
 			gone, existed := t.serviceRegistry[int(request.Id)]
-			delete(t.serviceRegistry, int(request.Id))
-			if _, exists := t.serviceRegistry[int(request.Id)]; !exists {
+			if existed {
+				gone.expiry.Stop()
+				delete(t.serviceRegistry, int(request.Id))
 				log.Printf("The service with ID %d has been deleted.", request.Id)
 			}
 			t.mu.Unlock()
 			if existed {
-				t.notify(forms.RegistryDeregistered, gone)
+				t.notify(forms.RegistryDeregistered, gone.ServiceRecord_v1)
 			}
 			request.Error <- nil
 		}
@@ -411,39 +437,34 @@ func (t *Traits) FilterRecords(quest forms.ServiceQuest_v1) []forms.ServiceRecor
 			}
 		}
 		if matchesAllDetails {
-			matchingRecords = append(matchingRecords, record)
+			matchingRecords = append(matchingRecords, record.ServiceRecord_v1)
 		}
 	}
 	return matchingRecords
 }
 
-// checkExpiration deletes a service record if its validity has lapsed.
-func checkExpiration(t *Traits, servId int) {
+// expire retires a registration whose validity has lapsed.
+//
+// The check against expires is not redundant. A renewal stops the old timer,
+// but Stop returns false if its function has already started — and that
+// function may be blocked on t.mu, arriving here a moment after the renewal
+// replaced the record. The comparison is what makes that race harmless: it
+// finds a record that is not yet due, and leaves it.
+func (t *Traits) expire(id int) {
 	t.mu.Lock()
-	dbRec := t.serviceRegistry[servId]
-	expiration, err := time.Parse(time.RFC3339, dbRec.EndOfValidity)
-	if err != nil {
+	reg, exists := t.serviceRegistry[id]
+	if !exists || time.Now().Before(reg.expires) {
 		t.mu.Unlock()
-		log.Printf("Time parsing problem when checking service expiration")
 		return
 	}
-	deleted := false
-	if time.Now().After(expiration) {
-		if _, exists := t.serviceRegistry[servId]; exists {
-			delete(t.serviceRegistry, servId)
-			t.sched.RemoveTask(servId)
-			deleted = true
-			log.Printf("The service with ID %d has been deleted because it was not renewed.", servId)
-		}
-	}
+	delete(t.serviceRegistry, id)
 	t.mu.Unlock()
-	if deleted {
-		// A lapsed registration is a deregistration as far as a subscriber is
-		// concerned: the service is not available, and whether it withdrew or
-		// simply stopped saying it was there is the registry'''s business, not
-		// the subscriber'''s.
-		t.notify(forms.RegistryDeregistered, dbRec)
-	}
+	log.Printf("The service with ID %d has been deleted because it was not renewed.", id)
+	// A lapsed registration is a deregistration as far as a subscriber is
+	// concerned: the service is not available, and whether it withdrew or
+	// simply stopped saying it was there is the registry's business, not
+	// the subscriber's.
+	t.notify(forms.RegistryDeregistered, reg.ServiceRecord_v1)
 }
 
 // notify tells every subscriber what changed.

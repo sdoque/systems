@@ -459,13 +459,23 @@ func TestServiceRegistryHandlerDelete(t *testing.T) {
 	shutdown()
 }
 
+// held wraps a record as the registry holds it, with a timer that will never
+// fire — a test asserts on the map, not on the clock.
+func held(rec forms.ServiceRecord_v1) *registration {
+	return &registration{
+		ServiceRecord_v1: rec,
+		expires:          time.Now().Add(time.Hour),
+		expiry:           time.AfterFunc(time.Hour, func() {}),
+	}
+}
+
 // ------------------------------------------------------------------------ //
 // Help functions and structs to test FilterRecords()
 // ------------------------------------------------------------------------ //
 
 // Creates an asset multiple services in its registry
 func createRegistryWithServices(broken bool) (ua *Traits, err error) {
-	ua = &Traits{serviceRegistry: make(map[int]forms.ServiceRecord_v1)}
+	ua = &Traits{serviceRegistry: make(map[int]*registration)}
 
 	var locations = []string{"Kitchen", "Bathroom", "Livingroom"}
 
@@ -480,7 +490,7 @@ func createRegistryWithServices(broken bool) (ua *Traits, err error) {
 		if !broken {
 			form.Details = map[string][]string{"Location": {location}}
 		}
-		ua.serviceRegistry[i] = form
+		ua.serviceRegistry[i] = held(form)
 	}
 	return ua, nil
 }
@@ -525,10 +535,10 @@ func TestFilterByServiceDefAndDetails(t *testing.T) {
 }
 
 // ---------------------------------------------------- //
-// Help functions and structs to test checkExpiration()
+// Help functions and structs to test expire()
 // ---------------------------------------------------- //
 
-func createRegistryWithService(year any) (ua *Traits, cancel func(), err error) {
+func createRegistryWithService(expires time.Time) (ua *Traits, cancel func(), err error) {
 	sys := createNewSys()
 	temp, cancel := newResource(createConfAssetMultipleTraits(), &sys)
 	ua = temp.Traits.(*Traits)
@@ -537,8 +547,9 @@ func createRegistryWithService(year any) (ua *Traits, cancel func(), err error) 
 	test.SystemName = "testSystem"
 	test.ProtoPort = map[string]int{"http": 1234}
 	test.IPAddresses = []string{"999.999.999.999"}
-	test.EndOfValidity = fmt.Sprintf("%v-01-02T15:04:05Z", year)
-	ua.serviceRegistry = map[int]forms.ServiceRecord_v1{0: test}
+	reg := held(test)
+	reg.expires = expires
+	ua.serviceRegistry = map[int]*registration{0: reg}
 	return ua, cancel, err
 }
 
@@ -552,19 +563,21 @@ func TestCheckExpiration(t *testing.T) {
 	params := []checkExpirationParams{
 		{
 			true,
-			func() (ua *Traits, cancel func(), err error) { return createRegistryWithService(2099) },
+			func() (ua *Traits, cancel func(), err error) {
+				return createRegistryWithService(time.Now().Add(time.Hour))
+			},
 			"Best case, service not past expiration",
 		},
 		{
 			false,
-			func() (ua *Traits, cancel func(), err error) { return createRegistryWithService(2006) },
+			func() (ua *Traits, cancel func(), err error) {
+				return createRegistryWithService(time.Now().Add(-time.Hour))
+			},
 			"Bad case, service past expiration",
 		},
-		{
-			true,
-			func() (ua *Traits, cancel func(), err error) { return createRegistryWithService("faulty") },
-			"Bad case, time parsing problem",
-		},
+		// There is no longer a "time parsing problem" case: the registry holds
+		// the instant itself, so an unparseable expiry is not a state a record
+		// can be in.
 	}
 	for _, c := range params {
 		ua, cancel, err := c.setup()
@@ -572,7 +585,7 @@ func TestCheckExpiration(t *testing.T) {
 			t.Errorf("failed during setup: %v", err)
 		}
 
-		checkExpiration(ua, 0)
+		ua.expire(0)
 		if _, exists := ua.serviceRegistry[0]; (exists == false) && (c.servicePresent == true) {
 			t.Errorf("expected the service to be present in '%s'", c.testCase)
 		}
@@ -593,7 +606,7 @@ func createServRegistryHttp() (ua *Traits, err error) {
 	test.SystemName = "testSystem"
 	test.ProtoPort = map[string]int{"http": 1234}
 	test.IPAddresses = []string{"999.999.999.999"}
-	return &Traits{serviceRegistry: map[int]forms.ServiceRecord_v1{0: test}}, nil
+	return &Traits{serviceRegistry: map[int]*registration{0: held(test)}}, nil
 }
 
 func createServRegistryHttps() (ua *Traits, err error) {
@@ -601,7 +614,7 @@ func createServRegistryHttps() (ua *Traits, err error) {
 	test.SystemName = "testSystem"
 	test.ProtoPort = map[string]int{"https": 4321}
 	test.IPAddresses = []string{"888.888.888.888"}
-	return &Traits{serviceRegistry: map[int]forms.ServiceRecord_v1{0: test}}, nil
+	return &Traits{serviceRegistry: map[int]*registration{0: held(test)}}, nil
 }
 
 func createBrokenServRegistry() (ua *Traits, err error) {
@@ -609,7 +622,7 @@ func createBrokenServRegistry() (ua *Traits, err error) {
 	test.SystemName = "testSystem"
 	test.ProtoPort = map[string]int{"https": 0}
 	test.IPAddresses = []string{"888.888.888.888"}
-	return &Traits{serviceRegistry: map[int]forms.ServiceRecord_v1{0: test}}, nil
+	return &Traits{serviceRegistry: map[int]*registration{0: held(test)}}, nil
 }
 
 type getUniqueSystemsParams struct {
@@ -863,5 +876,44 @@ func TestTheRegistrarStreamsOnADeclaredService(t *testing.T) {
 	}
 	if serv.Definition == "" {
 		t.Error("the service has no definition, so the authorizer has no policy to apply to it")
+	}
+}
+
+// A renewal that lands while the old timer has already fired must win.
+//
+// Stop returns false once the timer's function has started, so a renewal
+// cannot rely on it; the function then arrives at expire holding a stale
+// deadline. The record it finds is the renewed one, not yet due, and it must
+// be left alone — otherwise a service that re-registered on time is deleted
+// for the lateness of the message it had just superseded.
+func TestRenewalOutlivesAFiredTimer(t *testing.T) {
+	sys := createNewSys()
+	temp, cancel := newResource(createConfAssetMultipleTraits(), &sys)
+	defer cancel()
+	ua := temp.Traits.(*Traits)
+
+	var rec forms.ServiceRecord_v1
+	rec.SystemName = "testSystem"
+	rec.ServiceDefinition = "temperature"
+	stale := held(rec)
+	stale.expires = time.Now().Add(-time.Minute) // the timer that fired
+	ua.serviceRegistry = map[int]*registration{7: stale}
+
+	// The renewal replaces the entry before the fired timer reaches expire.
+	renewed := held(rec)
+	ua.mu.Lock()
+	ua.serviceRegistry[7] = renewed
+	ua.mu.Unlock()
+
+	ua.expire(7) // the old timer's function, arriving late
+	if _, present := ua.serviceRegistry[7]; !present {
+		t.Fatal("a renewed registration was deleted by the timer it had replaced")
+	}
+
+	// And a registration that genuinely lapsed still goes.
+	renewed.expires = time.Now().Add(-time.Second)
+	ua.expire(7)
+	if _, present := ua.serviceRegistry[7]; present {
+		t.Fatal("a lapsed registration survived expire")
 	}
 }

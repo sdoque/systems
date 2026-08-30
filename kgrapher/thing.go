@@ -65,6 +65,12 @@ type Traits struct {
 	// schedule another, and the pass that finally succeeds would arrive with a
 	// crowd of duplicates behind it.
 	retryPending atomic.Bool
+	// settlePending does the same for the follow-up pass after a change; see
+	// settleLater.
+	settlePending atomic.Bool
+	// assembling is a test seam, so a scheduled pass can be driven without a
+	// registry or a store behind it.
+	assembling func() (string, int, error)
 
 	// registry is where the subscription reads from, discovered like any other
 	// consumed service so the stream carries a token in an authorized cloud.

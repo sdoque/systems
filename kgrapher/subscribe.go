@@ -265,6 +265,19 @@ func describe(kind, data string) {
 // could not read every system. A variable so a test does not have to wait.
 var incompleteRetry = 30 * time.Second
 
+// settleDelay is how long after a change to look once more.
+//
+// A registration is an event and a binding is not. A consumer registers, the
+// graph is assembled, and only then does it discover its providers — so the
+// picture taken at the event shows a controller that wants a temperature and
+// is bound to nothing, and no later event corrects it, because once the cloud
+// settles there are none. On the first two-host deployment a thermostat that
+// was reading a sensor on the other host showed two unmet wants for as long as
+// anyone looked. One more pass, after the consumers have had time to bind, is
+// what makes the canvas answer "is this right?" about a cloud that has just
+// come up.
+var settleDelay = 60 * time.Second
+
 // rebuild assembles the graph and publishes it.
 //
 // A failure is logged and left: the next change will try again, and the graph
@@ -279,7 +292,19 @@ var incompleteRetry = 30 * time.Second
 // went missing from the cottage's graph for ten minutes this way, while this
 // function reported that the graph described the cloud.
 func (t *Traits) rebuild() {
-	graph, skipped, err := t.assembleOntologies()
+	t.rebuildThen(true)
+}
+
+// rebuildThen assembles and publishes; when settle is set and the pass was
+// complete, it arranges one more pass after settleDelay. The settling pass
+// itself does not, so a quiet cloud is assembled twice per change and not
+// forever.
+func (t *Traits) rebuildThen(settle bool) {
+	assemble := t.assembleOntologies
+	if t.assembling != nil {
+		assemble = t.assembling
+	}
+	graph, skipped, err := assemble()
 	if err != nil {
 		log.Printf("kgrapher: could not assemble the graph: %v\n", err)
 		return
@@ -294,6 +319,31 @@ func (t *Traits) rebuild() {
 		return
 	}
 	log.Printf("kgrapher: the graph now describes the cloud as of this change\n")
+	if settle {
+		t.settleLater()
+	}
+}
+
+// settleLater schedules the one follow-up pass, and only one at a time: a
+// burst of registrations at startup is one settling, not one per system.
+func (t *Traits) settleLater() {
+	if !t.settlePending.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer t.settlePending.Store(false)
+		ctx := context.Background()
+		if t.owner != nil && t.owner.Ctx != nil {
+			ctx = t.owner.Ctx
+		}
+		select {
+		case <-time.After(settleDelay):
+		case <-ctx.Done():
+			return
+		}
+		log.Printf("kgrapher: looking once more, now that consumers have had %v to bind\n", settleDelay)
+		t.rebuildThen(false)
+	}()
 }
 
 // retryIncomplete schedules one more assembly, and only one: a retry that is

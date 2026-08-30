@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -360,5 +361,35 @@ func TestAnIncompleteAssemblySchedulesAnotherOne(t *testing.T) {
 	defer mu.Unlock()
 	if rebuilds != 2 {
 		t.Errorf("%d rebuilds; want exactly 2 — the guard let duplicates through", rebuilds)
+	}
+}
+
+// A registration is an event and a binding is not, so the picture taken at
+// the event shows a consumer bound to nothing. One more pass after the
+// consumers have had time to bind — and only one, so a quiet cloud is not
+// assembled forever.
+func TestACompleteAssemblyLooksOnceMoreLater(t *testing.T) {
+	previous := settleDelay
+	settleDelay = 10 * time.Millisecond
+	defer func() { settleDelay = previous }()
+
+	// The pass runs for real; the stub fails before anything is stored, so
+	// what is exercised is the scheduling and not the assembly.
+	tr := &Traits{assembling: func() (string, int, error) { return "", 0, errors.New("stub") }}
+	tr.settlePending.Store(false)
+
+	tr.settleLater()
+	if !tr.settlePending.Load() {
+		t.Fatal("no settling pass was scheduled after a complete assembly")
+	}
+	// A second change while one is pending does not stack another.
+	tr.settleLater()
+
+	deadline := time.Now().Add(time.Second)
+	for tr.settlePending.Load() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if tr.settlePending.Load() {
+		t.Fatal("the settling pass never ran")
 	}
 }

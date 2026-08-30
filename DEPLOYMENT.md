@@ -5,9 +5,9 @@ control is for; [`shells/`](https://github.com/sdoque/shells) holds the scripts;
 this says what to do, in what order, on which machine — and what it looks like
 when it has gone wrong.
 
-**Status: written 30 August 2026 against one host, before the second existed.**
-The two-host section is the plan; it will be corrected against the first real
-two-host run. Read it as such until this line is gone.
+**Status: the two-host section was run for real on 30 August 2026** — aiko
+(10.0.0.33) as the first host, a fresh Debian 13 Pi as the second — and
+corrected against what happened. The three-host shape is still the plan.
 
 ---
 
@@ -120,8 +120,14 @@ full account.
 
 ### 3. On each host
 
-Copy `rpiExec/` — or run `download_systems.sh` from `shells/`, then copy the
-whitelist into `ca/` by hand, since the downloader cannot ship it.
+Two things a fresh Debian does not have, and the scripts assume: **`tmux`**
+(`sudo apt install tmux` — it needs a password, so it is the technician's
+step, not a script's) and **the scripts themselves**, which live in `shells/`
+and not in `rpiExec/`. Copy `start_systems.sh` and `stop_systems.sh` beside
+the binaries.
+
+Then copy `rpiExec/` — or run `download_systems.sh` from `shells/`, then copy
+the whitelist into `ca/` by hand, since the downloader cannot ship it.
 
 Write `systems.txt`. Order matters at the top and not much after it:
 
@@ -190,15 +196,37 @@ a power cut is, in a Norrbotten winter, a burst pipe.
 
 ## A second host
 
-The plan, to be corrected against the first real run:
+What was done, and what happened. The second host ran `maitreD`,
+`serviceregistrar` and a `thermostat` whose sensor and valve were both on the
+first host — chosen so that every line it draws has to cross.
 
-1. Add its IP to `maitreDHosts` on the CA host; restart the CA.
-2. Copy `rpiExec/`; `systems.txt` = `maitreD`, `serviceregistrar`, its systems.
-3. Start once to generate; set the CA's URL in every file, the authorizer's if
-   enforcing; add the first host's registrar to the registrar's file.
-4. Start. On the canvas a second host disk appears, its registrar answers
-   `/status` as *on standby*, and its systems' lines cross to the first host's
-   providers.
+1. On the CA host, add the new IP to `maitreDHosts`; restart the CA.
+2. On the new host: `tmux`, the scripts, `rpiExec/`; `systems.txt` =
+   `maitreD`, `serviceregistrar`, `thermostat`.
+3. Start once to generate. Edit exactly the table's rows: the CA's URL in all
+   three files, the authorizer's in all three, and the first host's registrar
+   appended to the registrar's file. **Leave the orchestrator entry alone** —
+   the template wrote this host, where no orchestrator runs, and that is the
+   case the framework has to handle.
+4. Start.
+
+Within a minute of enrolling, each system logged what it had learned:
+
+    maitreD: learned from the registry that orchestrator is at https://10.0.0.33:30103/…
+    maitreD: learned from the registry that serviceregistrar is at http://10.0.0.33:20102/…
+
+The new registrar answered `/status` with *On standby, leading registrar is
+http://10.0.0.33:20102/…*. The thermostat, whose file named an orchestrator on
+its own host, passed over it — *does not answer* — and reached the learned one:
+
+    the temperature is 23.25 °C with an error -3.25 °C and valve set at 33.75%
+
+a reading from a 1-wire sensor on host A, driving a servo on host A, from a
+controller on host B that was never told where either was.
+
+The first run of this found the framework returning the file's dead
+orchestrator without looking further; that is fixed (`mbaigo b90a702`), and it
+is why step 3 says to leave the entry alone — it is the test.
 
 Expect the first five minutes to say *not in whitelist* — see below.
 
@@ -236,6 +264,13 @@ right; a file written before 30 August 2026 is not.
 **Discovery fails with *connection refused* on an `https://` orchestrator.**
 The cloud has no CA, so nothing serves TLS. Set it back to `http://` — the
 error says so.
+
+**You cannot see a process you know is running.** `pgrep _rpi64` does not
+list `thermostat_rpi64`: Linux keeps fifteen characters of a process name and
+`thermostat_rpi6` is what is left. Use `pgrep -f`, and anchor it —
+`pgrep -f '^\./thermostat_rpi64'` — or it matches your own shell and kills
+your session when you `kill` what it found. Starting a second instance on the
+strength of the first being invisible gives you two, sharing one log.
 
 **A newly generated configuration does not enforce.** Its authorizer slot is
 empty, on purpose; authorization is adopted per deployment. Fill it.

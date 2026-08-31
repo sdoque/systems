@@ -128,5 +128,5 @@ go test ./...
 | `TestATimestampIsAddedWhenAsked` | And that two captures do not overwrite each other |
 | `TestTheRegisteredFormatBeatsTheContentType` | The considered answer wins |
 | `TestAProviderCannotChooseWhereThisWrites` | A hostile service definition cannot escape the capture directory |
-| `TestAnUnparseableURLStillProducesAName` | An odd URL does not drop a capture |
+| `TestAnUnparsableURLStillProducesAName` | An odd URL does not drop a capture |
 | `TestTheTemplateDeclaresAMission` | A subject the authorizer can classify |

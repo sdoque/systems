@@ -96,9 +96,9 @@ func TestAProviderCannotChooseWhereThisWrites(t *testing.T) {
 	}
 }
 
-// TestAnUnparseableURLStillProducesAName: falling back to the definition keeps
+// TestAnUnparsableURLStillProducesAName: falling back to the definition keeps
 // a capture from being dropped because its URL was odd.
-func TestAnUnparseableURLStillProducesAName(t *testing.T) {
+func TestAnUnparsableURLStillProducesAName(t *testing.T) {
 	if got := filename("cloudgraph", node("://not a url", nil), "", false); got != "cloudgraph.txt" {
 		t.Errorf("filename = %q; want cloudgraph.txt", got)
 	}

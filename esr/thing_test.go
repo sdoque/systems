@@ -587,7 +587,7 @@ func TestCheckExpiration(t *testing.T) {
 			"Bad case, service past expiration",
 		},
 		// There is no longer a "time parsing problem" case: the registry holds
-		// the instant itself, so an unparseable expiry is not a state a record
+		// the instant itself, so an unparsable expiry is not a state a record
 		// can be in.
 	}
 	for _, c := range params {

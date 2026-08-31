@@ -5,9 +5,10 @@ control is for; [`shells/`](https://github.com/sdoque/shells) holds the scripts;
 this says what to do, in what order, on which machine — and what it looks like
 when it has gone wrong.
 
-**Status: the two-host section was run for real on 30 August 2026** — aiko
-(10.0.0.33) as the first host, a fresh Debian 13 Pi as the second — and
-corrected against what happened. The three-host shape is still the plan.
+**Status: run for real.** Two Pi hosts on 30 August 2026 (aiko and a fresh
+Debian 13 Pi), a Windows 10 machine and a Mac on 31 August — each section
+corrected against what happened. The one shape not yet built is three hosts
+with the CA on a machine of its own.
 
 ---
 
@@ -21,9 +22,13 @@ Everything else is application systems and goes wherever there is room.
 
 Two facts shape every layout below:
 
-- **The maitreD reads `/proc/<pid>/exe`**, which Linux allows only for a
-  process of the same user. So a maitreD must run as the user that runs the
-  systems it attests.
+- **A maitreD attests only a process of its own user.** It hashes the file a
+  process runs, and every platform lets it read that only for its own user's
+  processes: Linux through `/proc/<pid>/exe`, Windows through
+  `QueryFullProcessImageName`, macOS through `proc_pidpath` and the file's
+  owner. So a maitreD must run as the user that runs the systems it attests.
+  (On Windows, higher *integrity* is not the boundary — an elevated same-user
+  process still attests; see *A Windows host*.)
 - **The CA never enrolls.** It is its own root and attests nothing about
   itself, so it needs no maitreD and need not share anyone's user — which is
   what lets it be isolated.
@@ -276,12 +281,25 @@ without `SeDebugPrivilege`, so a different-user system is refused as a
    `start_systems.ps1` and `stop_systems.ps1`. No tmux — each system gets its
    own console window. `systems.txt` = `maitreD`, `esr`, then its systems.
    Run once to generate configurations, edit the table's rows, run again.
-4. **The firewall will ask.** The first time each `.exe` listens, Windows
-   Defender prompts to allow it on the network — say yes for *private*
-   networks, or nothing on the Pis can reach it. The one that matters most
-   is the maitreD's port 20101: the CA connects **inbound** to it to attest,
-   and a blocked prompt looks like *not in whitelist*.
-5. **Same user, not elevated.** Start everything from one ordinary PowerShell.
+4. **Open the maitreD's port.** The CA connects **inbound** to the maitreD on
+   TCP 20101 to attest; a machine that blocks it reports *not in whitelist*
+   for what is really a firewall. Started from the desktop, the first listen
+   raises a Windows Defender prompt — say yes for *private* networks. Started
+   headless (over SSH, say), no prompt appears and the port stays blocked, so
+   add the rule yourself in an elevated PowerShell:
+
+   ```powershell
+   New-NetFirewallRule -Name mbaigo -DisplayName mbaigo -Direction Inbound `
+       -Protocol TCP -LocalPort 20101 -Action Allow
+   ```
+5. **Same user, not elevated.** Start everything as one user. Elevation does
+   not break attestation on Windows — an elevated system still attests — but
+   the systems have no need of it, and one user keeps the model simple.
+6. **If you drive it from another machine**, a system started over SSH dies
+   when the session ends: Windows kills the session's process tree. Run each
+   from a scheduled task (`schtasks /create … /tr run_<system>.bat /sc once`,
+   then `/run`) so it outlives the session — a Windows service is the tidy end
+   state and is not written yet.
 
 `stop_systems.ps1` stops processes without a signal, so systems stopped that
 way do not unregister; their records lapse within a period. Ctrl-C in a
@@ -292,7 +310,9 @@ window is the graceful way.
 `make mac` builds the same set as `<system>_mac64`, natively (the maitreD
 needs cgo there). Tested 30 August 2026: a Mac maitreD enrolled with a Pi's
 CA, attested an `envoy` on the same laptop, and the canvas served at
-`http://127.0.0.1:8191/` with no tunnel — the same path a Windows host takes. Read what its attestation means before relying on it: macOS
+`http://127.0.0.1:8191/` with no tunnel — the same path a Windows host takes.
+
+Read what its attestation means before relying on it: macOS
 gives the maitreD a *path*, not the running image, so a binary replaced after
 it started would attest as its replacement. And macOS lets any user read any
 process's path, so the Linux rule does not apply either: a `sudo`-started

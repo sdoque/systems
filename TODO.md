@@ -369,14 +369,6 @@ say why here and then delete the entry.
   installing the systems as a Windows service so they survive a reboot without
   a scheduled task — the test used `schtasks`.
 
-- **Windows: what an elevated process answers is unknown** until the first run.
-  The Linux rule — a sudo-started system is refused — rests on `/proc` hiding
-  another user's process; on Windows the limited query the maitreD makes is
-  the one granted across integrity levels, so a "Run as administrator" system
-  may attest. If it does, refusing it is a token-integrity check. On macOS the
-  same rule now rests on the owner of the file at the path, the one check the
-  platform allows.
-
 ## Not yet run on hardware
 
 The mission type, `ServicePointList_v1`, the cervice lock, the client transport

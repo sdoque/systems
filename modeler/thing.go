@@ -67,7 +67,8 @@ func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:        "assembler",
 		Mission:     components.MissionAggregation,
-		Details:     map[string][]string{"Type": {"Interactive"}, "Mobility": {components.MobilityMovable}},
+		Mobility:    components.MobilityMovable,
+		Details:     map[string][]string{"Type": {"Interactive"}},
 		ServicesMap: map[string]*components.Service{cloudmodel.SubPath: &cloudmodel},
 		Traits:      &Traits{CloudName: "localCloud"},
 	}
@@ -94,6 +95,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
 		Mission:     configuredAsset.Mission,
+		Mobility:    configuredAsset.Mobility,
+		TetheredTo:  configuredAsset.TetheredTo,
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
@@ -148,6 +151,15 @@ func (t *Traits) assembleModel(w http.ResponseWriter) {
 		resp, err := http.Get(smodelURL)
 		if err != nil {
 			log.Printf("Unable to get SysML model from %s: %s\n", sysURL, err)
+			continue
+		}
+		// A refusal is not a model — see the same guard in kgrapher. /smodel now
+		// requires an enrolled caller, so a system still registered under its
+		// plain-HTTP URL answers 401, and parsing that text as SysML puts the
+		// refusal into the model as if it were a declaration.
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			resp.Body.Close()
+			log.Printf("Skipping SysML model from %s: %s\n", sysURL, resp.Status)
 			continue
 		}
 		bodyBytes, err := io.ReadAll(resp.Body)

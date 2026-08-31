@@ -76,8 +76,8 @@ func initTemplate() *components.UnitAsset {
 		Name: "canvas",
 		// The painter reads what every system says about itself and shows it
 		// together. It computes nothing, keeps nothing and drives nothing.
-		Mission: components.MissionAggregation,
-		Details: map[string][]string{"Mobility": {components.MobilityMovable}},
+		Mission:  components.MissionAggregation,
+		Mobility: components.MobilityMovable,
 		ServicesMap: components.Services{
 			view.SubPath:  &view,
 			model.SubPath: &model,

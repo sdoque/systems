@@ -203,6 +203,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			// themselves — so this system could not start at all, including from
 			// a configuration it had just written itself.
 			Mission:     configuredAsset.Mission,
+			Mobility:    configuredAsset.Mobility,
+			TetheredTo:  configuredAsset.TetheredTo,
 			Owner:       sys,
 			Details:     details,
 			ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),

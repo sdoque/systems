@@ -60,6 +60,18 @@ type Traits struct {
 	// count rebuilds without a registrar, a cloud, or a triple store.
 	rebuilding func()
 
+	// retryPending stops an incomplete assembly from scheduling more than one
+	// retry at a time. Without it, each retry that is still incomplete would
+	// schedule another, and the pass that finally succeeds would arrive with a
+	// crowd of duplicates behind it.
+	retryPending atomic.Bool
+	// settlePending does the same for the follow-up pass after a change; see
+	// settleLater.
+	settlePending atomic.Bool
+	// assembling is a test seam, so a scheduled pass can be driven without a
+	// registry or a store behind it.
+	assembling func() (string, int, error)
+
 	// registry is where the subscription reads from, discovered like any other
 	// consumed service so the stream carries a token in an authorized cloud.
 	registry *components.Cervice
@@ -126,7 +138,8 @@ func initTemplate() *components.UnitAsset {
 	return &components.UnitAsset{
 		Name:        "assembler",
 		Mission:     components.MissionAggregation,
-		Details:     map[string][]string{"Type": {"Interactive"}, "Mobility": {components.MobilityMovable}},
+		Mobility:    components.MobilityMovable,
+		Details:     map[string][]string{"Type": {"Interactive"}},
 		ServicesMap: map[string]*components.Service{cloudgraph.SubPath: &cloudgraph, localOntologies.SubPath: &localOntologies},
 		Traits: &Traits{
 			TripleStoreURL: "http://localhost:7200/repositories/Arrowhead/statements",
@@ -164,6 +177,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
 		Mission:     configuredAsset.Mission,
+		Mobility:    configuredAsset.Mobility,
+		TetheredTo:  configuredAsset.TetheredTo,
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
@@ -226,7 +241,7 @@ func (t *Traits) aggregate(w http.ResponseWriter, r *http.Request) {
 		// Nothing built yet: the subscriber has not had its first event, or the
 		// registry has never been reachable. Build once here rather than answer
 		// with nothing.
-		graph, err := t.assembleOntologies()
+		graph, _, err := t.assembleOntologies()
 		if err != nil {
 			log.Printf("kgrapher: %v\n", err)
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -268,14 +283,15 @@ func (t *Traits) listOntologies(w http.ResponseWriter, r *http.Request) {
 // the handler meant every reader paid for it, and every reader also triggered a
 // fresh upload to the triple store. Separating the two lets the graph be built
 // when the cloud changes and read as often as anyone likes.
-func (t *Traits) assembleOntologies() (string, error) {
+func (t *Traits) assembleOntologies() (string, int, error) {
+	var skipped int
 	// One implementation of this, in the framework. The request was built here
 	// by hand, and in modeler too, and neither carried an access token — so
 	// declaring syslist as a service refused both in exactly the clouds the
 	// declaration was for.
 	systems, err := usecases.SystemList(t.registry, t.owner)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 
 	prefixes := make(map[string]bool)
@@ -289,6 +305,22 @@ func (t *Traits) assembleOntologies() (string, error) {
 		resp, err := http.Get(sysUrl)
 		if err != nil {
 			log.Printf("Unable to get ontology from %s: %s\n", s, err)
+			continue
+		}
+		// A refusal is not an ontology.
+		//
+		// The body was parsed whatever the status said, which was harmless only
+		// for as long as /kgraph answered every caller. It does not: it now
+		// requires a caller this cloud enrolled, and a system registered under
+		// its plain-HTTP URL — which every system is, in the seconds before its
+		// certificate arrives — is refused. The refusal text was then spliced
+		// into the Turtle, and the whole assembled graph was rejected by the
+		// store with "MALFORMED DATA", so one unreachable system lost the entire
+		// cloud's graph rather than its own contribution to it.
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			resp.Body.Close()
+			log.Printf("Skipping ontology from %s: %s\n", s, resp.Status)
+			skipped++
 			continue
 		}
 		bodyBytes, err := io.ReadAll(resp.Body)
@@ -337,14 +369,14 @@ func (t *Traits) assembleOntologies() (string, error) {
 				local[v] = struct{}{}
 			}
 			if len(local) > 1 {
-				return "", fmt.Errorf("%s", fmt.Sprintf("Bad Request: system %s has conflicting afo:isContainedIn values", extractSubject(blk)))
+				return "", skipped, fmt.Errorf("%s", fmt.Sprintf("Bad Request: system %s has conflicting afo:isContainedIn values", extractSubject(blk)))
 			}
 			for k := range local {
 				seen[k] = struct{}{}
 			}
 		}
 		if len(seen) == 0 {
-			return "", fmt.Errorf("%s", "Bad Request: no afo:isContainedIn found; please declare a LocalCloud in at least one system")
+			return "", skipped, fmt.Errorf("%s", "Bad Request: no afo:isContainedIn found; please declare a LocalCloud in at least one system")
 		}
 		if len(seen) > 1 {
 			var all []string
@@ -352,7 +384,7 @@ func (t *Traits) assembleOntologies() (string, error) {
 				all = append(all, k)
 			}
 			sort.Strings(all)
-			return "", fmt.Errorf("%s", fmt.Sprintf("Bad Request: multiple LocalClouds detected across systems: %v", all))
+			return "", skipped, fmt.Errorf("%s", fmt.Sprintf("Bad Request: multiple LocalClouds detected across systems: %v", all))
 		}
 		for k := range seen {
 			cloudIRI = k
@@ -383,7 +415,7 @@ func (t *Traits) assembleOntologies() (string, error) {
 	for _, block := range uniqueIndividuals {
 		graph += block + "\n\n"
 	}
-	return graph, nil
+	return graph, skipped, nil
 }
 
 // publishToStore writes the assembled graph to the triple store, first as a

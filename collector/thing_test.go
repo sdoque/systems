@@ -353,11 +353,13 @@ func TestCollectIngestProviderFailure(t *testing.T) {
 
 // ── collectIngest: unexpected response form is skipped ────────────────────────
 
-func TestCollectIngestBadForm(t *testing.T) {
-	// Server returns a valid 200 but with a form the collector cannot use.
+func TestCollectIngestSwitch(t *testing.T) {
+	// A plug reports SignalB_v1a. This used to be the test's example of a form
+	// the collector could not use — which was accurate, and was the bug: the
+	// cottage's heaters are ZigBee plugs, so the one thing the historian did not
+	// keep was whether the heating had been on.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		// SignalB is not a SignalA_v1a — type assertion in collectIngest will fail.
 		json.NewEncoder(w).Encode(forms.SignalB_v1a{Value: true, Version: "SignalB_v1.0"})
 	}))
 	t.Cleanup(srv.Close)
@@ -384,9 +386,45 @@ func TestCollectIngestBadForm(t *testing.T) {
 	cancel()
 	<-done
 
-	// No points should be written because the form type assertion failed every time.
+	if len(mwa.captured()) == 0 {
+		t.Fatal("a switch was read and nothing was recorded")
+	}
+}
+
+func TestCollectIngestBadForm(t *testing.T) {
+	// Something that is genuinely not a reading. Refusing it matters as much as
+	// accepting a switch: a bucket of honest-looking zeros is worse than a gap,
+	// because nothing downstream can tell it from a plug that was off.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(forms.ServiceRecord_v1{Version: "ServiceRecord_v1"})
+	}))
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	sys := newTestSystem(ctx)
+
+	cer := &components.Cervice{
+		Definition: "switch",
+		Protos:     []string{"http"},
+		Nodes: map[string][]components.NodeInfo{
+			"device1": {readNode(srv.URL, nil)},
+		},
+	}
+	mwa := &mockWriteAPI{}
+	tr := &Traits{
+		owner:    &sys,
+		cervices: components.Cervices{"switch": cer},
+	}
+
+	done := make(chan struct{})
+	go func() { tr.collectIngest("switch", 50*time.Millisecond, mwa); close(done) }()
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+	<-done
+
 	if len(mwa.captured()) != 0 {
-		t.Errorf("expected 0 points for unsupported form, got %d", len(mwa.captured()))
+		t.Errorf("expected 0 points for an unsupported form, got %d", len(mwa.captured()))
 	}
 }
 

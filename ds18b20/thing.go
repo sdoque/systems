@@ -89,9 +89,10 @@ func initTemplate() *components.UnitAsset {
 	}
 
 	return &components.UnitAsset{
-		Name:    "sensor_Id",
-		Mission: components.MissionMeasurement,
-		Details: map[string][]string{"Unit": {"<http://qudt.org/vocab/unit/DEG_C>"}, "QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"}, "FunctionalLocation": {"Kitchen"}, "Mobility": {components.MobilityFixed}},
+		Name:     "sensor_Id",
+		Mission:  components.MissionMeasurement,
+		Mobility: components.MobilityFixed,
+		Details:  map[string][]string{"Unit": {"<http://qudt.org/vocab/unit/DEG_C>"}, "QuantityKind": {"<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>"}, "FunctionalLocation": {"Kitchen"}},
 		ServicesMap: components.Services{
 			temperature.SubPath: &temperature,
 		},
@@ -132,6 +133,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
 		Mission:     configuredAsset.Mission,
+		Mobility:    configuredAsset.Mobility,
+		TetheredTo:  configuredAsset.TetheredTo,
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),

@@ -20,11 +20,11 @@ the right complement.
 
 ## Registration service
 
-An Arrowhead system registers itself by sending a POST to `/register` with a
+An Arrowhead system registers itself by sending a POST to `/registry` with a
 `ServiceRecord_v1` payload. The ESR assigns an ID, sets the validity window, and
 returns the completed record. The system must renew its registration before the
 `EndOfValidity` time passes by sending a PUT with the same record (including the
-assigned ID); if it does not, `checkExpiration` removes the record automatically.
+assigned ID); if it does not, `expire` removes the record automatically.
 
 ### Sequence diagram
 
@@ -36,7 +36,7 @@ sequenceDiagram
 
     Note over System,Registry: Initial registration (POST)
 
-    System->>ESR: POST /register  (ServiceRecord_v1, Id=0)
+    System->>ESR: POST /registry  (ServiceRecord_v1, Id=0)
     ESR->>Registry: add record
     Note over Registry: new ID assigned<br/>EndOfValidity = now + RegLife<br/>expiration timer scheduled
     Registry-->>ESR: success
@@ -44,7 +44,7 @@ sequenceDiagram
 
     Note over System,Registry: Renewal before expiry (PUT)
 
-    System->>ESR: PUT /register  (ServiceRecord_v1, same Id)
+    System->>ESR: PUT /registry  (ServiceRecord_v1, same Id)
     ESR->>Registry: add record
     Note over Registry: Id exists → renew<br/>EndOfValidity extended<br/>expiration timer rescheduled
     Registry-->>ESR: success
@@ -52,16 +52,52 @@ sequenceDiagram
 
     Note over System,Registry: Expiry (no renewal sent)
 
-    Note over Registry: checkExpiration() fires<br/>record deleted + notify()
+    Note over Registry: expire() fires<br/>record deleted + notify()
 
     Note over System,Registry: Graceful unregistration (DELETE)
 
-    System->>ESR: DELETE /unregister/{id}
+    System->>ESR: DELETE /registry/{id}
     ESR->>Registry: delete record
     Note over Registry: record removed<br/>expiration timer canceled<br/>notify()
     Registry-->>ESR: success
     ESR-->>System: 200
 ```
+
+## More than one host
+
+Run a registrar on every host. A system's generated configuration names *this
+host's* registrar by default, and with one on each host that default is right
+everywhere — nobody copies the lead's address into every file any more.
+
+The registrars elect a lead among themselves; the others stand by. A standby is
+not a dead end: its `/status` answers
+
+    On standby, leading registrar is http://<lead>/serviceregistrar/registry
+
+and the framework follows that referral once, then asks the destination to
+confirm it leads before using it. A referral is taken on the standby's word only
+as far as the next question.
+
+Once enrolled, a system asks the lead which core systems the cloud has — every
+registrar, orchestrator, CA and (if its file names one) authorizer — and keeps
+them behind whatever its own file says. The file's entries always come first.
+A core system reached after enrollment is learned only once it serves TLS; the
+authorizer registers before it has enrolled, so its first record is not taken.
+What was learned is mirrored to `coresystems.cache.json` beside the
+configuration, so a restart while the lead is down can still find a standby;
+the configuration file itself is never rewritten.
+
+What a file must still say, per host:
+
+| entry | why it cannot be learned |
+|---|---|
+| one registrar (this host's, by default) | it is who you ask |
+| the CA | reached before there is a certificate to verify anything with; a CA learned from the network would be a trust root learned from an unauthenticated source |
+| the authorizer, if the cloud enforces authorization | naming one turns enforcement on, which is a decision and not a discovery; alternates are learned once one is named |
+
+And in the *registrar's* own file: the other registrars, so the election has a
+seed. That is the one multi-host entry that remains, and it lives in the file
+of the thing doing the electing.
 
 ## Live browser view (Server-Sent Events)
 
@@ -95,7 +131,7 @@ sequenceDiagram
 
     Note over Browser,Registry: New system registers
 
-    System->>ESR: POST /register (ServiceRecord_v1)
+    System->>ESR: POST /registry (ServiceRecord_v1)
     ESR->>Registry: add record
     Registry-->>ESR: success + notify()
     ESR->>Registry: read all records
@@ -104,7 +140,7 @@ sequenceDiagram
 
     Note over Browser,Registry: Service registration expires
 
-    Note over Registry: checkExpiration() fires<br/>record deleted + notify()
+    Note over Registry: expire() fires<br/>record deleted + notify()
     ESR->>Registry: read all records
     Registry-->>ESR: updated sorted list
     ESR-->>Browser: data: list items (push update)

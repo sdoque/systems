@@ -41,19 +41,74 @@ type ServiceRegistryRequest struct {
 	Action string
 	Record forms.Form
 	Id     int64
+	// Owner is the verified name of the system asking, for a delete. Empty when
+	// the request arrived without a certificate, which a cloud without a CA is
+	// entitled to do; the check is then not made rather than failed.
+	Owner  string
 	Result chan []forms.ServiceRecord_v1
 	Error  chan error
 }
 
 // -------------------------------------Define the unit asset
 
+// sameRegistration reports whether a renewal is of this record: the same
+// service, on the same path, created at the same moment. A renewal that fails
+// any of these was issued elsewhere.
+func (r *registration) sameRegistration(rec *forms.ServiceRecord_v1) bool {
+	if r == nil {
+		return false
+	}
+	if r.ServiceDefinition != rec.ServiceDefinition || r.SubPath != rec.SubPath {
+		return false
+	}
+	mine, err1 := time.Parse(time.RFC3339, r.Created)
+	theirs, err2 := time.Parse(time.RFC3339, rec.Created)
+	return err1 == nil && err2 == nil && mine.Equal(theirs)
+}
+
+// errNotOwner is answered to a system removing a registration it did not make.
+var errNotOwner = errors.New("the record belongs to another system")
+
+// cloudName is what this registrar's configuration calls the cloud.
+func cloudName(sys *components.System) string {
+	if sys == nil || sys.Husk == nil {
+		return ""
+	}
+	if v := sys.Husk.Details["LocalCloud"]; len(v) > 0 {
+		return strings.TrimSpace(v[0])
+	}
+	return ""
+}
+
+// registration is one record and the timer that will retire it.
+//
+// The timer is a field of the record rather than an entry in a scheduler of
+// its own, so the two cannot come apart. They used to live in separate maps
+// under separate locks, kept in step by hand at every register, renew, delete
+// and shutdown — and a record whose timer had been lost would simply never
+// expire, while a timer whose record had gone fired into nothing. Here a record
+// without a timer is not a state the type can be in.
+//
+// time.AfterFunc is already "sleep until the deadline, then run": one sleeper
+// per registration, replaced on renewal, multiplexed by the runtime. What is
+// kept as a time.Time alongside the wire field is the same instant, so expiry
+// is a comparison rather than a parse.
+type registration struct {
+	forms.ServiceRecord_v1
+	expires time.Time
+	expiry  *time.Timer
+}
+
 // Traits holds all asset-specific state for the service registrar.
 // mu protects the fields it shares with concurrent goroutines.
 type Traits struct {
-	serviceRegistry map[int]forms.ServiceRecord_v1
-	recCount        int64
-	requests        chan ServiceRegistryRequest
-	sched           *Scheduler
+	serviceRegistry map[int]*registration
+	// cloud is the LocalCloud this registrar declares; foreign records peers
+	// that declared another, so the refusal is logged once and not every tick.
+	cloud    string
+	foreign  map[string]string
+	recCount int64
+	requests chan ServiceRegistryRequest
 	// role is who leads the registry. Written by the election goroutine and read
 	// by every request handler, so it is swapped as a whole rather than held as
 	// three fields: read separately, /status could answer "leading since" the
@@ -135,25 +190,28 @@ const maxSubscribers = 64
 // whether the cloud has an authorizer.
 const systemListPath = "syslist"
 
+// registryPath is the sub-path a service is registered on, renewed on and
+// removed from.
+const registryPath = "registry"
+
 // initTemplate initializes a UnitAsset with default values.
 func initTemplate() *components.UnitAsset {
-	registerService := components.Service{
-		Definition:  "register",
-		SubPath:     "register",
-		Details:     map[string][]string{"Forms": usecases.ServiceRegistrationFormsList(), "Methods": components.HTTPMethods("POST")},
-		Description: "registers a service (POST) or updates its expiration time (PUT)",
+	// One resource, and the method says what is being done to it — as every
+	// other system here models a resource, and as the authorizer mints tokens:
+	// per action, on one service. The registry used to name the verb in the
+	// path instead, with a service called register and another called
+	// unregister, and was the one place in the framework that did.
+	registryService := components.Service{
+		Definition:  registryPath,
+		SubPath:     registryPath,
+		Details:     map[string][]string{"Forms": append(usecases.ServiceRegistrationFormsList(), "ID_only"), "Methods": components.HTTPMethods("POST", "PUT", "DELETE")},
+		Description: "registers a service (POST), renews its validity (PUT), or removes it by record ID (DELETE /registry/{id}) — only the system that registered it may remove it",
 	}
 	queryService := components.Service{
 		Definition:  "query",
 		SubPath:     "query",
 		Details:     map[string][]string{"Forms": usecases.ServQuestForms(), "Methods": components.HTTPMethods("GET", "POST")},
 		Description: "retrieves all currently available services using a GET request [accessed via a browser by a deployment technician] or retrieves a specific set of services using a POST request with a payload [initiated by the Orchestrator]",
-	}
-	unregisterService := components.Service{
-		Definition:  "unregister",
-		SubPath:     "unregister",
-		Details:     map[string][]string{"Forms": {"ID_only"}, "Methods": components.HTTPMethods("DELETE")},
-		Description: "removes a record (DELETE) based on record ID",
 	}
 	statusService := components.Service{
 		Definition:  "status",
@@ -176,13 +234,13 @@ func initTemplate() *components.UnitAsset {
 	}
 
 	return &components.UnitAsset{
-		Name:    "registry",
-		Mission: components.MissionCore,
-		Details: map[string][]string{"Type": {"ephemeral"}, "Mobility": {components.MobilityMovable}},
+		Name:     "registry",
+		Mission:  components.MissionCore,
+		Mobility: components.MobilityMovable,
+		Details:  map[string][]string{"Type": {"ephemeral"}},
 		ServicesMap: components.Services{
-			registerService.SubPath:   &registerService,
+			registryService.SubPath:   &registryService,
 			queryService.SubPath:      &queryService,
-			unregisterService.SubPath: &unregisterService,
 			statusService.SubPath:     &statusService,
 			systemListService.SubPath: &systemListService,
 		},
@@ -193,12 +251,11 @@ func initTemplate() *components.UnitAsset {
 
 // newResource creates the unit asset with its pointers and channels based on the configuration.
 func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.System) (*components.UnitAsset, func()) {
-	cleaningScheduler := NewScheduler()
-
 	t := &Traits{
-		serviceRegistry: make(map[int]forms.ServiceRecord_v1),
+		serviceRegistry: make(map[int]*registration),
+		foreign:         make(map[string]string),
+		cloud:           cloudName(sys),
 		recCount:        1, // 0 is used for non-registered services
-		sched:           cleaningScheduler,
 		requests:        make(chan ServiceRegistryRequest),
 		subscribers:     make(map[int]*subscriber),
 	}
@@ -206,6 +263,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
 		Mission:     configuredAsset.Mission,
+		Mobility:    configuredAsset.Mobility,
+		TetheredTo:  configuredAsset.TetheredTo,
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
@@ -224,6 +283,27 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		s := initTemplate().ServicesMap[systemListPath]
 		ua.ServicesMap[systemListPath] = s
 	}
+	// The same, for the registry service that replaced register and unregister.
+	// A configuration written before the merge declares the two old names and
+	// not the new one; left alone, every system in the cloud would POST to a
+	// path this registrar no longer serves. The old declarations are dropped so
+	// the graph does not go on advertising services nothing answers.
+	if _, configured := ua.ServicesMap[registryPath]; !configured {
+		ua.ServicesMap[registryPath] = initTemplate().ServicesMap[registryPath]
+	}
+	// Unconditionally, not only when registry had to be added. Configure's
+	// fillServicesFromTemplates has already supplied registry from the
+	// template by the time this runs, so the guard above never fires on an old
+	// file — and a drop placed inside it left the file's register and
+	// unregister alive beside the new service, advertised in the registry and
+	// the graph and answered by nothing. Which is exactly what happened on the
+	// first deployment of this change.
+	for _, old := range []string{"register", "unregister"} {
+		if _, declared := ua.ServicesMap[old]; declared {
+			delete(ua.ServicesMap, old)
+			log.Printf("serviceregistrar: the %q service is now %q — dropped from the configuration file's declaration; remove it from the file to silence this\n", old, registryPath)
+		}
+	}
 
 	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
 		serving(t, w, r, servicePath)
@@ -235,7 +315,9 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	return ua, func() {
 		t.mu.Lock()
 		close(t.requests)
-		cleaningScheduler.Stop()
+		for _, reg := range t.serviceRegistry {
+			reg.expiry.Stop()
+		}
 		t.mu.Unlock()
 		log.Println("Closing the service registry database connection")
 	}
@@ -259,6 +341,36 @@ func (t *Traits) serviceRegistryHandler() {
 
 			if _, exists := t.serviceRegistry[rec.Id]; !exists {
 				rec.Id = 0
+			}
+			// An id this registrar holds for a different service is not this
+			// service's id: it was issued by another registrar, before a
+			// failover, and this one has since given the same number to someone
+			// else. Refusing it sent every system through a 500 and a full
+			// registration period before it tried a fresh POST — thirty seconds
+			// to two minutes of a system the cloud could not find. A record
+			// this registrar does not recognise is a registration it has not
+			// seen, and is treated as one.
+			if rec.Id != 0 && !t.serviceRegistry[rec.Id].sameRegistration(rec) {
+				log.Printf("a renewal of %s from %s carries id %d, which is not its record here — registering it afresh\n",
+					rec.ServiceDefinition, rec.SystemName, rec.Id)
+				rec.Id = 0
+			}
+
+			// One record per service per system. A fresh registration for a
+			// service this registrar already holds — the same system, the same
+			// definition, the same path — renews that record instead of making a
+			// second: a system that decided the lead had moved (the same lead
+			// under another spelling, or a lead it had already reached by another
+			// route) would otherwise register everything twice, and the registry
+			// would answer every quest with both until the first lapsed.
+			if rec.Id == 0 {
+				for id, held := range t.serviceRegistry {
+					if held.SystemName == rec.SystemName && held.ServiceDefinition == rec.ServiceDefinition && held.SubPath == rec.SubPath {
+						rec.Id = id
+						rec.Created = held.Created
+						break
+					}
+				}
 			}
 
 			// A zero Id means the registry has never seen this service. Anything
@@ -285,37 +397,19 @@ func (t *Traits) serviceRegistryHandler() {
 				log.Printf("The new service %s from system %s has been registered\n", rec.ServiceDefinition, rec.SystemName)
 			} else {
 				dbRec := t.serviceRegistry[rec.Id]
-				if dbRec.ServiceDefinition != rec.ServiceDefinition {
-					request.Error <- errors.New("mismatch between definition received record and database record")
-					t.mu.Unlock()
-					continue
-				}
-				if dbRec.SubPath != rec.SubPath {
-					request.Error <- errors.New("mismatch between path received record and database record")
-					t.mu.Unlock()
-					continue
-				}
-				recCreated, err := time.Parse(time.RFC3339, rec.Created)
-				if err != nil {
-					request.Error <- errors.New("time parsing problem with updated record")
-					t.mu.Unlock()
-					continue
-				}
-				dbCreated, err := time.Parse(time.RFC3339, dbRec.Created)
-				if err != nil {
-					request.Error <- errors.New("time parsing problem with archived record")
-					t.mu.Unlock()
-					continue
-				}
-				if !recCreated.Equal(dbCreated) {
-					request.Error <- errors.New("mismatch between created received record and database record")
-					t.mu.Unlock()
-					continue
-				}
 				rec.EndOfValidity = now.Add(time.Duration(dbRec.RegLife) * time.Second).Format(time.RFC3339)
+				// The renewal replaces the sleeper. Stop may return false because
+				// the old one has already fired and is waiting on t.mu; expire
+				// then finds a record that is not yet due and leaves it alone.
+				dbRec.expiry.Stop()
 			}
-			t.sched.AddTask(now.Add(time.Duration(rec.RegLife)*time.Second), func() { checkExpiration(t, rec.Id) }, rec.Id)
-			t.serviceRegistry[rec.Id] = *rec
+			life := time.Duration(rec.RegLife) * time.Second
+			id := rec.Id
+			t.serviceRegistry[id] = &registration{
+				ServiceRecord_v1: *rec,
+				expires:          now.Add(life),
+				expiry:           time.AfterFunc(life, func() { t.expire(id) }),
+			}
 			request.Record = rec
 			t.mu.Unlock()
 			if newRegistration {
@@ -328,7 +422,7 @@ func (t *Traits) serviceRegistryHandler() {
 				var result []forms.ServiceRecord_v1
 				t.mu.Lock()
 				for _, record := range t.serviceRegistry {
-					result = append(result, record)
+					result = append(result, record.ServiceRecord_v1)
 				}
 				t.mu.Unlock()
 				request.Result <- result
@@ -344,18 +438,28 @@ func (t *Traits) serviceRegistryHandler() {
 
 		case "delete":
 			t.mu.Lock()
-			t.sched.RemoveTask(int(request.Id))
 			// Kept before the delete: the event carries the record as it last
 			// stood, so a subscriber can act on what left without having held
 			// its own copy of the registry.
 			gone, existed := t.serviceRegistry[int(request.Id)]
-			delete(t.serviceRegistry, int(request.Id))
-			if _, exists := t.serviceRegistry[int(request.Id)]; !exists {
+			// The registry's services are core-mission and so exempt from
+			// tokens, which left any enrolled system free to remove any other's
+			// registration by guessing a number. A verified caller may remove
+			// only what it registered. An unverified one — a cloud with no CA —
+			// is not checked, because there is nothing to check it against.
+			if existed && request.Owner != "" && request.Owner != gone.SystemName {
+				t.mu.Unlock()
+				request.Error <- errNotOwner
+				continue
+			}
+			if existed {
+				gone.expiry.Stop()
+				delete(t.serviceRegistry, int(request.Id))
 				log.Printf("The service with ID %d has been deleted.", request.Id)
 			}
 			t.mu.Unlock()
 			if existed {
-				t.notify(forms.RegistryDeregistered, gone)
+				t.notify(forms.RegistryDeregistered, gone.ServiceRecord_v1)
 			}
 			request.Error <- nil
 		}
@@ -408,39 +512,34 @@ func (t *Traits) FilterRecords(quest forms.ServiceQuest_v1) []forms.ServiceRecor
 			}
 		}
 		if matchesAllDetails {
-			matchingRecords = append(matchingRecords, record)
+			matchingRecords = append(matchingRecords, record.ServiceRecord_v1)
 		}
 	}
 	return matchingRecords
 }
 
-// checkExpiration deletes a service record if its validity has lapsed.
-func checkExpiration(t *Traits, servId int) {
+// expire retires a registration whose validity has lapsed.
+//
+// The check against expires is not redundant. A renewal stops the old timer,
+// but Stop returns false if its function has already started — and that
+// function may be blocked on t.mu, arriving here a moment after the renewal
+// replaced the record. The comparison is what makes that race harmless: it
+// finds a record that is not yet due, and leaves it.
+func (t *Traits) expire(id int) {
 	t.mu.Lock()
-	dbRec := t.serviceRegistry[servId]
-	expiration, err := time.Parse(time.RFC3339, dbRec.EndOfValidity)
-	if err != nil {
+	reg, exists := t.serviceRegistry[id]
+	if !exists || time.Now().Before(reg.expires) {
 		t.mu.Unlock()
-		log.Printf("Time parsing problem when checking service expiration")
 		return
 	}
-	deleted := false
-	if time.Now().After(expiration) {
-		if _, exists := t.serviceRegistry[servId]; exists {
-			delete(t.serviceRegistry, servId)
-			t.sched.RemoveTask(servId)
-			deleted = true
-			log.Printf("The service with ID %d has been deleted because it was not renewed.", servId)
-		}
-	}
+	delete(t.serviceRegistry, id)
 	t.mu.Unlock()
-	if deleted {
-		// A lapsed registration is a deregistration as far as a subscriber is
-		// concerned: the service is not available, and whether it withdrew or
-		// simply stopped saying it was there is the registry'''s business, not
-		// the subscriber'''s.
-		t.notify(forms.RegistryDeregistered, dbRec)
-	}
+	log.Printf("The service with ID %d has been deleted because it was not renewed.", id)
+	// A lapsed registration is a deregistration as far as a subscriber is
+	// concerned: the service is not available, and whether it withdrew or
+	// simply stopped saying it was there is the registry's business, not
+	// the subscriber's.
+	t.notify(forms.RegistryDeregistered, reg.ServiceRecord_v1)
 }
 
 // notify tells every subscriber what changed.
@@ -535,6 +634,9 @@ func (t *Traits) updateDB(w http.ResponseWriter, r *http.Request) {
 
 // queryDB looks for service records in the service registry.
 func (t *Traits) queryDB(w http.ResponseWriter, r *http.Request) {
+	if t.standsBy(w) {
+		return
+	}
 	switch r.Method {
 	case "GET":
 		if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
@@ -619,6 +721,43 @@ func (t *Traits) queryDB(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// registryDB is the resource: POST and PUT go to updateDB, DELETE to cleanDB.
+func (t *Traits) registryDB(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "POST", "PUT":
+		t.updateDB(w, r)
+	case "DELETE":
+		t.cleanDB(w, r)
+	default:
+		w.Header().Set("Allow", "POST, PUT, DELETE")
+		http.Error(w, "Unsupported HTTP request method", http.StatusMethodNotAllowed)
+	}
+}
+
+// standsBy refuses a registry read while this registrar is not the lead,
+// answering as /status does — 503, naming the lead — so a caller that cached
+// this address forgets it and follows the referral.
+//
+// A standby's registry is empty by design, and it used to answer reads from
+// it: 200, an empty list. After a lead change every core system that had
+// cached the old lead's address went on asking it, was told the cloud held
+// nothing, and believed it — the authorizer refused every request for
+// thirteen minutes while the thermostat it was refusing was registered and
+// running. An empty answer from a standby is not an answer; it is the
+// wrong registrar.
+func (t *Traits) standsBy(w http.ResponseWriter) bool {
+	if t.leads() {
+		return false
+	}
+	w.Header().Set(components.LocalCloudHeader, t.cloud)
+	if role := t.role.Load(); role != nil && role.registrar != nil {
+		http.Error(w, components.ServiceRegistrarStandby+role.registrar.Url, http.StatusServiceUnavailable)
+		return true
+	}
+	http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
+	return true
+}
+
 // cleanDB deletes service records upon request (e.g., when a system shuts down).
 func (t *Traits) cleanDB(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -630,13 +769,20 @@ func (t *Traits) cleanDB(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid record ID", http.StatusBadRequest)
 			return
 		}
+		owner, _ := usecases.PeerCN(r)
 		addRecord := ServiceRegistryRequest{
 			Action: "delete",
 			Id:     int64(id),
+			Owner:  owner,
 			Error:  make(chan error),
 		}
 		t.requests <- addRecord
 		err = <-addRecord.Error
+		if errors.Is(err, errNotOwner) {
+			log.Printf("serviceregistrar: %q asked to delete record %d, which belongs to another system\n", owner, id)
+			http.Error(w, "only the system that registered a service may remove it", http.StatusForbidden)
+			return
+		}
 		if err != nil {
 			log.Printf("Error deleting the service with id: %d, %s\n", id, err)
 			http.Error(w, "Error deleting service", http.StatusInternalServerError)
@@ -651,6 +797,9 @@ func (t *Traits) cleanDB(w http.ResponseWriter, r *http.Request) {
 func (t *Traits) roleStatus(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
+		// The cloud this registrar belongs to, so a peer can tell whether it
+		// is one. See startRole.
+		w.Header().Set(components.LocalCloudHeader, t.cloud)
 		// One load, so the answer describes a single election outcome.
 		role := t.role.Load()
 		if role != nil && role.leading {
@@ -658,7 +807,9 @@ func (t *Traits) roleStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if role != nil && role.registrar != nil {
-			http.Error(w, fmt.Sprintf("On standby, leading registrar is %s", role.registrar.Url), http.StatusServiceUnavailable)
+			// The framework's sentence, so a client can follow it: a standby is
+			// a referral to the lead, not a dead end.
+			http.Error(w, components.ServiceRegistrarStandby+role.registrar.Url, http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -672,25 +823,44 @@ func (t *Traits) roleStatus(w http.ResponseWriter, r *http.Request) {
 
 // startRole repeatedly checks which service registrar in the local cloud is the leader.
 func (t *Traits) startRole(sys *components.System) {
-	peersList, err := peersList(sys)
-	if err != nil {
+	if _, err := peersList(sys); err != nil {
 		panic(err)
 	}
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		for {
+			// Recomputed each tick: a registrar learned after startup is a peer
+			// from then on, not from the next restart.
+			peers, _ := peersList(sys)
 			standby := false
 		foundLead:
-			for _, cSys := range peersList {
+			for _, cSys := range peers {
 				resp, err := http.Get(cSys.Url + "/status")
 				if err != nil {
 					break
 				}
 				status := resp.StatusCode
+				theirs := resp.Header.Get(components.LocalCloudHeader)
 				// Closed here rather than deferred: this loop never returns, so
 				// a deferred close held one response body per peer per tick for
 				// the life of the process.
 				resp.Body.Close()
+
+				// A registrar of another cloud is not a peer, whatever it
+				// answers. Two hosts whose registrars named different clouds
+				// used to elect and register across the boundary without
+				// complaint, and were caught only when the kgrapher refused to
+				// assemble a graph with two clouds in it — if a kgrapher ran.
+				// The name is a membership fact and this is where membership
+				// is decided.
+				if theirs != "" && theirs != t.cloud {
+					if t.foreign[cSys.Url] == "" {
+						log.Printf("serviceregistrar: %s declares the cloud %q and this is %q — not a peer, and it will not be asked again until it says otherwise\n", cSys.Url, theirs, t.cloud)
+					}
+					t.foreign[cSys.Url] = theirs
+					continue
+				}
+				delete(t.foreign, cSys.Url)
 
 				switch status {
 				case http.StatusOK:
@@ -715,6 +885,9 @@ func (t *Traits) startRole(sys *components.System) {
 
 // systemList returns the list of unique systems registered in the local cloud.
 func (t *Traits) systemList(w http.ResponseWriter, r *http.Request) {
+	if t.standsBy(w) {
+		return
+	}
 	switch r.Method {
 	case "GET":
 		// Same resource, two representations: ask for the list and you get it

@@ -65,38 +65,37 @@ type Traits struct {
 	load atomic.Pointer[forms.HostLoad_v1]
 }
 
-// resolveExecutable returns the filesystem path of the executable running as pid.
-// It reads /proc/<pid>/exe, which is Linux-specific. The variable form allows
-// tests to substitute a different implementation without build tags.
-var resolveExecutable = func(pid int) (string, error) {
-	return os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
-}
+// resolveExecutable and describeResolutionFailure live in attest_<os>.go:
+// how a process is mapped to the file it runs is the one thing in this system
+// the platform decides, and it decides what the hash means — see each file.
 
-// describeResolutionFailure turns a failure to read /proc/<pid>/exe into
-// something an operator can act on.
+// describeResolutionFailure turns a failure to find the file behind a process
+// into something an operator can act on. One function for every platform:
+// the two outcomes — another user's process, a process that has gone — are the
+// same everywhere, only the error that means each differs, and that is all a
+// platform is asked (classifyResolutionError). A change to the wording or the
+// refuse/fault decision is then made once and tested once, on whichever
+// platform runs the tests.
 //
-// The interesting case is permission. Linux lets a process read another's exe
-// link only if it could trace it, so a maitreD running as one user cannot see a
-// system started with sudo — which is how a system that needs GPIO is usually
-// started. Every other system on the host attests and that one never does.
+// The interesting case is permission. A maitreD running as one user cannot see
+// a system started by another — with sudo on Linux, elevated on Windows — and
+// the remedy given is to drop the privilege rather than to raise maitreD's: a
+// maitreD running as root to inspect everything is a larger thing to trust than
+// the systems it is attesting.
 //
-// The remedy given here is to drop the privilege rather than to raise maitreD's.
-// A maitreD running as root to inspect everything is a larger thing to trust
-// than the systems it is attesting, and requiring it would put root in the path
-// of every deployment.
 // It returns the explanation and whether maitreD is certain enough to refuse
 // rather than report a fault of its own.
 func describeResolutionFailure(pid int, err error) (reason string, refused bool) {
+	permission, gone := classifyResolutionError(err)
 	switch {
-	case errors.Is(err, fs.ErrPermission):
-		return fmt.Sprintf("cannot read /proc/%d/exe: the process belongs to another user, "+
-			"so this maitreD cannot see what it is running. Start that system as the same user as maitreD — "+
-			"a system needing GPIO usually wants group membership (gpio, dialout) rather than sudo — "+
-			"or run maitreD as the user that owns it", pid), true
-	case errors.Is(err, fs.ErrNotExist):
+	case permission || errors.Is(err, fs.ErrPermission):
+		return fmt.Sprintf("cannot see what process %d is running: it belongs to another user, "+
+			"so this maitreD cannot attest it. Start that system as the same user as maitreD — "+
+			"%s — or run maitreD as the user that owns it", pid, privilegeAdvice), true
+	case gone || errors.Is(err, fs.ErrNotExist):
 		return fmt.Sprintf("no process %d: it exited before it could be attested", pid), true
 	default:
-		return fmt.Sprintf("cannot read /proc/%d/exe: %v", pid, err), false
+		return fmt.Sprintf("cannot see what process %d is running: %v", pid, err), false
 	}
 }
 
@@ -138,9 +137,10 @@ func initTemplate() *components.UnitAsset {
 	}
 
 	return &components.UnitAsset{
-		Name:    "maitreD",
-		Mission: components.MissionCore,
-		Details: map[string][]string{"Role": {"host-attestation"}, "Mobility": {components.MobilityFixed}},
+		Name:     "maitreD",
+		Mission:  components.MissionCore,
+		Mobility: components.MobilityFixed,
+		Details:  map[string][]string{"Role": {"host-attestation"}},
 		ServicesMap: map[string]*components.Service{
 			attest.SubPath:     &attest,
 			loadstatus.SubPath: &loadstatus,
@@ -171,6 +171,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
 		Mission:     configuredAsset.Mission,
+		Mobility:    configuredAsset.Mobility,
+		TetheredTo:  configuredAsset.TetheredTo,
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),

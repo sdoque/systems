@@ -50,13 +50,33 @@ type System struct {
 	Level   string   `json:"level"` // open, enrolling, identified, authorized
 	Posture []string `json:"posture,omitempty"`
 	Assets  []*Asset `json:"assets"`
+	// Doc is where a person can read this system's own description of itself.
+	//
+	// Derived from a service URL rather than configured, because the graph
+	// already carries the addresses and a second place to record them is a
+	// second place to get them wrong. The plaintext one: a browser holds no
+	// client certificate, so the https endpoint would refuse it at the
+	// handshake.
+	Doc string `json:"doc,omitempty"`
 }
 
 // Asset is a unit asset: the thing a system actually does something with.
 type Asset struct {
-	Name    string  `json:"name"`
-	Mission string  `json:"mission,omitempty"`
-	Wants   []*Want `json:"wants,omitempty"`
+	Name     string   `json:"name"`
+	Mission  string   `json:"mission,omitempty"`
+	Provides []*Offer `json:"provides,omitempty"`
+	Wants    []*Want  `json:"wants,omitempty"`
+}
+
+// Offer is a service an asset provides.
+//
+// The picture does not need this to draw a line — a line is found by matching a
+// consumer's URL to whoever answers it — but a person clicking on a system does.
+// "What does this offer, and what does it ask for" is the pair that says whether
+// a system is doing its job, and half a pair answers nothing.
+type Offer struct {
+	Definition string `json:"definition"`
+	Mission    string `json:"mission,omitempty"`
 }
 
 // Want is a service an asset consumes, and whether anything provides it.
@@ -77,6 +97,39 @@ type Link struct {
 	To         string `json:"to"`   // asset id, the provider
 	Definition string `json:"definition"`
 	Mission    string `json:"mission,omitempty"`
+	// Action is what the consumer does on this line — read, write or invoke.
+	//
+	// It is not the provider's mission, and the difference is the whole point.
+	// A line used to be drawn as acting whenever the thing at the far end was an
+	// actuator, so a collector logging a valve position looked exactly like the
+	// controller driving it. Reading an actuator is observation; only the writer
+	// acts. The picture has to say which, because an operator scanning it for
+	// what can move the plant is reading those dashes as the answer.
+	Action string `json:"action,omitempty"`
+}
+
+// actionForMode mirrors usecases.ActionForMode. A cervice that declares no mode
+// reads, which is what the framework assumes when it mints the token.
+func actionForMode(mode string) string {
+	switch mode {
+	case "set":
+		return "write"
+	case "do":
+		return "invoke"
+	default:
+		return "read"
+	}
+}
+
+// docURL turns any plaintext service URL of a system into the address of that
+// system's own documentation page. It returns "" for an https URL, so a system
+// serving only TLS simply has no link rather than a broken one.
+func docURL(rawURL, systemName string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme != "http" || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host + "/" + systemName + "/doc"
 }
 
 // assetID names an asset the same way everywhere, so a link's ends can be found
@@ -114,9 +167,10 @@ func build(fallbackName string, graphs map[string]string) *Cloud {
 	byHost := map[string]*Host{}
 	offered := map[string]provided{} // service URL -> what is behind it
 	type pendingWant struct {
-		asset *Asset
-		want  *Want
-		url   string
+		asset  *Asset
+		want   *Want
+		url    string
+		action string
 	}
 	var pending []pendingWant
 
@@ -186,8 +240,15 @@ func build(fallbackName string, graphs map[string]string) *Cloud {
 					if mission == "" {
 						mission = asset.Mission
 					}
-					for _, url := range objects(facts, svcSubject, "afo:hasUrl") {
-						offered[url] = provided{assetID: id, definition: def, mission: mission}
+					// Once per service, not once per URL: a service reachable
+					// over both http and https is one offer, and listing it
+					// twice would read as two.
+					asset.Provides = append(asset.Provides, &Offer{Definition: def, Mission: mission})
+					for _, rawURL := range objects(facts, svcSubject, "afo:hasUrl") {
+						offered[rawURL] = provided{assetID: id, definition: def, mission: mission}
+						if system.Doc == "" {
+							system.Doc = docURL(rawURL, sysName)
+						}
 					}
 				}
 
@@ -197,8 +258,9 @@ func build(fallbackName string, graphs map[string]string) *Cloud {
 					urls := objects(facts, cerviceSubject, "alc:fromUrl")
 					want.Satisfied = len(urls) > 0
 					asset.Wants = append(asset.Wants, want)
+					action := actionForMode(object(facts, cerviceSubject, "alc:hasMode"))
 					for _, url := range urls {
-						pending = append(pending, pendingWant{asset: asset, want: want, url: url})
+						pending = append(pending, pendingWant{asset: asset, want: want, url: url, action: action})
 					}
 				}
 
@@ -238,6 +300,7 @@ func build(fallbackName string, graphs map[string]string) *Cloud {
 			To:         target.assetID,
 			Definition: firstNonEmpty(p.want.Definition, target.definition),
 			Mission:    target.mission,
+			Action:     p.action,
 		})
 	}
 

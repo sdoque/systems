@@ -112,9 +112,10 @@ func initTemplate() *components.UnitAsset {
 	}
 
 	return &components.UnitAsset{
-		Name:    "Servo_1",
-		Mission: components.MissionActuation,
-		Details: map[string][]string{"Model": {"standardServo"}, "FunctionalLocation": {"Kitchen"}, "Mobility": {components.MobilityFixed}},
+		Name:     "Servo_1",
+		Mission:  components.MissionActuation,
+		Mobility: components.MobilityFixed,
+		Details:  map[string][]string{"Model": {"standardServo"}, "FunctionalLocation": {"Kitchen"}},
 		ServicesMap: components.Services{
 			rotation.SubPath: &rotation,
 		},
@@ -141,6 +142,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
 		Mission:     configuredAsset.Mission,
+		Mobility:    configuredAsset.Mobility,
+		TetheredTo:  configuredAsset.TetheredTo,
 		Owner:       sys,
 		Details:     configuredAsset.Details,
 		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),

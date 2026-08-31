@@ -51,8 +51,22 @@ type Traits struct {
 	// would get 10^9 seconds, about 31 years, and the compiler would not object.
 	// The unit belongs in the name and the conversion belongs at the point of
 	// use.
-	Period    int     `json:"samplingPeriod"`
-	Kp        float64 `json:"kp"`
+	Period int     `json:"samplingPeriod"`
+	Kp     float64 `json:"kp"`
+
+	// FrostGuard is how many minutes this controller may go without a
+	// temperature before it drives the heat on regardless. Zero disables it.
+	//
+	// Absent from a configuration written before this existed, which unmarshals
+	// as the default rather than as zero — on purpose. A controller that has
+	// been upgraded should gain the protection without anyone editing a file,
+	// and an operator who genuinely wants it off has to say so.
+	FrostGuard int `json:"frostGuardMinutes"`
+
+	// lastGood is when a temperature was last read, and guarding says the frost
+	// guard is currently holding the plug on. Both under mu with the rest.
+	lastGood  time.Time
+	guarding  bool
 	jitter    time.Duration
 	deviation float64
 	previousT float64
@@ -110,9 +124,10 @@ func initTemplate() *components.UnitAsset {
 			jitterService.SubPath:    &jitterService,
 		},
 		Traits: &Traits{
-			SetPt:  20,
-			Period: 10,
-			Kp:     5,
+			SetPt:      20,
+			Period:     10,
+			Kp:         5,
+			FrostGuard: 30,
 		},
 	}
 }
@@ -167,11 +182,14 @@ type traitDefaults struct {
 	SetPt  float64 `json:"setPoint"`
 	Period int     `json:"samplingPeriod"`
 	Kp     float64 `json:"kp"`
+	// Not defaulted back to 30 below when it reads zero, unlike Period and Kp:
+	// zero is a real answer here and means the operator turned the guard off.
+	FrostGuard int `json:"frostGuardMinutes"`
 }
 
 // parseTraitDefaults extracts and validates the trait defaults from the configurable asset.
 func parseTraitDefaults(uac usecases.ConfigurableAsset) traitDefaults {
-	d := traitDefaults{SetPt: 20, Period: 10, Kp: 5}
+	d := traitDefaults{SetPt: 20, Period: 10, Kp: 5, FrostGuard: 30}
 	if len(uac.Traits) > 0 {
 		if err := json.Unmarshal(uac.Traits[0], &d); err != nil {
 			log.Println("ethermostat: warning — could not unmarshal traits:", err)
@@ -255,11 +273,17 @@ func discoverHeaters(sys *components.System, sProtocols []string, defaults trait
 			}
 
 			t := &Traits{
-				SetPt:  defaults.SetPt,
-				Period: defaults.Period,
-				Kp:     defaults.Kp,
-				name:   displayName,
-				owner:  sys,
+				SetPt:      defaults.SetPt,
+				Period:     defaults.Period,
+				Kp:         defaults.Kp,
+				FrostGuard: defaults.FrostGuard,
+				// Blind since now, not since the zero time: a controller that
+				// has never had a reading should wait out the same grace period
+				// as one that lost a working sensor, rather than firing on its
+				// first failed poll.
+				lastGood: time.Now(),
+				name:     displayName,
+				owner:    sys,
 				cervices: components.Cervices{
 					"on_off":      heaterOnOff,
 					"temperature": heaterTemp,
@@ -575,18 +599,29 @@ func (t *Traits) processFeedbackLoop() {
 	tf, err := usecases.GetState(t.cervices["temperature"], t.owner)
 	if err != nil {
 		log.Printf("ethermostat %s: unable to get temperature: %v\n", t.name, err)
+		t.frostGuard()
 		return
 	}
 	tup, ok := tf.(*forms.SignalA_v1a)
 	if !ok {
 		log.Printf("ethermostat %s: unexpected temperature form type\n", t.name)
+		t.frostGuard()
 		return
 	}
 
 	t.mu.Lock()
+	blindFor := time.Since(t.lastGood)
+	released := t.guarding
+	t.lastGood = time.Now()
+	t.guarding = false
 	t.deviation = t.SetPt - tup.Value
 	deviation := t.deviation
 	t.mu.Unlock()
+
+	if released {
+		log.Printf("ethermostat %s: a temperature arrived after %v — frost guard released, normal control resumes\n",
+			t.name, blindFor.Round(time.Second))
+	}
 
 	output := t.calculateOutput(deviation)
 	plugOn := output > 50
@@ -606,6 +641,49 @@ func (t *Traits) processFeedbackLoop() {
 	t.mu.Lock()
 	t.jitter = time.Since(jitterStart)
 	t.mu.Unlock()
+}
+
+// frostGuard drives the plug on when this controller has gone too long without
+// a temperature, and is the difference between failing safe and failing quiet.
+//
+// Losing the reading leaves the loop with nothing to act on, and the previous
+// answer was to return — holding the plug wherever it was. That is the right
+// instinct while a plug remembers its state, and the wrong one here for a
+// reason that only shows up on the day it matters: a ZigBee plug returns to
+// *off* when mains power is restored, so after a power cut the state being
+// faithfully held is "off". The cottage's temperatures come from the Netatmo
+// cloud over a domestic line, and after a power cut the router has just
+// rebooted too — so the reading is missing at exactly the moment the plugs are
+// off and the house is cooling. Holding, there, means never heating again.
+//
+// So: on, and stay on, until a reading returns. The cost of being wrong is
+// electricity. The cost of the previous behaviour is burst pipes, and those are
+// not the same kind of wrong.
+//
+// It fires only after FrostGuard minutes of continuous blindness, so a single
+// failed poll or a brief network hiccup changes nothing. Recovery needs no code
+// here: the next successful read runs the ordinary control law and sets the
+// plug from the measurement, which is what "revert when it arrives" means.
+func (t *Traits) frostGuard() {
+	t.mu.Lock()
+	grace := time.Duration(t.FrostGuard) * time.Minute
+	blindFor := time.Since(t.lastGood)
+	if grace <= 0 || blindFor < grace {
+		t.mu.Unlock()
+		return
+	}
+	announce := !t.guarding
+	t.guarding = true
+	t.mu.Unlock()
+
+	// Said once per episode rather than once per poll: at a ten-second period
+	// this would otherwise write six lines a minute for as long as the outage
+	// lasts, and bury the line that says when it started.
+	if announce {
+		log.Printf("ethermostat %s: no temperature for %v — driving the heat ON and holding it there until a reading returns (frost guard)\n",
+			t.name, blindFor.Round(time.Second))
+	}
+	t.updatePlugState(true)
 }
 
 // calculateOutput is the P-controller: output = Kp × error + 50, clamped to [0, 100].

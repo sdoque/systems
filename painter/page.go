@@ -62,6 +62,32 @@ const pageHTML = `<!DOCTYPE html>
   .note { color: var(--open); }
   .disk { transition: opacity .8s ease; }
   text { pointer-events: none; user-select: none; }
+  .disk[data-system-id] { cursor: pointer; }
+  /* The panel. Deliberately plain HTML over the SVG rather than drawn into it:
+     text an operator may want to copy belongs in the document, not in a path. */
+  #panel { position: fixed; top: 52px; right: 12px; width: 330px;
+    max-height: calc(100% - 110px); overflow: auto; background: #fff;
+    border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px;
+    font-size: 12px; line-height: 1.45; box-shadow: 0 2px 14px rgba(27,39,51,.14); }
+  #panel[hidden] { display: none; }
+  #panel h2 { font-size: 14px; font-weight: 600; margin: 0; }
+  #panel .sub { color: var(--dim); margin: 2px 0 9px; }
+  #panel .close { float: right; border: 0; background: none; cursor: pointer;
+    color: var(--dim); font-size: 16px; line-height: 1; padding: 0 0 0 8px; }
+  #panel .asset { border-top: 1px solid var(--line); margin-top: 9px; padding-top: 8px; }
+  #panel .aname { font-weight: 600; }
+  #panel .kind { color: var(--dim); font-weight: 400; }
+  #panel ul { margin: 3px 0 0; padding-left: 15px; }
+  #panel li { margin: 1px 0; }
+  #panel .bad { color: var(--open); font-weight: 600; }
+  #panel .none { color: var(--dim); font-style: italic; }
+  #panel .doclink { margin: 0 0 9px; }
+  #panel .doclink a { display: inline-block; border: 1px solid var(--identified);
+    border-radius: 4px; padding: 3px 9px; color: var(--identified);
+    text-decoration: none; font-weight: 600; }
+  #panel .doclink a:hover { background: var(--identified); color: #fff; }
+  #panel .chip { display: inline-block; border: 1px solid var(--line); border-radius: 9px;
+    padding: 0 6px; margin: 0 3px 3px 0; color: var(--dim); }
 </style>
 </head>
 <body>
@@ -71,6 +97,7 @@ const pageHTML = `<!DOCTYPE html>
   <span class="hint" id="notes"></span>
 </header>
 <svg id="stage"></svg>
+<aside id="panel" hidden></aside>
 <div id="legend">
   <span><i class="swatch" style="background:var(--authorized)"></i>authorized</span>
   <span><i class="swatch" style="background:var(--identified)"></i>identified</span>
@@ -94,6 +121,12 @@ var seen = new Map();       // id -> when it was first drawn
 var arrivals = new Map();   // id -> when it appeared, for the green flash
 var departures = new Map(); // id -> { at, x, y, name }, for the red one
 var centres = new Map();    // id -> where it was last drawn, so a departure knows where
+
+// What the operator has clicked on, and where to find it again. The picture is
+// rebuilt from scratch on every refresh, so a selection has to survive as an id
+// rather than as a reference to something that will shortly be discarded.
+var selectedId = null;
+var systemIndex = {};       // "host/system" -> { host, sys } for the panel
 
 // How long each announcement lasts. A change in a plant is worth interrupting
 // somebody for, and a picture that merely settles into a new arrangement does
@@ -254,8 +287,9 @@ function draw() {
       var age = (now - seen.get(id)) / 700;
       var sp = place(si, systems.length, size.ring);
       centres.set(id, { x: hp.x + sp.x, y: hp.y + sp.y, name: sys.name });
+      systemIndex[id] = { host: host.name, sys: sys };
       var sysG = el("g", { transform: "translate(" + sp.x + "," + sp.y + ")", class: "disk",
-                           opacity: Math.min(1, age) }, hostG);
+                           opacity: Math.min(1, age), "data-system-id": id }, hostG);
 
       el("circle", { r: 34, fill: colourOf(sys.level), "fill-opacity": 0.22,
                      stroke: colourOf(sys.level), "stroke-width": 2 / view.scale }, sysG);
@@ -367,9 +401,12 @@ function draw() {
       var path = el("path", { d: "M" + a.x + "," + a.y + "Q" + mx + "," + my + " " + b.x + "," + b.y,
                               stroke: "var(--dim)", "stroke-width": 1.4 / view.scale, fill: "none",
                               "stroke-opacity": 0.8 }, lines);
-      // Mission decides the style: driving something must not look like reading
-      // it. Color is left to say one thing only, which is security.
-      if (link.mission === "actuation" || link.mission === "control") {
+      // The consumer's action decides the style, not the provider's mission:
+      // driving something must not look like reading it, and reading an
+      // actuator is still reading. A collector logging a valve position used to
+      // be drawn exactly like the controller moving it. Color is left to say one
+      // thing only, which is security.
+      if (link.action === "write" || link.action === "invoke") {
         path.setAttribute("stroke-dasharray", (5 / view.scale) + " " + (3 / view.scale));
       }
       el("title", {}, path).textContent = link.definition + " → " + link.to;
@@ -378,7 +415,131 @@ function draw() {
       }
     });
   });
+
+  // The panel is drawn from the same model as the picture and at the same
+  // moment, so a system that changes while it is open changes in both.
+  renderPanel();
 }
+
+// ---- what one system is, and whether it is right ---------------------------
+//
+// The panel answers "is this right?" rather than "what is this?". A system can
+// describe itself in isolation; only the picture knows what it is bound to, and
+// an operator verifying a deployment is asking about the bindings. So what is
+// shown first is what it asks for and whether anything answers.
+
+var panel = document.getElementById("panel");
+
+// esc puts text through the DOM rather than through a regular expression. The
+// names here come from the cloud's own graph, but a page that escapes only the
+// values it distrusts has to be right about which those are.
+function esc(text) {
+  var holder = document.createElement("div");
+  holder.textContent = (text === null || text === undefined) ? "" : String(text);
+  return holder.innerHTML;
+}
+
+// providersOf finds everybody in the cloud offering a definition.
+//
+// An unsatisfied want has two very different causes, and a picture that shows
+// them the same way sends an operator to the wrong place. Nobody offering the
+// service means a system is missing. Somebody offering it and the consumer not
+// bound to it means the service is there and something between them said no —
+// policy, most often — which is a different search entirely. The orchestrator
+// reports both as "unable to locate any such service"; the model knows better,
+// because it now carries what every asset provides.
+function providersOf(definition) {
+  var found = [];
+  (cloud.hosts || []).forEach(function (host) {
+    (host.systems || []).forEach(function (sys) {
+      (sys.assets || []).forEach(function (asset) {
+        (asset.provides || []).forEach(function (offer) {
+          if (offer.definition === definition) found.push(sys.name + "/" + asset.name);
+        });
+      });
+    });
+  });
+  return found;
+}
+
+function listOrNone(items, empty) {
+  if (!items.length) return "<div class=\"none\">" + esc(empty) + "</div>";
+  return "<ul>" + items.join("") + "</ul>";
+}
+
+function renderPanel() {
+  var entry = selectedId ? systemIndex[selectedId] : null;
+  if (!entry) { panel.hidden = true; panel.innerHTML = ""; return; }
+  var sys = entry.sys;
+  var html = "<button class=\"close\" title=\"close\">&times;</button>";
+  html += "<h2>" + esc(sys.name) + "</h2>";
+  html += "<div class=\"sub\">on " + esc(entry.host) + " &middot; <span style=\"color:" +
+          colourOf(sys.level) + "\">" + esc(sys.level || "unknown") + "</span></div>";
+
+  // First, because it is what an operator clicked to find: the system's own
+  // account of itself, opened in its own tab so the picture is not lost.
+  if (sys.doc) {
+    html += "<div class=\"doclink\"><a href=\"" + esc(sys.doc) +
+            "\" target=\"_blank\" rel=\"noopener\">documentation \u2197</a></div>";
+  }
+
+  var posture = sys.posture || [];
+  if (posture.length) {
+    html += "<div>" + posture.map(function (p) {
+      return "<span class=\"chip\">" + esc(p) + "</span>";
+    }).join("") + "</div>";
+  }
+
+  (sys.assets || []).forEach(function (asset) {
+    html += "<div class=\"asset\"><span class=\"aname\">" + esc(asset.name) + "</span>";
+    if (asset.mission) html += " <span class=\"kind\">" + esc(asset.mission) + "</span>";
+    html += "</div>";
+
+    html += "<div class=\"kind\">provides</div>";
+    html += listOrNone((asset.provides || []).map(function (offer) {
+      return "<li>" + esc(offer.definition) +
+             (offer.mission ? " <span class=\"kind\">" + esc(offer.mission) + "</span>" : "") + "</li>";
+    }), "nothing \u2014 this asset offers no service");
+
+    html += "<div class=\"kind\">wants</div>";
+    html += listOrNone((asset.wants || []).map(function (want) {
+      if (want.satisfied) return "<li>" + esc(want.definition) + "</li>";
+      // The one state that looks healthy from every other angle — and worth
+      // splitting in two, because the two halves are looked for in different
+      // places.
+      var offers = providersOf(want.definition);
+      if (offers.length) {
+        return "<li class=\"bad\">" + esc(want.definition) + " \u2014 offered by " +
+               esc(offers.join(", ")) + ", but not bound to it</li>";
+      }
+      return "<li class=\"bad\">" + esc(want.definition) + " \u2014 nothing in this cloud offers it</li>";
+    }), "nothing \u2014 this asset consumes no service");
+  });
+
+  // The relational half: what this system is actually wired to right now, which
+  // no system's own description can say.
+  var prefix = selectedId + "/";
+  var out = [], incoming = [];
+  (cloud.links || []).forEach(function (link) {
+    if (link.from.indexOf(prefix) === 0) {
+      out.push("<li>" + esc(link.definition) + " \u2192 " + esc(link.to) + "</li>");
+    }
+    if (link.to.indexOf(prefix) === 0) {
+      incoming.push("<li>" + esc(link.from) + " \u2192 " + esc(link.definition) + "</li>");
+    }
+  });
+  html += "<div class=\"asset\"><span class=\"aname\">bound to</span></div>";
+  html += listOrNone(out, "consumes nothing from anybody");
+  html += "<div class=\"kind\">consumed by</div>";
+  html += listOrNone(incoming, "nobody consumes this system");
+
+  panel.innerHTML = html;
+  panel.hidden = false;
+}
+
+panel.addEventListener("click", function (e) {
+  if (e.target.classList.contains("close")) { selectedId = null; renderPanel(); }
+});
 
 // ---- the wheel, and dragging ------------------------------------------------
 
@@ -398,15 +559,33 @@ stage.addEventListener("wheel", function (e) {
 }, { passive: false });
 
 var dragging = false, lastX = 0, lastY = 0;
+// Whether this gesture was a drag. Panning and selecting share a button, so a
+// pan that happens to end over a system must not open it.
+var travelled = 0;
+// What was under the pointer when the gesture began.
+//
+// It has to be taken here rather than in the click handler: setPointerCapture
+// below redirects every later event of this gesture to the stage, so by the time
+// the click arrives its target is the stage itself and the disk cannot be found
+// from it. That is not visible in the harness, which has no pointer capture and
+// no event dispatch, and it made every click land on nothing.
+var downTarget = null;
 stage.addEventListener("pointerdown", function (e) {
-  dragging = true; lastX = e.clientX; lastY = e.clientY;
+  downTarget = (e.target && e.target.closest) ? e.target.closest("[data-system-id]") : null;
+  dragging = true; lastX = e.clientX; lastY = e.clientY; travelled = 0;
   stage.classList.add("dragging"); stage.setPointerCapture(e.pointerId);
 });
 stage.addEventListener("pointermove", function (e) {
   if (!dragging) return;
+  travelled += Math.abs(e.clientX - lastX) + Math.abs(e.clientY - lastY);
   view.x += e.clientX - lastX; view.y += e.clientY - lastY;
   lastX = e.clientX; lastY = e.clientY;
   draw();
+});
+stage.addEventListener("click", function () {
+  if (travelled > 4) return;   // a pan that happened to end on a system
+  selectedId = downTarget ? downTarget.getAttribute("data-system-id") : null;
+  renderPanel();
 });
 stage.addEventListener("pointerup", function (e) {
   dragging = false; stage.classList.remove("dragging"); stage.releasePointerCapture(e.pointerId);

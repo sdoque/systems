@@ -49,6 +49,11 @@ type SwitchInfo struct {
 	URL    string `json:"url"`    // full HTTP URL of the on_off service
 	State  bool   `json:"state"`  // last known on/off state
 	Online bool   `json:"online"` // false when the last state fetch failed
+	// Tokens are the access tokens discovery obtained for this provider, keyed
+	// by action. Deliberately not serialized: SwitchList is served to a browser
+	// and an access token is a bearer credential — a dashboard that lists its
+	// own keys hands them to every reader.
+	Tokens map[string]string `json:"-"`
 }
 
 // ------------------------------------- Instantiate a unit asset template
@@ -205,12 +210,13 @@ func (t *Traits) discoverAndPoll() {
 	var newSwitches []SwitchInfo
 	for _, nodes := range cer.Nodes {
 		for _, ni := range nodes {
-			state, online := fetchOnOffState(ni.URL)
+			state, online := fetchOnOffState(ni.URL, ni.Tokens)
 			newSwitches = append(newSwitches, SwitchInfo{
 				Name:   nameFromURL(ni.URL),
 				URL:    ni.URL,
 				State:  state,
 				Online: online,
+				Tokens: ni.Tokens,
 			})
 		}
 	}
@@ -253,10 +259,24 @@ func (t *Traits) backgroundPoll() {
 // ------------------------------------- Helpers
 
 // fetchOnOffState retrieves the current boolean value from one on_off service URL.
-func fetchOnOffState(url string) (state bool, online bool) {
+func fetchOnOffState(url string, tokens map[string]string) (state bool, online bool) {
 	// Preserve framework-installed TLS so this works against HTTPS-only peers.
 	client := &http.Client{Timeout: 3 * time.Second, Transport: http.DefaultClient.Transport}
-	resp, err := client.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return false, false
+	}
+	// The access token discovery already obtained, presented on the call it was
+	// minted for. Search4MultipleServices fills NodeInfo.Tokens per action, and
+	// this function used to take a bare URL and so had no way to reach them —
+	// which was invisible until a cloud adopted authorization, because a
+	// provider with no authorizer serves an untokened GET quite happily. In an
+	// authorized cloud the same GET is refused with "no access token" and the
+	// dashboard silently shows every switch as offline.
+	if token := tokens["read"]; token != "" {
+		req.Header.Set(usecases.TokenHeader, token)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return false, false
 	}
@@ -321,9 +341,11 @@ func toggleHandler(t *Traits, w http.ResponseWriter, r *http.Request, ctx contex
 
 	t.mu.RLock()
 	var targetURL string
+	var targetTokens map[string]string
 	for _, sw := range t.switches {
 		if sw.Name == name {
 			targetURL = sw.URL
+			targetTokens = sw.Tokens
 			break
 		}
 	}
@@ -355,6 +377,12 @@ func toggleHandler(t *Traits, w http.ResponseWriter, r *http.Request, ctx contex
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// A PUT is a write, and a token names the action it permits — the read
+	// token this device was also issued is refused here, which is the point of
+	// keeping one per action.
+	if token := targetTokens["write"]; token != "" {
+		req.Header.Set(usecases.TokenHeader, token)
+	}
 
 	// Preserve framework-installed TLS so this works against HTTPS-only peers.
 	client := &http.Client{Timeout: 5 * time.Second, Transport: http.DefaultClient.Transport}
@@ -371,7 +399,7 @@ func toggleHandler(t *Traits, w http.ResponseWriter, r *http.Request, ctx contex
 
 	// Re-fetch the confirmed state from beekeeper rather than applying an optimistic
 	// update. This keeps beehive accurate even when beekeeper restarts mid-session.
-	actualState, online := fetchOnOffState(targetURL)
+	actualState, online := fetchOnOffState(targetURL, targetTokens)
 	t.mu.Lock()
 	for i, sw := range t.switches {
 		if sw.Name == name {

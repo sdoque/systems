@@ -362,7 +362,9 @@ func TestAProcessOwnedByAnotherUserSaysSo(t *testing.T) {
 	}
 
 	said := w.Body.String()
-	for _, want := range []string{"another user", "/proc/1234/exe"} {
+	// The process number and the cause, not the Linux path: on Windows and
+	// macOS the path is read another way and the sentence differs.
+	for _, want := range []string{"another user", "1234"} {
 		if !strings.Contains(said, want) {
 			t.Errorf("the refusal does not mention %q: %s", want, strings.TrimSpace(said))
 		}

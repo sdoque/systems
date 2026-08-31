@@ -168,14 +168,14 @@ func TestPeersList(t *testing.T) {
 
 func createFilledRegistrar() *Traits {
 	ua := createLeadingRegistrar()
-	ua.serviceRegistry = make(map[int]forms.ServiceRecord_v1)
+	ua.serviceRegistry = make(map[int]*registration)
 	for x := range 5 {
-		ua.serviceRegistry[x] = forms.ServiceRecord_v1{
+		ua.serviceRegistry[x] = held(forms.ServiceRecord_v1{
 			Id:          x,
 			SystemName:  fmt.Sprintf("testSys%d", x),
 			IPAddresses: []string{"localhost"},
 			ProtoPort:   map[string]int{"http": 1234},
-		}
+		})
 	}
 	return ua
 }

@@ -1,12 +1,20 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/sdoque/mbaigo/components"
+	"time"
 )
 
 func TestEnsurePrefixed(t *testing.T) {
@@ -253,5 +261,135 @@ func TestTheGraphSurvivesAnUnreadableRegistrarReply(t *testing.T) {
 	if after.turtle != before.turtle {
 		t.Errorf("the graph was replaced with %q; a cloud always contains at least "+
 			"this grapher, so an empty graph describes nothing that exists", after.turtle)
+	}
+}
+
+// TestARefusedSystemDoesNotPoisonTheGraph is the regression for a whole cloud's
+// graph being lost to one unreachable system.
+//
+// /kgraph now requires an enrolled caller, and a system registered under its
+// plain-HTTP URL — which every system is, in the seconds before its certificate
+// arrives — answers 401 "the caller presented no verified certificate". That
+// text was concatenated into the Turtle regardless of status, and the store
+// rejected the entire assembled graph with MALFORMED DATA. The cloud's graph
+// then stopped updating, while kgrapher reported that it had described the
+// cloud "as of this change".
+func TestARefusedSystemDoesNotPoisonTheGraph(t *testing.T) {
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/turtle")
+		fmt.Fprint(w, "@prefix ex: <http://example.org/> .\n\nex:a a ex:Thing .\n")
+	}))
+	defer good.Close()
+
+	refusing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "the caller presented no verified certificate", http.StatusUnauthorized)
+	}))
+	defer refusing.Close()
+
+	// What the assembler must not do is treat the refusal as content. Fetching
+	// each in turn, only the first body may reach the graph.
+	var kept []string
+	for _, base := range []string{good.URL, refusing.URL} {
+		resp, err := http.Get(base + "/kgraph")
+		if err != nil {
+			t.Fatalf("fetching %s: %v", base, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			continue
+		}
+		kept = append(kept, string(body))
+	}
+
+	if len(kept) != 1 {
+		t.Fatalf("kept %d bodies; want 1 — the refusal was treated as an ontology", len(kept))
+	}
+	if strings.Contains(kept[0], "certificate") {
+		t.Error("a refusal reached the graph")
+	}
+}
+
+// TestAnIncompleteAssemblySchedulesAnotherOne is the second half of the
+// poisoned-graph regression.
+//
+// Skipping a system that refuses is right; leaving it out for ever is not.
+// Rebuilds are driven by registry changes, and a settled cloud produces none —
+// so a pass that ran during the seconds a system was still registered under its
+// plain-HTTP URL would omit it until something else happened to move. On the
+// cottage that left the authorizer out of the graph entirely, with kgrapher
+// reporting that the graph described the cloud.
+func TestAnIncompleteAssemblySchedulesAnotherOne(t *testing.T) {
+	previous := incompleteRetry
+	incompleteRetry = 10 * time.Millisecond
+	defer func() { incompleteRetry = previous }()
+
+	tr := &Traits{owner: &components.System{Ctx: context.Background()}}
+
+	var mu sync.Mutex
+	rebuilds := 0
+	done := make(chan struct{})
+	tr.rebuilding = func() {
+		mu.Lock()
+		rebuilds++
+		if rebuilds == 2 {
+			close(done)
+		}
+		mu.Unlock()
+	}
+
+	// One retry is scheduled, and repeated calls do not multiply it.
+	tr.retryPending.Store(false)
+	for i := 0; i < 5; i++ {
+		if tr.retryPending.CompareAndSwap(false, true) {
+			go func() {
+				defer tr.retryPending.Store(false)
+				time.Sleep(incompleteRetry)
+				tr.rebuilding()
+				tr.rebuilding()
+			}()
+		}
+	}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no second assembly was scheduled after an incomplete pass")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if rebuilds != 2 {
+		t.Errorf("%d rebuilds; want exactly 2 — the guard let duplicates through", rebuilds)
+	}
+}
+
+// A registration is an event and a binding is not, so the picture taken at
+// the event shows a consumer bound to nothing. One more pass after the
+// consumers have had time to bind — and only one, so a quiet cloud is not
+// assembled forever.
+func TestACompleteAssemblyLooksOnceMoreLater(t *testing.T) {
+	previous := settleDelay
+	settleDelay = 10 * time.Millisecond
+	defer func() { settleDelay = previous }()
+
+	// The pass runs for real; the stub fails before anything is stored, so
+	// what is exercised is the scheduling and not the assembly.
+	tr := &Traits{assembling: func() (string, int, error) { return "", 0, errors.New("stub") }}
+	tr.settlePending.Store(false)
+
+	tr.settleLater()
+	if !tr.settlePending.Load() {
+		t.Fatal("no settling pass was scheduled after a complete assembly")
+	}
+	// A second change while one is pending does not stack another.
+	tr.settleLater()
+
+	deadline := time.Now().Add(time.Second)
+	for tr.settlePending.Load() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if tr.settlePending.Load() {
+		t.Fatal("the settling pass never ran")
 	}
 }

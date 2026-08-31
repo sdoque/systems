@@ -4,7 +4,10 @@ import (
 	"context"
 	"crypto/x509/pkix"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -175,7 +178,9 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 			"Bad case, unable to convert to correct form",
 		},
 		{
-			true,
+			false,
+			// Registered afresh since 30 August 2026: an id this registrar
+			// holds for another record was issued elsewhere, before a failover.
 			func(ua *Traits) error {
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
 				if err != nil {
@@ -184,10 +189,12 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 				err = sendAddRequest(1, "testDef2", "subP", time.Now().Format(time.RFC3339), ua.requests)
 				return err
 			},
-			"Bad case, exists with different service definition",
+			"Good case (registered afresh), exists with different service definition",
 		},
 		{
-			true,
+			false,
+			// Registered afresh since 30 August 2026: an id this registrar
+			// holds for another record was issued elsewhere, before a failover.
 			func(ua *Traits) error {
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
 				if err != nil {
@@ -196,10 +203,12 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 				err = sendAddRequest(1, "testDef", "subPa", time.Now().Format(time.RFC3339), ua.requests)
 				return err
 			},
-			"Bad case, exists with different subpath",
+			"Good case (registered afresh), exists with different subpath",
 		},
 		{
-			true,
+			false,
+			// Registered afresh since 30 August 2026: an id this registrar
+			// holds for another record was issued elsewhere, before a failover.
 			func(ua *Traits) error {
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ua.requests)
 				if err != nil {
@@ -208,10 +217,12 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 				err = sendAddRequest(1, "testDef", "subP", "", ua.requests)
 				return err
 			},
-			"Bad case, exists different creation time in updated record",
+			"Good case (registered afresh), exists different creation time in updated record",
 		},
 		{
-			true,
+			false,
+			// Registered afresh since 30 August 2026: an id this registrar
+			// holds for another record was issued elsewhere, before a failover.
 			func(ua *Traits) error {
 				ch := ua.requests
 				err := sendAddRequest(0, "testDef", "subP", time.Now().Format(time.RFC3339), ch)
@@ -221,7 +232,7 @@ func TestServiceRegistryHandlerAdd(t *testing.T) {
 				err = sendAddRequest(1, "testDef", "subP", time.Now().Add(1*time.Hour).Format(time.RFC3339), ch)
 				return err
 			},
-			"Bad case, mismatch between db- and received created field",
+			"Good case (registered afresh), mismatch between db- and received created field",
 		},
 		{
 			false,
@@ -459,13 +470,23 @@ func TestServiceRegistryHandlerDelete(t *testing.T) {
 	shutdown()
 }
 
+// held wraps a record as the registry holds it, with a timer that will never
+// fire — a test asserts on the map, not on the clock.
+func held(rec forms.ServiceRecord_v1) *registration {
+	return &registration{
+		ServiceRecord_v1: rec,
+		expires:          time.Now().Add(time.Hour),
+		expiry:           time.AfterFunc(time.Hour, func() {}),
+	}
+}
+
 // ------------------------------------------------------------------------ //
 // Help functions and structs to test FilterRecords()
 // ------------------------------------------------------------------------ //
 
 // Creates an asset multiple services in its registry
 func createRegistryWithServices(broken bool) (ua *Traits, err error) {
-	ua = &Traits{serviceRegistry: make(map[int]forms.ServiceRecord_v1)}
+	ua = &Traits{serviceRegistry: make(map[int]*registration)}
 
 	var locations = []string{"Kitchen", "Bathroom", "Livingroom"}
 
@@ -480,7 +501,7 @@ func createRegistryWithServices(broken bool) (ua *Traits, err error) {
 		if !broken {
 			form.Details = map[string][]string{"Location": {location}}
 		}
-		ua.serviceRegistry[i] = form
+		ua.serviceRegistry[i] = held(form)
 	}
 	return ua, nil
 }
@@ -525,10 +546,10 @@ func TestFilterByServiceDefAndDetails(t *testing.T) {
 }
 
 // ---------------------------------------------------- //
-// Help functions and structs to test checkExpiration()
+// Help functions and structs to test expire()
 // ---------------------------------------------------- //
 
-func createRegistryWithService(year any) (ua *Traits, cancel func(), err error) {
+func createRegistryWithService(expires time.Time) (ua *Traits, cancel func(), err error) {
 	sys := createNewSys()
 	temp, cancel := newResource(createConfAssetMultipleTraits(), &sys)
 	ua = temp.Traits.(*Traits)
@@ -537,8 +558,9 @@ func createRegistryWithService(year any) (ua *Traits, cancel func(), err error) 
 	test.SystemName = "testSystem"
 	test.ProtoPort = map[string]int{"http": 1234}
 	test.IPAddresses = []string{"999.999.999.999"}
-	test.EndOfValidity = fmt.Sprintf("%v-01-02T15:04:05Z", year)
-	ua.serviceRegistry = map[int]forms.ServiceRecord_v1{0: test}
+	reg := held(test)
+	reg.expires = expires
+	ua.serviceRegistry = map[int]*registration{0: reg}
 	return ua, cancel, err
 }
 
@@ -552,19 +574,21 @@ func TestCheckExpiration(t *testing.T) {
 	params := []checkExpirationParams{
 		{
 			true,
-			func() (ua *Traits, cancel func(), err error) { return createRegistryWithService(2099) },
+			func() (ua *Traits, cancel func(), err error) {
+				return createRegistryWithService(time.Now().Add(time.Hour))
+			},
 			"Best case, service not past expiration",
 		},
 		{
 			false,
-			func() (ua *Traits, cancel func(), err error) { return createRegistryWithService(2006) },
+			func() (ua *Traits, cancel func(), err error) {
+				return createRegistryWithService(time.Now().Add(-time.Hour))
+			},
 			"Bad case, service past expiration",
 		},
-		{
-			true,
-			func() (ua *Traits, cancel func(), err error) { return createRegistryWithService("faulty") },
-			"Bad case, time parsing problem",
-		},
+		// There is no longer a "time parsing problem" case: the registry holds
+		// the instant itself, so an unparsable expiry is not a state a record
+		// can be in.
 	}
 	for _, c := range params {
 		ua, cancel, err := c.setup()
@@ -572,7 +596,7 @@ func TestCheckExpiration(t *testing.T) {
 			t.Errorf("failed during setup: %v", err)
 		}
 
-		checkExpiration(ua, 0)
+		ua.expire(0)
 		if _, exists := ua.serviceRegistry[0]; (exists == false) && (c.servicePresent == true) {
 			t.Errorf("expected the service to be present in '%s'", c.testCase)
 		}
@@ -593,7 +617,7 @@ func createServRegistryHttp() (ua *Traits, err error) {
 	test.SystemName = "testSystem"
 	test.ProtoPort = map[string]int{"http": 1234}
 	test.IPAddresses = []string{"999.999.999.999"}
-	return &Traits{serviceRegistry: map[int]forms.ServiceRecord_v1{0: test}}, nil
+	return &Traits{serviceRegistry: map[int]*registration{0: held(test)}}, nil
 }
 
 func createServRegistryHttps() (ua *Traits, err error) {
@@ -601,7 +625,7 @@ func createServRegistryHttps() (ua *Traits, err error) {
 	test.SystemName = "testSystem"
 	test.ProtoPort = map[string]int{"https": 4321}
 	test.IPAddresses = []string{"888.888.888.888"}
-	return &Traits{serviceRegistry: map[int]forms.ServiceRecord_v1{0: test}}, nil
+	return &Traits{serviceRegistry: map[int]*registration{0: held(test)}}, nil
 }
 
 func createBrokenServRegistry() (ua *Traits, err error) {
@@ -609,7 +633,7 @@ func createBrokenServRegistry() (ua *Traits, err error) {
 	test.SystemName = "testSystem"
 	test.ProtoPort = map[string]int{"https": 0}
 	test.IPAddresses = []string{"888.888.888.888"}
-	return &Traits{serviceRegistry: map[int]forms.ServiceRecord_v1{0: test}}, nil
+	return &Traits{serviceRegistry: map[int]*registration{0: held(test)}}, nil
 }
 
 type getUniqueSystemsParams struct {
@@ -863,5 +887,195 @@ func TestTheRegistrarStreamsOnADeclaredService(t *testing.T) {
 	}
 	if serv.Definition == "" {
 		t.Error("the service has no definition, so the authorizer has no policy to apply to it")
+	}
+}
+
+// A renewal that lands while the old timer has already fired must win.
+//
+// Stop returns false once the timer's function has started, so a renewal
+// cannot rely on it; the function then arrives at expire holding a stale
+// deadline. The record it finds is the renewed one, not yet due, and it must
+// be left alone — otherwise a service that re-registered on time is deleted
+// for the lateness of the message it had just superseded.
+func TestRenewalOutlivesAFiredTimer(t *testing.T) {
+	sys := createNewSys()
+	temp, cancel := newResource(createConfAssetMultipleTraits(), &sys)
+	defer cancel()
+	ua := temp.Traits.(*Traits)
+
+	var rec forms.ServiceRecord_v1
+	rec.SystemName = "testSystem"
+	rec.ServiceDefinition = "temperature"
+	stale := held(rec)
+	stale.expires = time.Now().Add(-time.Minute) // the timer that fired
+	ua.serviceRegistry = map[int]*registration{7: stale}
+
+	// The renewal replaces the entry before the fired timer reaches expire.
+	renewed := held(rec)
+	ua.mu.Lock()
+	ua.serviceRegistry[7] = renewed
+	ua.mu.Unlock()
+
+	ua.expire(7) // the old timer's function, arriving late
+	if _, present := ua.serviceRegistry[7]; !present {
+		t.Fatal("a renewed registration was deleted by the timer it had replaced")
+	}
+
+	// And a registration that genuinely lapsed still goes.
+	renewed.expires = time.Now().Add(-time.Second)
+	ua.expire(7)
+	if _, present := ua.serviceRegistry[7]; present {
+		t.Fatal("a lapsed registration survived expire")
+	}
+}
+
+// A verified system may remove only what it registered.
+//
+// The registry's services are core-mission and so exempt from tokens, which
+// left any enrolled system free to delete any other's registration by
+// guessing a number. An unverified caller is not checked — a cloud with no CA
+// has nothing to check against — which is the case the httptest requests
+// above exercise; this one supplies an owner.
+func TestOnlyTheRegistrantMayDelete(t *testing.T) {
+	sys := createNewSys()
+	temp, cancel := newResource(createConfAssetMultipleTraits(), &sys)
+	defer cancel()
+	ua := temp.Traits.(*Traits)
+
+	var rec forms.ServiceRecord_v1
+	rec.SystemName = "thermostat"
+	rec.ServiceDefinition = "setpoint"
+	ua.mu.Lock()
+	ua.serviceRegistry = map[int]*registration{5: held(rec)}
+	ua.mu.Unlock()
+
+	ask := func(owner string) error {
+		req := ServiceRegistryRequest{Action: "delete", Id: 5, Owner: owner, Error: make(chan error)}
+		ua.requests <- req
+		return <-req.Error
+	}
+
+	if err := ask("collector"); !errors.Is(err, errNotOwner) {
+		t.Fatalf("another system deleted the thermostat's registration: err=%v", err)
+	}
+	if _, present := ua.serviceRegistry[5]; !present {
+		t.Fatal("the record was removed by a system that did not own it")
+	}
+	if err := ask("thermostat"); err != nil {
+		t.Fatalf("the owner could not delete its own registration: %v", err)
+	}
+	if _, present := ua.serviceRegistry[5]; present {
+		t.Fatal("the owner's delete did not remove the record")
+	}
+}
+
+// After a failover, a system renews with the id the old lead gave it. The new
+// lead may hold that number for someone else, and it must treat the renewal as
+// the registration it never saw rather than refuse it.
+func TestARenewalWithAForeignIdIsRegisteredAfresh(t *testing.T) {
+	sys := createNewSys()
+	temp, cancel := newResource(createConfAssetMultipleTraits(), &sys)
+	defer cancel()
+	ua := temp.Traits.(*Traits)
+
+	other := forms.ServiceRecord_v1{SystemName: "parallax", ServiceDefinition: "rotation", SubPath: "Servo_1/rotation", Created: "2026-08-30T15:00:00Z", RegLife: 30}
+	ua.mu.Lock()
+	ua.serviceRegistry = map[int]*registration{13: held(other)}
+	ua.mu.Unlock()
+
+	renewal := &forms.ServiceRecord_v1{Id: 13, SystemName: "collector", ServiceDefinition: "mquery", SubPath: "demo/mquery", Created: "2026-08-30T14:00:00Z", RegLife: 30}
+	req := ServiceRegistryRequest{Action: "add", Record: renewal, Error: make(chan error)}
+	ua.requests <- req
+	if err := <-req.Error; err != nil {
+		t.Fatalf("a renewal with a foreign id was refused: %v", err)
+	}
+	if renewal.Id == 13 || renewal.Id == 0 {
+		t.Fatalf("the renewal kept id %d instead of being registered afresh", renewal.Id)
+	}
+	if got := ua.serviceRegistry[13]; got == nil || got.SystemName != "parallax" {
+		t.Fatal("the record that legitimately held id 13 was disturbed")
+	}
+}
+
+// A registrar of another cloud is not a peer: the election refuses it and
+// this registrar leads its own cloud. One of the same cloud that leads is
+// deferred to.
+func TestElectionRefusesAPeerOfAnotherCloud(t *testing.T) {
+	answer := func(cloud string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set(components.LocalCloudHeader, cloud)
+			fmt.Fprint(w, components.ServiceRegistrarLeader+" now")
+		}))
+	}
+	settle := func(tr *Traits) *registrarRole {
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if r := tr.role.Load(); r != nil {
+				return r
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatal("the election never decided")
+		return nil
+	}
+	peerOf := func(cloud string, peer *httptest.Server) (*Traits, func()) {
+		sys := createNewSys()
+		if sys.Husk.Details == nil {
+			sys.Husk.Details = map[string][]string{}
+		}
+		sys.Husk.Details["LocalCloud"] = []string{cloud}
+		sys.Husk.CoreS = append(sys.Husk.CoreS, &components.CoreSystem{Name: components.ServiceRegistrarName, Url: peer.URL})
+		temp, cancel := newResource(createConfAssetMultipleTraits(), &sys)
+		return temp.Traits.(*Traits), cancel
+	}
+
+	other := answer("Cottage")
+	defer other.Close()
+	tr, cancel := peerOf("Home", other)
+	if role := settle(tr); !role.leading {
+		t.Fatal("deferred to a registrar that declares another cloud")
+	}
+	if tr.foreign[other.URL] != "Cottage" {
+		t.Fatal("the foreign registrar was not recorded as such")
+	}
+	cancel()
+
+	same := answer("Home")
+	defer same.Close()
+	tr, cancel = peerOf("Home", same)
+	defer cancel()
+	if role := settle(tr); role.leading {
+		t.Fatal("took the lead over a registrar of the same cloud that leads")
+	}
+}
+
+// One record per service per system: a fresh registration of a service the
+// registrar already holds renews the record it has, and does not make a second.
+func TestAFreshRegistrationOfAHeldServiceRenewsIt(t *testing.T) {
+	sys := createNewSys()
+	temp, cancel := newResource(createConfAssetMultipleTraits(), &sys)
+	defer cancel()
+	ua := temp.Traits.(*Traits)
+
+	first := &forms.ServiceRecord_v1{SystemName: "thermostat", ServiceDefinition: "setpoint", SubPath: "controller_1/setpoint", RegLife: 30}
+	req := ServiceRegistryRequest{Action: "add", Record: first, Error: make(chan error)}
+	ua.requests <- req
+	if err := <-req.Error; err != nil {
+		t.Fatal(err)
+	}
+	again := &forms.ServiceRecord_v1{SystemName: "thermostat", ServiceDefinition: "setpoint", SubPath: "controller_1/setpoint", RegLife: 30}
+	req = ServiceRegistryRequest{Action: "add", Record: again, Error: make(chan error)}
+	ua.requests <- req
+	if err := <-req.Error; err != nil {
+		t.Fatal(err)
+	}
+	if again.Id != first.Id {
+		t.Fatalf("a second record (%d) was made beside the first (%d)", again.Id, first.Id)
+	}
+	ua.mu.Lock()
+	n := len(ua.serviceRegistry)
+	ua.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("registry holds %d records for one service", n)
 	}
 }

@@ -115,9 +115,11 @@ func initTemplate() *components.UnitAsset {
 		Description: "returns the result of the last AAS sync without triggering a new one (GET)",
 	}
 	return &components.UnitAsset{
-		Name:    "assembler",
-		Mission: components.MissionAggregation,
-		Details: map[string][]string{"Type": {"AAS Bridge"}, "Mobility": {components.MobilityTethered}, "TetheredTo": {"GraphDB", "FA3ST"}},
+		Name:       "assembler",
+		Mission:    components.MissionAggregation,
+		Mobility:   components.MobilityTethered,
+		TetheredTo: []string{"GraphDB", "FA3ST"},
+		Details:    map[string][]string{"Type": {"AAS Bridge"}},
 		ServicesMap: components.Services{
 			syncSvc.SubPath:   &syncSvc,
 			statusSvc.SubPath: &statusSvc,

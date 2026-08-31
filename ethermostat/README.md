@@ -49,8 +49,46 @@ Clamped to [0, 100]. The plug is switched **ON** when `output > 50` (i.e. room t
 | `setPoint`       | `20.0`  | Target temperature (°C)       |
 | `samplingPeriod` | `10`    | Control loop period (seconds) |
 | `kp`             | `5.0`   | Proportional gain             |
+| `frostGuardMinutes` | `30` | Minutes blind before the heat is forced on; `0` disables |
 
 With the defaults, the plug turns on when the room is more than 0 °C below setpoint and off when it is at or above setpoint.
+
+## The frost guard
+
+Losing the temperature leaves the loop with nothing to act on. This system used
+to return and hold the plug wherever it was, which is the right instinct while a
+plug remembers its state — and the wrong one here, for a reason that only shows
+up on the day it matters.
+
+A ZigBee smart plug returns to **off** when mains power is restored. The
+temperatures come from the Netatmo cloud, over a domestic internet connection,
+and after a power cut the router has just rebooted too. So the reading is
+missing at exactly the moment the plugs are off and the house is cooling, and
+the state being faithfully held is "off". Held for ever, in a Norrbotten winter,
+that is burst pipes.
+
+After `frostGuardMinutes` of *continuous* blindness the controller drives the
+plug on and keeps it there until a reading returns:
+
+    ethermostat KitchenHeater: no temperature for 30m2s — driving the heat ON
+    and holding it there until a reading returns (frost guard)
+
+A single failed poll changes nothing; the grace period has to elapse. Recovery
+needs no special case — the next successful read runs the ordinary control law
+and sets the plug from the measurement, so a warm room switches off immediately:
+
+    ethermostat KitchenHeater: a temperature arrived after 31m4s — frost guard
+    released, normal control resumes
+
+**The cost is real and worth stating.** A sensor that dies in July leaves the
+heaters running until somebody notices, and that is paid for in electricity. The
+alternative is paid for in plumbing. Set `frostGuardMinutes` to `0` to turn it
+off — for a summer house with the water drained, that may well be right.
+
+A configuration written before this existed has no `frostGuardMinutes` key, and
+unmarshals as the default rather than as zero. That is deliberate: an upgraded
+controller should gain the protection without anyone editing a file, and an
+operator who wants it off has to say so.
 
 ## Flattener integration
 
@@ -68,7 +106,7 @@ eThermostat registers its `setpoint` services with the Arrowhead service mesh. [
       "mission": "control",
       "details": { "FunctionalLocation": ["Kitchen"] },
       "traits": [
-        { "setPoint": 20.0, "samplingPeriod": 10, "kp": 5.0 }
+        { "setPoint": 20.0, "samplingPeriod": 10, "kp": 5.0, "frostGuardMinutes": 30 }
       ],
       "services": [
         { "definition": "setpoint",  "subpath": "setpoint",  "registrationPeriod": 120,

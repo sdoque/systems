@@ -18,12 +18,14 @@ import (
 // attestation and not merely a tolerated one.
 //
 // PROCESS_QUERY_LIMITED_INFORMATION is enough to ask, and is granted for a
-// process of the same user without any privilege. Another user's process
-// answers access denied. What an elevated process of the same user answers is
-// not known yet: the limited query is the one Windows grants across integrity
-// levels, so a system started with "Run as administrator" may well attest —
-// to be found out on the first Windows run, and if it does, refusing it is a
-// token-integrity check and not this error.
+// process of the same user without any privilege — including one of higher
+// integrity. Tested 31 August 2026: an unelevated maitreD attests a system
+// started "Run as administrator". That is correct, not a gap: the whitelist is
+// the control, a non-whitelisted binary fails the hash whatever its integrity,
+// and elevation buys no cloud rights, which come from the certificate's name.
+// The boundary that holds is the user: another user's process answers access
+// denied without SeDebugPrivilege, so it is refused as a sudo-started one is
+// on Linux.
 var resolveExecutable = func(pid int) (string, error) {
 	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
 	if err != nil {

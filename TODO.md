@@ -361,6 +361,14 @@ say why here and then delete the entry.
   `v0.1.0-alpha.13` and bump the pins, as every framework change eventually
   requires; `make rpi` on the desk does not notice, which is the trap.
 
+- **DONE 31 August 2026: Windows attestation tested.** An unelevated maitreD on
+  a Windows 10 machine attested an envoy — same user — and an envoy launched
+  elevated (`/rl HIGHEST`): both approved, certificate issued, canvas served.
+  Elevation is not the boundary; the user is. What is *not* yet tested is a
+  different-user process being refused; reasoned, not measured. Left over:
+  installing the systems as a Windows service so they survive a reboot without
+  a scheduled task — the test used `schtasks`.
+
 - **Windows: what an elevated process answers is unknown** until the first run.
   The Linux rule — a sudo-started system is refused — rests on `/proc` hiding
   another user's process; on Windows the limited query the maitreD makes is

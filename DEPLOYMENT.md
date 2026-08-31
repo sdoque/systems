@@ -245,19 +245,26 @@ Expect the first five minutes to say *not in whitelist* — see below.
 
 ## A Windows host
 
-**Status: the plan, written 30 August 2026 for a test the next day.** To be
-corrected against it.
+**Status: run for real on 31 August 2026** — a Windows 10 Education machine, an
+unelevated maitreD, an envoy attested and serving the canvas. Corrected below
+against what happened.
 
 Attestation on Windows is, if anything, better than on Linux: the kernel
 locks a running image, so the file the maitreD hashes cannot be changed under
 a live process. The maitreD asks the kernel for the process's image path
 (`QueryFullProcessImageName`) and needs no privilege for a process of the
-same user. **What an elevated process answers is not known yet.** The Linux
-rule — a `sudo`-started system is refused because its user cannot be seen —
-does not carry over by itself: the limited query the maitreD makes is the one
-Windows grants across integrity levels, so a system started with *Run as
-administrator* may well attest. Find out on the first run and record it here;
-if it attests, refusing it is a token-integrity check, not an access error.
+same user.
+
+**An elevated process of the same user attests** — the limited query is granted
+across integrity levels, so a system started *Run as administrator* is read and
+hashed like any other. This was tested: an unelevated maitreD approved an
+envoy launched with `/rl HIGHEST`. It is the right outcome and not a hole: the
+whitelist is the control, and a non-whitelisted binary fails the hash whatever
+its integrity; elevation buys an intruder no cloud rights, which come from the
+certificate's name and policy, not the OS. The boundary that does hold is the
+*user*: `PROCESS_QUERY_LIMITED_INFORMATION` on another user's process is denied
+without `SeDebugPrivilege`, so a different-user system is refused as a
+`sudo`-started one is on Linux. Integrity is not the boundary; the user is.
 
 1. **Build machine**: `make win && make whitelist`. `win` builds the portable
    systems (`PORTABLE` in the Makefile — maitreD, registrar, thermostat,

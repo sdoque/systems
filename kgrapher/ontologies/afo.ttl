@@ -1,0 +1,493 @@
+@prefix : <http://www.synecdoque.com/2025/afo#> .
+@prefix dc: <http://purl.org/dc/elements/1.1/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xml: <http://www.w3.org/XML/1998/namespace> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@base <http://www.synecdoque.com/2025/afo#> .
+
+<http://www.synecdoque.com/2025/afo> rdf:type owl:Ontology ;
+                                      owl:versionIRI <http://www.synecdoque.com/2025/afo/1.1.0> ;
+                                      owl:versionInfo "1.1.0" ;
+                                      dc:creator "Oskar Wintercorn" ;
+                                      dc:description "The Arrowhead Framework Ontology (AFO) provides a semantic model for Arrowhead local cloud architectures, including systems, services, hosts, and their relationships. It aims to enable semantic interoperability in industrial automation and cyber-physical systems." ;
+                                      rdfs:label "Arrowhead Framework Ontology" .
+
+
+#################################################################
+#    Object Properties
+#################################################################
+
+###  http://www.synecdoque.com/2025/afo#communicatesOver
+:communicatesOver rdf:type owl:ObjectProperty ;
+                  owl:inverseOf :endpointOfHusk ;
+                  rdfs:domain :Husk ;
+                  rdfs:range :Endpoint ;
+                  rdfs:label "communicates over" ;
+                  rdfs:comment "Relates a Husk to the Endpoint through which it communicates." .
+
+
+###  http://www.synecdoque.com/2025/afo#consumes
+:consumes rdf:type owl:ObjectProperty ;
+          owl:inverseOf :provides ;
+          rdfs:domain :ConsumedService ;
+          rdfs:range :Service ;
+          rdfs:label "consumes" ;
+          rdfs:comment "Relates a ConsumedService to the Service it consumes." .
+
+
+###  http://www.synecdoque.com/2025/afo#consumesService
+:consumesService rdf:type owl:ObjectProperty ;
+                 owl:inverseOf :serviceConsumedBy ;
+                 rdfs:domain :UnitAsset ;
+                 rdfs:range :ConsumedService ;
+                 rdfs:label "consumes service" ;
+                 rdfs:comment "Relates a UnitAsset to a ConsumedService that it is consuming." .
+
+
+###  http://www.synecdoque.com/2025/afo#consumingFromSystem
+:consumingFromSystem rdf:type owl:ObjectProperty ;
+                     owl:inverseOf :providingToSystem ;
+                     owl:propertyChainAxiom ( :hasUnitAsset
+                                              :consumesService
+                                              :consumes
+                                              :serviceProvidedBy
+                                              :isUnitAssetOf
+                                            ) ;
+                     rdfs:label "consuming from system" ;
+                     rdfs:comment "Relates a System to another System from which it consumes a service. Derived via the property chain: hasUnitAsset ∘ consumesService ∘ consumes ∘ serviceProvidedBy ∘ isUnitAssetOf." .
+
+
+###  http://www.synecdoque.com/2025/afo#contains
+:contains rdf:type owl:ObjectProperty ;
+          owl:inverseOf :isContainedIn ;
+          rdfs:domain :LocalCloud ;
+          rdfs:range :System ;
+          rdfs:label "contains" ;
+          rdfs:comment "Relates a LocalCloud to a System it contains." .
+
+
+###  http://www.synecdoque.com/2025/afo#endpointOfHusk
+:endpointOfHusk rdf:type owl:ObjectProperty ;
+                rdfs:label "endpoint of husk" ;
+                rdfs:comment "Relates an Endpoint to the Husk that communicates over it. Inverse of communicatesOver." .
+
+
+###  http://www.synecdoque.com/2025/afo#hasDeveloper
+:hasDeveloper rdf:type owl:ObjectProperty ;
+              rdfs:label "has developer" ;
+              rdfs:comment "Relates a resource to its developer or development team." .
+
+
+###  http://www.synecdoque.com/2025/afo#hasHusk
+:hasHusk rdf:type owl:ObjectProperty ;
+         owl:inverseOf :isHuskOf ;
+         rdfs:domain :System ;
+         rdfs:range :Husk ;
+         rdfs:label "has husk" ;
+         rdfs:comment "Relates a System to its Husk, the runtime container responsible for communication and hosting." .
+
+
+###  http://www.synecdoque.com/2025/afo#hasServer
+:hasServer rdf:type owl:ObjectProperty ;
+           owl:inverseOf :isServerOf ;
+           rdfs:domain :Husk ;
+           rdfs:range :Server ;
+           rdfs:label "has server" ;
+           rdfs:comment "Relates a Husk to the Server it uses for handling HTTP/HTTPS requests." .
+
+
+###  http://www.synecdoque.com/2025/afo#hasUnitAsset
+:hasUnitAsset rdf:type owl:ObjectProperty ;
+              owl:inverseOf :isUnitAssetOf ;
+              rdfs:domain :System ;
+              rdfs:range :UnitAsset ;
+              rdfs:label "has unit asset" ;
+              rdfs:comment "Relates a System to its UnitAsset, the functional component that provides and consumes services." .
+
+
+###  http://www.synecdoque.com/2025/afo#hostingEndpoint
+:hostingEndpoint rdf:type owl:ObjectProperty ;
+                 owl:inverseOf :onHost ;
+                 rdfs:label "hosting endpoint" ;
+                 rdfs:comment "Relates a Host to an Endpoint it hosts. Inverse of onHost." .
+
+
+###  http://www.synecdoque.com/2025/afo#isContainedIn
+:isContainedIn rdf:type owl:ObjectProperty ;
+               rdfs:label "is contained in" ;
+               rdfs:comment "Relates a System to the LocalCloud that contains it. Inverse of contains." .
+
+
+###  http://www.synecdoque.com/2025/afo#isHostOf
+:isHostOf rdf:type owl:ObjectProperty ;
+          owl:inverseOf :runsOnHost ;
+          rdfs:label "is host of" ;
+          rdfs:comment "Relates a Host to a Husk that runs on it. Inverse of runsOnHost." .
+
+
+###  http://www.synecdoque.com/2025/afo#isHuskOf
+:isHuskOf rdf:type owl:ObjectProperty ;
+          rdfs:label "is husk of" ;
+          rdfs:comment "Relates a Husk to the System it belongs to. Inverse of hasHusk." .
+
+
+###  http://www.synecdoque.com/2025/afo#isServerOf
+:isServerOf rdf:type owl:ObjectProperty ;
+            rdfs:label "is server of" ;
+            rdfs:comment "Relates a Server to the Husk it belongs to. Inverse of hasServer." .
+
+
+###  http://www.synecdoque.com/2025/afo#isUnitAssetOf
+:isUnitAssetOf rdf:type owl:ObjectProperty ;
+               rdfs:label "is unit asset of" ;
+               rdfs:comment "Relates a UnitAsset to the System it belongs to. Inverse of hasUnitAsset." .
+
+
+###  http://www.synecdoque.com/2025/afo#onHost
+:onHost rdf:type owl:ObjectProperty ;
+        rdfs:domain :Endpoint ;
+        rdfs:range :Host ;
+        rdfs:label "on host" ;
+        rdfs:comment "Relates an Endpoint to the Host it is deployed on." .
+
+
+###  http://www.synecdoque.com/2025/afo#providesService
+:provides rdf:type owl:ObjectProperty ;
+        rdfs:domain :ProvidedService ;
+        rdfs:range :ConsumedService ;
+        rdfs:label "provides" ;
+        rdfs:comment "provides" .
+
+###  http://www.synecdoque.com/2025/afo#providesService
+:providesService rdf:type owl:ObjectProperty ;
+                 owl:inverseOf :serviceProvidedBy ;
+                 rdfs:domain :UnitAsset ;
+                 rdfs:range :Service ;
+                 rdfs:label "provides service" ;
+                 rdfs:comment "Relates a UnitAsset to a Service it provides." .
+
+
+###  http://www.synecdoque.com/2025/afo#providingToSystem
+:providingToSystem rdf:type owl:ObjectProperty ;
+                   rdfs:label "providing to system" ;
+                   rdfs:comment "Relates a System to another System it provides services to. Inverse of consumingFromSystem." .
+
+
+###  http://www.synecdoque.com/2025/afo#runsOnHost
+:runsOnHost rdf:type owl:ObjectProperty ;
+            rdfs:domain :Husk ;
+            rdfs:range :Host ;
+            rdfs:label "runs on host" ;
+            rdfs:comment "Relates a Husk to the Host it runs on." .
+
+
+###  http://www.synecdoque.com/2025/afo#serviceConsumedBy
+:serviceConsumedBy rdf:type owl:ObjectProperty ;
+                   rdfs:label "service consumed by" ;
+                   rdfs:comment "Relates a ConsumedService to the UnitAsset consuming it. Inverse of consumesService." .
+
+
+###  http://www.synecdoque.com/2025/afo#serviceProvidedBy
+:serviceProvidedBy rdf:type owl:ObjectProperty ;
+                   rdfs:label "service provided by" ;
+                   rdfs:comment "Relates a Service to the UnitAsset providing it. Inverse of providesService." .
+
+
+#################################################################
+#    Data properties
+#################################################################
+
+###  http://www.synecdoque.com/2025/afo#hasIPAddress
+:hasIPAddress rdf:type owl:DatatypeProperty ;
+              rdfs:domain :Host ;
+              rdfs:range xsd:string ;
+              rdfs:label "has IP address" ;
+              rdfs:comment "The IP address of a Host." .
+
+
+###  http://www.synecdoque.com/2025/afo#hasName
+:hasName rdf:type owl:DatatypeProperty ;
+         rdfs:range xsd:string ;
+         rdfs:label "has name" ;
+         rdfs:comment "The name of a resource, used for identification within the Arrowhead framework." .
+
+
+###  http://www.synecdoque.com/2025/afo#hasRegistrationPeriod
+:hasRegistrationPeriod rdf:type owl:DatatypeProperty ;
+                       rdfs:domain :ProvidedService ;
+                       rdfs:range xsd:nonNegativeInteger ;
+                       rdfs:label "has registration period" ;
+                       rdfs:comment "The period (in seconds) for which a ProvidedService is registered in the Service Registrar before requiring renewal." .
+
+
+###  http://www.synecdoque.com/2025/afo#hasServiceDefinition
+:hasServiceDefinition rdf:type owl:DatatypeProperty ;
+                      rdfs:domain :ProvidedService ;
+                      rdfs:range xsd:string ;
+                      rdfs:label "has service definition" ;
+                      rdfs:comment "The service definition identifier of a ProvidedService, used for discovery in the Arrowhead framework." .
+
+
+###  http://www.synecdoque.com/2025/afo#hasUrl
+:hasUrl rdf:type owl:DatatypeProperty ;
+        rdfs:domain :ProvidedService ;
+        rdfs:range xsd:anyURI ;
+        rdfs:label "has URL" ;
+        rdfs:comment "The URL at which a ProvidedService is accessible." .
+
+
+###  http://www.synecdoque.com/2025/afo#isSubscribable
+:isSubscribable rdf:type owl:DatatypeProperty ;
+                rdfs:domain :ProvidedService ;
+                rdfs:range xsd:boolean ;
+                rdfs:label "is subscribable" ;
+                rdfs:comment "Indicates whether a ProvidedService supports event-based subscriptions." .
+
+
+###  http://www.synecdoque.com/2025/afo#usesPort
+:usesPort rdf:type owl:DatatypeProperty ;
+          rdfs:domain :Endpoint ;
+          rdfs:range xsd:nonNegativeInteger ;
+          rdfs:label "uses port" ;
+          rdfs:comment "The network port number used by an Endpoint." .
+
+
+###  http://www.synecdoque.com/2025/afo#usesProtocol
+:usesProtocol rdf:type owl:DatatypeProperty ;
+              rdfs:domain :Endpoint ;
+              rdfs:range xsd:string ;
+              rdfs:label "uses protocol" ;
+              rdfs:comment "The communication protocol (e.g. HTTP, HTTPS) used by an Endpoint." .
+
+
+#################################################################
+#    Classes
+#################################################################
+
+###  http://www.synecdoque.com/2025/afo#CertificateAuthority
+:CertificateAuthority rdf:type owl:Class ;
+                      rdfs:subClassOf :System ;
+                      rdfs:label "Certificate Authority" ;
+                      rdfs:comment "A core Arrowhead System responsible for issuing and managing certificates that enable secure communication within a SecureLocalCloud." .
+
+
+###  http://www.synecdoque.com/2025/afo#ConsumedService
+:ConsumedService rdf:type owl:Class ;
+                 rdfs:subClassOf [ owl:intersectionOf ( :Service
+                                                        [ rdf:type owl:Restriction ;
+                                                          owl:onProperty :serviceConsumedBy ;
+                                                          owl:minQualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                                                          owl:onClass :UnitAsset
+                                                        ]
+                                                      ) ;
+                                   rdf:type owl:Class
+                                 ] ;
+                 owl:disjointWith :ProvidedService ;
+                 rdfs:label "Consumed Service" ;
+                 rdfs:comment "A Service that is consumed by at least one UnitAsset. Disjoint with ProvidedService." .
+
+
+###  http://www.synecdoque.com/2025/afo#Endpoint
+:Endpoint rdf:type owl:Class ;
+          rdfs:subClassOf [ owl:intersectionOf ( [ rdf:type owl:Restriction ;
+                                                   owl:onProperty :usesPort ;
+                                                   owl:minQualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                                                   owl:onDataRange xsd:integer
+                                                 ]
+                                                 [ rdf:type owl:Restriction ;
+                                                   owl:onProperty :usesProtocol ;
+                                                   owl:minQualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                                                   owl:onDataRange xsd:string
+                                                 ]
+                                               ) ;
+                            rdf:type owl:Class
+                          ] ;
+          rdfs:label "Endpoint" ;
+          rdfs:comment "A network endpoint defined by at least one port and one protocol, hosted on a Host. Used by a Husk to expose communication interfaces." .
+
+
+###  http://www.synecdoque.com/2025/afo#Host
+:Host rdf:type owl:Class ;
+      rdfs:label "Host" ;
+      rdfs:comment "A physical or virtual machine that hosts Endpoints and runs Husks." .
+
+
+###  http://www.synecdoque.com/2025/afo#Husk
+:Husk rdf:type owl:Class ;
+      rdfs:subClassOf [ owl:intersectionOf ( [ rdf:type owl:Restriction ;
+                                               owl:onProperty :hasServer ;
+                                               owl:minQualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                                               owl:onClass :Server
+                                             ]
+                                             [ rdf:type owl:Restriction ;
+                                               owl:onProperty :runsOnHost ;
+                                               owl:minQualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                                               owl:onClass :Host
+                                             ]
+                                           ) ;
+                        rdf:type owl:Class
+                      ] ;
+      rdfs:label "Husk" ;
+      rdfs:comment "The runtime container of an Arrowhead System in the mbaigo framework. A Husk manages communication by hosting Endpoints and running on a Host. It contains at least one Server and runs on at least one Host." .
+
+
+###  http://www.synecdoque.com/2025/afo#LocalCloud
+:LocalCloud rdf:type owl:Class ;
+            rdfs:subClassOf [ owl:intersectionOf ( [ rdf:type owl:Restriction ;
+                                                     owl:onProperty :contains ;
+                                                     owl:minQualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                                                     owl:onClass :Orchestrator
+                                                   ]
+                                                   [ rdf:type owl:Restriction ;
+                                                     owl:onProperty :contains ;
+                                                     owl:minQualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                                                     owl:onClass :ServiceRegistrar
+                                                   ]
+                                                 ) ;
+                              rdf:type owl:Class
+                            ] ;
+            rdfs:label "Local Cloud" ;
+            rdfs:comment "An Arrowhead local cloud: a set of Systems within a defined administrative domain. Must contain at least one Orchestrator and one ServiceRegistrar." .
+
+
+###  http://www.synecdoque.com/2025/afo#Orchestrator
+:Orchestrator rdf:type owl:Class ;
+              rdfs:subClassOf :System ;
+              rdfs:label "Orchestrator" ;
+              rdfs:comment "A core Arrowhead System responsible for service orchestration — matching service consumers to appropriate service providers within the local cloud." .
+
+
+###  http://www.synecdoque.com/2025/afo#ProvidedService
+:ProvidedService rdf:type owl:Class ;
+                 rdfs:subClassOf [ owl:intersectionOf ( :Service
+                                                        [ rdf:type owl:Restriction ;
+                                                          owl:onProperty :serviceProvidedBy ;
+                                                          owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                                                          owl:onClass :UnitAsset
+                                                        ]
+                                                      ) ;
+                                   rdf:type owl:Class
+                                 ] ;
+                 rdfs:label "Provided Service" ;
+                 rdfs:comment "A Service that is provided by exactly one UnitAsset. Disjoint with ConsumedService." .
+
+
+###  http://www.synecdoque.com/2025/afo#ResilientLocalCloud
+:ResilientLocalCloud rdf:type owl:Class ;
+                     rdfs:subClassOf [ owl:intersectionOf ( :LocalCloud
+                                                            [ rdf:type owl:Restriction ;
+                                                              owl:onProperty :contains ;
+                                                              owl:minQualifiedCardinality "2"^^xsd:nonNegativeInteger ;
+                                                              owl:onClass :Orchestrator
+                                                            ]
+                                                            [ rdf:type owl:Restriction ;
+                                                              owl:onProperty :contains ;
+                                                              owl:minQualifiedCardinality "2"^^xsd:nonNegativeInteger ;
+                                                              owl:onClass :ServiceRegistrar
+                                                            ]
+                                                          ) ;
+                                       rdf:type owl:Class
+                                     ] ;
+                     rdfs:label "Resilient Local Cloud" ;
+                     rdfs:comment "A LocalCloud with at least two Orchestrators and two ServiceRegistrars, providing fault tolerance through redundancy." .
+
+
+###  http://www.synecdoque.com/2025/afo#SecureLocalCloud
+:SecureLocalCloud rdf:type owl:Class ;
+                  rdfs:subClassOf [ owl:intersectionOf ( :LocalCloud
+                                                         [ rdf:type owl:Restriction ;
+                                                           owl:onProperty :contains ;
+                                                           owl:minQualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                                                           owl:onClass :CertificateAuthority
+                                                         ]
+                                                       ) ;
+                                    rdf:type owl:Class
+                                  ] ;
+                  rdfs:label "Secure Local Cloud" ;
+                  rdfs:comment "A LocalCloud that includes at least one CertificateAuthority, enabling certificate-based secure communication between Systems." .
+
+
+###  http://www.synecdoque.com/2025/afo#Server
+:Server rdf:type owl:Class ;
+        rdfs:label "Server" ;
+        rdfs:comment "The HTTP/HTTPS server component within a Husk, responsible for handling incoming requests." .
+
+
+###  http://www.synecdoque.com/2025/afo#Service
+:Service rdf:type owl:Class ;
+         rdfs:label "Service" ;
+         rdfs:comment "A service offered or consumed within the Arrowhead framework. The superclass of ProvidedService and ConsumedService." .
+
+
+###  http://www.synecdoque.com/2025/afo#ServiceRegistrar
+:ServiceRegistrar rdf:type owl:Class ;
+                  rdfs:subClassOf [ owl:intersectionOf ( :System
+                                                         [ rdf:type owl:Restriction ;
+                                                           owl:onProperty :hasName ;
+                                                           owl:hasValue "serviceregistrar"
+                                                         ]
+                                                       ) ;
+                                    rdf:type owl:Class
+                                  ] ;
+                  rdfs:label "Service Registrar" ;
+                  rdfs:comment "A core Arrowhead System responsible for registering and discovering services within the local cloud. Identified by the system name 'serviceregistrar'." .
+
+
+###  http://www.synecdoque.com/2025/afo#System
+:System rdf:type owl:Class ;
+        rdfs:subClassOf [ owl:intersectionOf ( [ rdf:type owl:Restriction ;
+                                                 owl:onProperty :hasHusk ;
+                                                 owl:minQualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                                                 owl:onClass :Husk
+                                               ]
+                                               [ rdf:type owl:Restriction ;
+                                                 owl:onProperty :hasUnitAsset ;
+                                                 owl:minQualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                                                 owl:onClass :UnitAsset
+                                               ]
+                                             ) ;
+                          rdf:type owl:Class
+                        ] ;
+        rdfs:label "System" ;
+        rdfs:comment "An Arrowhead System: the primary participant in a local cloud. Consists of at least one Husk (runtime container) and at least one UnitAsset (functional component)." .
+
+
+###  http://www.synecdoque.com/2025/afo#UnitAsset
+:UnitAsset rdf:type owl:Class ;
+           rdfs:subClassOf [ rdf:type owl:Restriction ;
+                             owl:onProperty :providesService ;
+                             owl:minQualifiedCardinality "1"^^xsd:nonNegativeInteger ;
+                             owl:onClass :Service
+                           ] ;
+           rdfs:label "Unit Asset" ;
+           rdfs:comment "The functional component of an Arrowhead System. A UnitAsset encapsulates the domain logic and must provide at least one Service. It may also consume services from other Systems." .
+
+
+#################################################################
+#    General axioms
+#################################################################
+
+[ rdf:type owl:AllDisjointClasses ;
+  owl:members ( :CertificateAuthority
+                :Orchestrator
+                :ServiceRegistrar
+              )
+] .
+
+
+[ rdf:type owl:AllDisjointClasses ;
+  owl:members ( :Endpoint
+                :Host
+                :Husk
+                :LocalCloud
+                :Server
+                :Service
+                :System
+                :UnitAsset
+              )
+] .
+
+
+###  Generated by the OWL API (version 4.5.26.2023-07-17T20:34:13Z) https://github.com/owlcs/owlapi

@@ -1,0 +1,272 @@
+@prefix alc: <http://www.synecdoque.com/lcloud/> .
+@prefix afo: <http://www.synecdoque.com/2025/afo#> .
+@prefix bot: <https://w3id.org/bot#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<http://www.synecdoque.com/lcloud/> rdf:type owl:Ontology ;
+    owl:versionInfo "0.1.0" ;
+    rdfs:label "Local Cloud Ontology (example)" ;
+    dcterms:modified "2026-08-16"^^xsd:date ;
+    rdfs:comment """The vocabulary a local cloud mints for itself, and an example of what belongs in it.
+
+The Arrowhead Framework Ontology (AFO) describes what every local cloud has in common: systems, husks, hosts, services, endpoints. It is another project's work, versioned and cited independently, and a term written into its namespace but absent from it is one no reasoner can interpret and its shapes cannot validate. Everything a particular cloud knows that AFO does not is therefore minted here instead.
+
+Two kinds of thing are in that position. The first is the detail keys an operator writes in systemconfig.json, which the framework turns into predicates: hasRole, hasDisplayName, hasModuleName and the rest below are in this cloud's graph today because somebody put them in a configuration file. The second is what the cloud is deployed *into* — the building, its rooms, and which room an asset acts in. That is not framework vocabulary at all, and it is the more interesting half, because it is where the cloud graph meets the building graph.
+
+This file is an example rather than a specification. A different cloud in a different plant would keep the property definitions and replace the topology wholesale.""" ;
+    rdfs:seeAlso <https://w3id.org/bot#> ;
+    rdfs:seeAlso <https://doi.org/10.1109/OJIES.2026.3693084> .
+
+
+#################################################################
+#    Building topology
+#
+#    Aligned to the Building Topology Ontology (BOT), which is what
+#    the Linked Building Data tooling produces from an IFC model. The
+#    cottage already has an IFC file; running it through that toolchain
+#    yields bot:Building, bot:Storey and bot:Space individuals. Making
+#    alc:Room a subclass of bot:Space means the rooms named here and the
+#    spaces extracted from the IFC are the same things, so a query can
+#    cross from a thermostat to the room it heats to the geometry of
+#    that room without anyone writing a bridge.
+#################################################################
+
+###  http://www.synecdoque.com/lcloud/Room
+alc:Room rdf:type owl:Class ;
+    rdfs:subClassOf bot:Space ;
+    rdfs:label "Room" ;
+    rdfs:comment "A space in the building that a person would name. It is the unit an operator thinks in when commissioning — a heater is put in the kitchen, not in a coordinate — and therefore the unit a functional location refers to." .
+
+
+###  http://www.synecdoque.com/lcloud/Bathroom
+alc:Bathroom rdf:type owl:Class ;
+    rdfs:subClassOf alc:Room ;
+    rdfs:label "Bathroom" ;
+    rdfs:comment "A room containing sanitary fixtures. Disjoint with every other kind of room: a bathroom is not incidentally also something else, and the distinction carries consequences beyond naming — humidity, ventilation and electrical zoning rules all follow from it." .
+
+
+###  http://www.synecdoque.com/lcloud/Bedroom
+alc:Bedroom rdf:type owl:Class ;
+    rdfs:subClassOf alc:Room ;
+    rdfs:label "Bedroom" .
+
+
+###  http://www.synecdoque.com/lcloud/DiningRoom
+alc:DiningRoom rdf:type owl:Class ;
+    rdfs:subClassOf alc:Room ;
+    rdfs:label "Dining room" ;
+    rdfs:comment "A room in which meals are eaten. Deliberately not disjoint with alc:LivingRoom: in a cottage the two are frequently one room, and an individual may be asserted as both. Declaring every room type pairwise disjoint would have made that arrangement inconsistent rather than merely unusual, and a reasoner would then report a contradiction about a building that is standing." .
+
+
+###  http://www.synecdoque.com/lcloud/Hall
+alc:Hall rdf:type owl:Class ;
+    rdfs:subClassOf alc:Room ;
+    rdfs:label "Hall" .
+
+
+###  http://www.synecdoque.com/lcloud/Kitchen
+alc:Kitchen rdf:type owl:Class ;
+    rdfs:subClassOf alc:Room ;
+    rdfs:label "Kitchen" ;
+    rdfs:comment "A room in which food is prepared. Disjoint with the bathroom and the bedroom; not disjoint with the dining room, which is the other pair that is commonly one space." .
+
+
+###  http://www.synecdoque.com/lcloud/LivingRoom
+alc:LivingRoom rdf:type owl:Class ;
+    rdfs:subClassOf alc:Room ;
+    rdfs:label "Living room" .
+
+
+###  http://www.synecdoque.com/lcloud/OutdoorLocation
+alc:OutdoorLocation rdf:type owl:Class ;
+    rdfs:subClassOf bot:Zone ;
+    rdfs:label "Outdoor location" ;
+    rdfs:comment "Somewhere a system observes that is not a room — a wall, a mast, a garden. A bot:Zone rather than a bot:Space, because it is not enclosed. The cottage's outdoor module and anemometer report from here, which is why the weather station's readings must not be assumed to describe any room's condition." .
+
+
+#################################################################
+#    Which rooms can be the same room
+#
+#    The bathroom is disjoint with every other kind of room, stated as
+#    an explicit list rather than as a blanket rule over all rooms.
+#    A blanket rule is the tempting shape and the wrong one: it would
+#    also separate the living room from the dining room, and in this
+#    cottage they are one space.
+#
+#    Nothing here says the living room and the dining room *are* the
+#    same. It says the ontology permits an individual to be both, which
+#    is what lets the building be described as it is.
+#################################################################
+
+alc:Bathroom owl:disjointWith alc:Bedroom ,
+                              alc:DiningRoom ,
+                              alc:Hall ,
+                              alc:Kitchen ,
+                              alc:LivingRoom .
+
+alc:Kitchen owl:disjointWith alc:Bedroom ,
+                             alc:Hall .
+
+alc:Bedroom owl:disjointWith alc:DiningRoom ,
+                             alc:Hall ,
+                             alc:LivingRoom .
+
+# A room is not an outdoor location, whatever else it may also be.
+alc:Room owl:disjointWith alc:OutdoorLocation .
+
+
+#################################################################
+#    Locating a unit asset
+#################################################################
+
+###  http://www.synecdoque.com/lcloud/actsIn
+alc:actsIn rdf:type owl:ObjectProperty ;
+    rdfs:domain afo:UnitAsset ;
+    rdfs:range bot:Zone ;
+    rdfs:label "acts in" ;
+    rdfs:comment """Relates a UnitAsset to the room or zone it observes or acts upon.
+
+The framework writes afo:hasFunctionalLocation, whose object is whatever the operator typed in systemconfig.json. Where that value is a legal name it becomes an IRI — alc:Kitchen — and where it is not it becomes a string: "Bathroom " with a trailing space, or "Kälkholmen (Indoor)". The same room therefore appears in the graph both ways, and a query for one finds nothing of the other.
+
+This property is the reconciled form. A deployment that means its functional locations to be reasoned about should state them once here, as IRIs, rather than rely on the spelling in a configuration file surviving a commissioning technician.""" .
+
+
+###  http://www.synecdoque.com/lcloud/hasLocation
+alc:hasLocation rdf:type owl:DatatypeProperty ;
+    rdfs:label "has location" ;
+    rdfs:comment "Where something is, as written in the configuration. A string rather than a reference: it records what an operator typed, which is not always the name of a room." .
+
+
+#################################################################
+#    Detail properties
+#
+#    Every one of these is in the cottage's graph because a key of that
+#    name appears in some system's systemconfig.json. The framework
+#    turns any detail key into a predicate, so this section is open by
+#    construction — a new key in a configuration file adds a term here
+#    that nobody declared.
+#
+#    That is worth watching rather than preventing. The keys below are
+#    the ones the cottage actually uses; a term appearing in the graph
+#    and missing from this file is either a typo in a configuration or
+#    a concept that has arrived without being thought about.
+#################################################################
+
+alc:hasDefaultForm rdf:type owl:DatatypeProperty ;
+    rdfs:label "has default form" ;
+    rdfs:comment "The payload form a service answers with unless asked otherwise." .
+
+alc:hasDisplayName rdf:type owl:DatatypeProperty ;
+    rdfs:label "has display name" ;
+    rdfs:comment "The name a device gives itself — the ZigBee label a plug was commissioned with, for instance. Distinct from afo:hasName, which is the name the cloud knows a system by: the first is chosen at the device, the second in the configuration." .
+
+alc:hasForms rdf:type owl:DatatypeProperty ;
+    rdfs:label "has forms" ;
+    rdfs:comment "A payload form a service can produce or accept. Repeated once per form." .
+
+alc:hasFormat rdf:type owl:DatatypeProperty ;
+    rdfs:label "has format" ;
+    rdfs:comment "The serialisation a service answers in, such as Turtle or SysML v2." .
+
+alc:hasMeasure rdf:type owl:DatatypeProperty ;
+    rdfs:label "has measure" ;
+    rdfs:comment "Whether a quantity is a point on a scale or an interval on it. A temperature of 20 °C and a temperature difference of 20 °C are different quantities, and converting one as though it were the other is wrong by the offset — which is why a deviation service declares interval." .
+
+alc:hasModuleName rdf:type owl:DatatypeProperty ;
+    rdfs:label "has module name" ;
+    rdfs:comment "The name of a sub-device within a system, such as a weather station's outdoor module." .
+
+alc:hasPKI rdf:type owl:DatatypeProperty ;
+    rdfs:label "has PKI" ;
+    rdfs:comment "The public key infrastructure a certificate authority issues under." .
+
+alc:hasPlatform rdf:type owl:DatatypeProperty ;
+    rdfs:label "has platform" ;
+    rdfs:comment "The platform a service is tied to, or Independent where it is not." .
+
+alc:hasQuantityKind rdf:type owl:DatatypeProperty ;
+    rdfs:label "has quantity kind" ;
+    rdfs:comment "The kind of quantity a service reports, as a QUDT identifier. Finer than a dimension: thermodynamic temperature and colour temperature share a dimension and are not interchangeable." .
+
+alc:hasRole rdf:type owl:DatatypeProperty ;
+    rdfs:label "has role" ;
+    rdfs:comment "What part a system plays where its mission does not say enough." .
+
+alc:hasType rdf:type owl:DatatypeProperty ;
+    rdfs:label "has type" ;
+    rdfs:comment "A system-specific classification, such as a registry being ephemeral." .
+
+alc:hasUnit rdf:type owl:DatatypeProperty ;
+    rdfs:label "has unit" ;
+    rdfs:comment "The unit a service reports in, as a QUDT identifier where the deployment has migrated to them." .
+
+
+#################################################################
+#    Properties the framework writes that AFO does not define
+#
+#    These come from the framework rather than from a configuration
+#    file, and each is a candidate to propose upstream. Until then they
+#    are this cloud's terms and belong in this namespace.
+#################################################################
+
+alc:hasMode rdf:type owl:DatatypeProperty ;
+    rdfs:label "has mode" ;
+    rdfs:comment "Whether a consumed service is read or written by its consumer." .
+
+alc:fromUrl rdf:type owl:ObjectProperty ;
+    rdfs:label "from URL" ;
+    rdfs:comment "Where a consumed service was discovered, as of the last orchestration." .
+
+alc:hasCost rdf:type owl:DatatypeProperty ;
+    rdfs:range xsd:decimal ;
+    rdfs:label "has cost" ;
+    rdfs:comment "What one call to a service costs, in the unit given by alc:hasCostUnit." .
+
+alc:hasCostUnit rdf:type owl:DatatypeProperty ;
+    rdfs:label "has cost unit" ;
+    rdfs:comment "The currency or accounting unit a cost is expressed in." .
+
+alc:hasCarbonFootprint rdf:type owl:DatatypeProperty ;
+    rdfs:range xsd:decimal ;
+    rdfs:label "has carbon footprint" ;
+    rdfs:comment "The greenhouse gas attributable to one call to a service." .
+
+
+#################################################################
+#    The cottage
+#
+#    Individuals, not vocabulary — the part a different deployment
+#    replaces. They are here because an ontology of rooms is easier to
+#    judge against a building that exists, and because these are the
+#    functional locations the cottage's systems already name.
+#################################################################
+
+alc:Cottage rdf:type owl:NamedIndividual , bot:Building ;
+    rdfs:label "The cottage" ;
+    bot:hasSpace alc:CottageKitchen ,
+                 alc:CottageBathroom ,
+                 alc:CottageLivingDining .
+
+alc:CottageKitchen rdf:type owl:NamedIndividual , alc:Kitchen ;
+    rdfs:label "Kitchen" .
+
+alc:CottageBathroom rdf:type owl:NamedIndividual , alc:Bathroom ;
+    rdfs:label "Bathroom" .
+
+# The case that motivated all of the above: one room, eaten in and lived in.
+# Asserting both types is consistent precisely because alc:DiningRoom and
+# alc:LivingRoom were left undeclared as disjoint. Asserting alc:Bathroom here
+# as well would make the ontology inconsistent, which is the intended result.
+alc:CottageLivingDining rdf:type owl:NamedIndividual ,
+                                 alc:DiningRoom ,
+                                 alc:LivingRoom ;
+    rdfs:label "Living and dining room" ;
+    rdfs:comment "One space serving as both. The heater the cloud calls Diningroom is in this room." .
+
+alc:CottageOutdoors rdf:type owl:NamedIndividual , alc:OutdoorLocation ;
+    rdfs:label "Outdoors at Kälkholmen" ;
+    rdfs:comment "Where the weather station's outdoor module and the anemometer report from. Not a room, so no room's temperature may be inferred from it." .

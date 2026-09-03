@@ -1,0 +1,107 @@
+@prefix :        <http://www.synecdoque.com/2025/afo-lbd#> .
+@prefix afo:     <http://www.synecdoque.com/2025/afo#> .
+@prefix bot:     <https://w3id.org/bot#> .
+@prefix sosa:    <http://www.w3.org/ns/sosa/> .
+@prefix ssn:     <http://www.w3.org/ns/ssn/> .
+@prefix qudt:    <http://qudt.org/schema/qudt/> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@base            <http://www.synecdoque.com/2025/afo-lbd#> .
+
+<http://www.synecdoque.com/2025/afo-lbd> rdf:type owl:Ontology ;
+    owl:versionIRI <http://www.synecdoque.com/2025/afo-lbd/0.1.0> ;
+    rdfs:label "AFO to Linked Building Data alignment" ;
+    rdfs:comment """Binds the AFO graph a local cloud emits at runtime to a
+building graph derived from an IFC model through the Linked Building Data
+ontologies, and borrows SOSA/SSN for the sensing and actuating semantics that
+AFO does not carry.
+
+An alignment only, in the style of afo-lis.ttl: it introduces no instances, and
+restates AFO terms solely to hang alignment axioms on them.
+
+Why not SenML. SenML (RFC 8428) is a serialization format for measurement
+records — base name, name, unit, value, time — with an IANA unit registry. It
+has no term for a space, for a device, or for the relation between them, so it
+cannot state the one thing that binds these two graphs: that a given sensor is
+in a given room. SenML is the right thing to put on the wire, and its unit
+registry maps cleanly onto the QUDT unit IRIs AFO already emits, but a wire
+format cannot serve as the ontological bridge. That bridge is written here.""" .
+
+
+#################################################################
+#    Sensing and actuating, from the mission AFO already declares
+#################################################################
+#
+# AFO describes software topology: a cloud of systems, their unit assets,
+# services, hosts and ports. It has no observation model at all. SOSA supplies
+# one, and no configuration has to change to adopt it, because the runtime graph
+# already carries afo:hasMission on every unit asset.
+
+afo:hasMission rdf:type owl:DatatypeProperty ;
+    rdfs:domain afo:UnitAsset ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Restated here because AFO emits this predicate at runtime but does not yet declare it." .
+
+
+###  A unit asset whose mission is measurement is a sensor.
+:SensingUnitAsset rdf:type owl:Class ;
+    rdfs:label "sensing unit asset" ;
+    owl:equivalentClass [ rdf:type owl:Class ;
+        owl:intersectionOf ( afo:UnitAsset
+                             [ rdf:type owl:Restriction ;
+                               owl:onProperty afo:hasMission ;
+                               owl:hasValue "measurement" ] ) ] ;
+    rdfs:subClassOf sosa:Sensor .
+
+
+###  A unit asset whose mission is actuation is an actuator.
+:ActuatingUnitAsset rdf:type owl:Class ;
+    rdfs:label "actuating unit asset" ;
+    owl:equivalentClass [ rdf:type owl:Class ;
+        owl:intersectionOf ( afo:UnitAsset
+                             [ rdf:type owl:Restriction ;
+                               owl:onProperty afo:hasMission ;
+                               owl:hasValue "actuation" ] ) ] ;
+    rdfs:subClassOf sosa:Actuator .
+
+
+#################################################################
+#    The join: a functional location that is a room
+#################################################################
+
+afo:hasFunctionalLocation rdf:type owl:ObjectProperty .
+
+###  Use this where a functional location is a space in the building model.
+:locatedInSpace rdf:type owl:ObjectProperty ;
+    rdfs:label "located in space" ;
+    rdfs:subPropertyOf afo:hasFunctionalLocation ;
+    rdfs:domain afo:UnitAsset ;
+    rdfs:range bot:Space ;
+    rdfs:comment """The join between the two graphs. Saying an asset is located
+in a bot:Space keeps every afo:hasFunctionalLocation query working — it is a
+sub-property — while resolving the location to a space that carries the
+building's own identity.""" .
+
+
+###  A room is a kind of functional location.
+#
+# Scoped to this integration and worth understanding before it is reused: it
+# holds for a building, and does not hold in general, since a functional
+# location may be a vehicle or a site that has no building model at all. The
+# cottage already declares locations named Boat and Car.
+bot:Space rdfs:subClassOf afo:FunctionalLocation .
+
+
+#################################################################
+#    Units
+#################################################################
+
+afo:hasUnit rdf:type owl:ObjectProperty ;
+    rdfs:subPropertyOf qudt:hasUnit ;
+    rdfs:comment """AFO already emits QUDT unit IRIs, so the alignment is a
+sub-property and nothing has to be translated. A SenML payload naming its unit
+by symbol resolves to the same QUDT individual through the IANA SenML unit
+registry — a lookup table maintained beside this file, not an ontology.""" .

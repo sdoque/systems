@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -278,16 +279,28 @@ func (tm *TokenManager) getWithAutoRefresh(rawURL string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if status == 401 {
-		log.Println("Netatmo: access token expired, refreshing...")
+	// Netatmo signals an expired access token with 403 (error code 3), not 401.
+	// Handling only 401 left the token un-refreshed after its ~3-hour life: the
+	// 403 body — a JSON error envelope — then unmarshaled cleanly into an empty
+	// device list, and the poll logged "data refreshed" over stale readings for
+	// hours. Both 401 and 403 mean refresh. Anything else non-2xx is the
+	// provider's answer and is returned as an error, never as a body to be
+	// mistaken for data.
+	if status == 401 || status == 403 {
+		log.Printf("Netatmo: access token rejected (HTTP %d), refreshing...", status)
 		if rerr := tm.refresh(); rerr != nil {
 			log.Printf("Netatmo: refresh failed (%v), re-authorizing via browser...", rerr)
 			if aerr := tm.authorizeWithBrowser(); aerr != nil {
 				return nil, fmt.Errorf("re-authorization failed: %w", aerr)
 			}
 		}
-		_, body, err = doGET(tm.getToken())
-		return body, err
+		status, body, err = doGET(tm.getToken())
+		if err != nil {
+			return nil, err
+		}
+	}
+	if status < 200 || status > 299 {
+		return nil, fmt.Errorf("Netatmo returned HTTP %d: %s", status, strings.TrimSpace(string(body)))
 	}
 	return body, nil
 }
@@ -544,6 +557,11 @@ func newModuleAsset(info moduleInfo, moduleName, stationName string, sys *compon
 	return ua
 }
 
+// staleAfter is how old the newest Netatmo reading may be before the poller
+// warns that the station has gone quiet. Netatmo's modules report every few
+// minutes; 30 minutes without a newer reading is the source, not the cadence.
+const staleAfter = 30 * time.Minute
+
 // -------------------------------------Background poller
 
 // pollNetatmo refreshes the measurement cache on every tick until the context is canceled.
@@ -561,6 +579,8 @@ func pollNetatmo(ctx context.Context, tm *TokenManager, cache *ModuleCache) {
 				log.Printf("Netatmo poll error: %v\n", err)
 				continue
 			}
+			updated := 0
+			var newest time.Time
 			for _, device := range resp.Body.Devices {
 				if tm.StationName != "" && device.StationName != tm.StationName {
 					continue
@@ -568,16 +588,41 @@ func pollNetatmo(ctx context.Context, tm *TokenManager, cache *ModuleCache) {
 				if info, ok := moduleTypeMap["NAMain"]; ok {
 					ts := time.Unix(device.DashboardData.TimeUTC, 0)
 					cache.update(info.assetName, extractMeasurements("NAMain", device.DashboardData), ts)
+					updated++
+					if ts.After(newest) {
+						newest = ts
+					}
 				}
 				for _, mod := range device.Modules {
 					if info, ok := moduleTypeMap[mod.Type]; ok {
 						ts := time.Unix(mod.DashboardData.TimeUTC, 0)
 						cache.update(info.assetName, extractMeasurements(mod.Type, mod.DashboardData), ts)
+						updated++
+						if ts.After(newest) {
+							newest = ts
+						}
 					}
 				}
 				break
 			}
-			log.Println("Netatmo: data refreshed")
+			// A reply that carried no station data is not a refresh. It happened
+			// when a 403 unmarshaled to nothing; it should never again be logged
+			// as success, because a flat line that reports itself healthy is the
+			// most expensive kind.
+			if updated == 0 {
+				log.Println("Netatmo: the reply carried no station data — nothing updated")
+				continue
+			}
+			// A log-only staleness warning: the readings are current but not
+			// advancing. Netatmo's modules report every few minutes, so anything
+			// older than staleAfter means the station itself has gone quiet — the
+			// case that froze the cottage while every system looked well. Log
+			// only: withholding a temperature from the control loop is the frost
+			// guard's job, not this poller's.
+			if age := time.Since(newest); age > staleAfter {
+				log.Printf("Netatmo: WARNING — freshest reading is %v old; the station may have stopped reporting", age.Round(time.Minute))
+			}
+			log.Printf("Netatmo: %d module(s) refreshed", updated)
 		}
 	}
 }

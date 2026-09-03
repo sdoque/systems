@@ -101,8 +101,8 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 		t.aggregate(w, r)
 	case "localontologies":
 		t.listOntologies(w, r)
-	case "files":
-		// catch-all for the files service
+	case "ontologies":
+		// catch-all for the ontologies service
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
 	}

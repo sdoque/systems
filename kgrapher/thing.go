@@ -130,7 +130,7 @@ func initTemplate() *components.UnitAsset {
 		// text/html because it is a page for a person: listOntologies writes
 		// markup. Saying so keeps it out of analyses that ask what depends on
 		// what — documentation has no failure mode worth reporting.
-		Details:     map[string][]string{"Location": {"Files"}, "Forms": {"text/html"}},
+		Details:     map[string][]string{"Location": {"Ontologies"}, "Forms": {"text/html"}},
 		RegPeriod:   61,
 		Description: "provides the list of local ontologies (GET)",
 	}
@@ -166,12 +166,12 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 
 	// Ensure that you have a valid local ontology directory
-	const dir = "./files"
+	const dir = "./ontologies"
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		log.Fatalf("could not create directory %q: %v", dir, err)
 	}
 	serverAddress := sys.Husk.Host.IPAddresses[0]
-	ontologyURL := fmt.Sprintf("http://%s:20105/kgrapher/assembler/files/", serverAddress)
+	ontologyURL := fmt.Sprintf("http://%s:20105/kgrapher/assembler/ontologies/", serverAddress)
 	resolveLocalOntologies(t.LOntologies, dir, ontologyURL)
 
 	ua := &components.UnitAsset{
@@ -814,9 +814,9 @@ func detectGlobalCloud(blocks []string) (string, error) {
 
 // ----------- Local Ontologies Service -----------------------------------------------------------
 
-// localOntologies reads the ./files directory and builds an HTML list
+// localOntologies reads the ./ontologies directory and builds an HTML list
 func (t *Traits) localOntologies(sp string) string {
-	entries, err := os.ReadDir("./files")
+	entries, err := os.ReadDir("./ontologies")
 	if err != nil {
 		return fmt.Sprintf("<p><strong>Error:</strong> could not read files directory: %v</p>", err)
 	}

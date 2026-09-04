@@ -9,11 +9,17 @@
 @prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
 @prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
 @base            <http://www.synecdoque.com/2025/afo-lbd#> .
 
 <http://www.synecdoque.com/2025/afo-lbd> rdf:type owl:Ontology ;
     owl:versionIRI <http://www.synecdoque.com/2025/afo-lbd/0.1.0> ;
     rdfs:label "AFO to Linked Building Data alignment" ;
+    dcterms:title "Arrowhead Framework Ontology — Linked Building Data alignment" ;
+    dcterms:creator "Oskar Wintercorn" ;
+    dcterms:publisher "Synecdoque" ;
+    dcterms:license <http://creativecommons.org/licenses/by/4.0/> ;
+    dcterms:modified "2026-09-03"^^xsd:date ;
     rdfs:comment """Binds the AFO graph a local cloud emits at runtime to a
 building graph derived from an IFC model through the Linked Building Data
 ontologies, and borrows SOSA/SSN for the sensing and actuating semantics that

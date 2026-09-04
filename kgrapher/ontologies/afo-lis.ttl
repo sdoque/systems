@@ -6,11 +6,20 @@
 @prefix xml: <http://www.w3.org/XML/1998/namespace> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix lis-ext: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/ido-ext#> .
 @base <http://www.synecdoque.com/2025/afo-lis#> .
 
 <http://www.synecdoque.com/2025/afo-lis> rdf:type owl:Ontology ;
-                                          owl:versionIRI <http://www.synecdoque.com/2025/afo-lis/1.1.0> .
+    owl:versionIRI <http://www.synecdoque.com/2025/afo-lis/1.1.0> ;
+    owl:versionInfo "1.1.0" ;
+    rdfs:label "AFO to LIS-14 alignment" ;
+    dcterms:title "Arrowhead Framework Ontology — LIS-14 alignment" ;
+    dcterms:description "Aligns AFO's classes and properties onto the LIS-14 reference data library, so an Arrowhead local cloud can be read by tools that speak the upstream industrial vocabularies." ;
+    dcterms:creator "Oskar Wintercorn" ;
+    dcterms:publisher "Synecdoque" ;
+    dcterms:license <http://creativecommons.org/licenses/by/4.0/> ;
+    rdfs:seeAlso <https://doi.org/10.1109/OJIES.2026.3693084> .
 
 
 #################################################################

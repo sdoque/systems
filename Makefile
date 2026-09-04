@@ -12,7 +12,7 @@ PKG        := github.com/sdoque/mbaigo/components
 
 SYSTEMS := assessor authorizer beehive beekeeper busdriver ca clerk collector democrat \
            drafter ds18b20 ds18b20F emulator envoy esr ethermostat filmer flattener \
-           hobbyist kgrapher leveler maitreD meteorologue modboss \
+           hobbyist kgrapher leveler loader maitreD meteorologue modboss \
            modeler nurse orchestrator painter parallax photographer recognizer \
            revolutionary sailor sapper telegrapher thermostat tracker \
            uaclient weatherman

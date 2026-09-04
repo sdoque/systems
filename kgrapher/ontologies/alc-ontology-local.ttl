@@ -9,6 +9,9 @@
 
 <http://www.synecdoque.com/lcloud/> rdf:type owl:Ontology ;
     owl:versionInfo "0.1.0" ;
+    dcterms:creator "Oskar Wintercorn" ;
+    dcterms:publisher "Synecdoque" ;
+    dcterms:license <http://creativecommons.org/licenses/by/4.0/> ;
     rdfs:label "Local Cloud Ontology (example)" ;
     dcterms:modified "2026-08-16"^^xsd:date ;
     rdfs:comment """The vocabulary a local cloud mints for itself, and an example of what belongs in it.

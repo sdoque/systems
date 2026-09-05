@@ -161,11 +161,19 @@ func newSetpointCervice(sProtocols []string) *components.Cervice {
 	}
 }
 
+// retryDelay is how soon a failed pass is tried again, rather than at the next
+// price tick an hour later.
+//
+// The first pass runs while the cloud is still coming up, and it has twice now
+// arrived seconds before the orchestrator was reachable: the price was fetched,
+// a setpoint computed, and there was nobody to give it to. Waiting a full hour
+// to try again leaves every heater on whatever default it holds — which is the
+// state this system exists to improve on, and it is silent, because a cloud
+// with no price optimization looks exactly like a cloud with it.
+const retryDelay = 30 * time.Second
+
 // run is the main control loop: fetch price, calculate setpoint, push to thermostat.
 func (t *Traits) run() {
-	// Fetch and apply immediately, then tick every Period seconds.
-	t.updateSetPoint()
-
 	period := t.Period
 	if period <= 0 {
 		period = 3600
@@ -173,10 +181,27 @@ func (t *Traits) run() {
 	ticker := time.NewTicker(time.Duration(period) * time.Second)
 	defer ticker.Stop()
 
+	// Armed only after a pass fails, so the hourly cadence is unchanged when
+	// everything works.
+	retry := time.NewTimer(retryDelay)
+	if !retry.Stop() {
+		<-retry.C
+	}
+	defer retry.Stop()
+
+	attempt := func() {
+		if !t.updateSetPoint() {
+			retry.Reset(retryDelay)
+		}
+	}
+	attempt() // immediately, then on the tick
+
 	for {
 		select {
 		case <-ticker.C:
-			t.updateSetPoint()
+			attempt()
+		case <-retry.C:
+			attempt()
 		case <-t.owner.Ctx.Done():
 			log.Println("Flattener: stopping control loop")
 			return
@@ -193,12 +218,14 @@ const (
 )
 
 // updateSetPoint fetches the current price, calculates the optimal setpoint,
-// and pushes it to all discovered thermostat setpoint services.
-func (t *Traits) updateSetPoint() {
+// and pushes it to all discovered thermostat setpoint services. It reports
+// whether the setpoint reached at least one of them, which is what decides
+// between waiting for the next price and trying again shortly.
+func (t *Traits) updateSetPoint() bool {
 	price, err := fetchCurrentPrice(t.Region)
 	if err != nil {
 		log.Printf("Flattener: could not fetch price: %v\n", err)
-		return
+		return false
 	}
 	t.currentPrice = price
 	t.currentSetPoint = t.priceToSetPoint(price)
@@ -211,11 +238,11 @@ func (t *Traits) updateSetPoint() {
 	cer.Nodes = make(map[string][]components.NodeInfo)
 	if err := usecases.Search4MultipleServices(cer, t.owner); err != nil {
 		log.Printf("Flattener: could not discover setpoint services: %v\n", err)
-		return
+		return false
 	}
 	if len(cer.Nodes) == 0 {
 		log.Println("Flattener: no setpoint services found — nothing to push")
-		return
+		return false
 	}
 	total := 0
 	for _, nodes := range cer.Nodes {
@@ -235,10 +262,14 @@ func (t *Traits) updateSetPoint() {
 	body, err := usecases.Pack(&sp, "application/json")
 	if err != nil {
 		log.Printf("Flattener: could not pack setpoint form: %v\n", err)
-		return
+		return false
 	}
 
 	// Push to every discovered setpoint service.
+	// A push that failed was logged twice: once as the error it was, and then
+	// again on the next line as a success, because nothing stopped the fall
+	// through. A setpoint that never arrived reported itself delivered.
+	pushed := 0
 	for sysNode, nodes := range cer.Nodes {
 		for _, ni := range nodes {
 			singleCer := &components.Cervice{
@@ -248,10 +279,13 @@ func (t *Traits) updateSetPoint() {
 			}
 			if _, err := usecases.SetState(singleCer, t.owner, body); err != nil {
 				log.Printf("Flattener: could not push setpoint to %s (%s): %v\n", sysNode, ni.URL, err)
+				continue
 			}
+			pushed++
 			log.Printf("Flattener: pushed %.1f °C to %s\n", t.currentSetPoint, ni.URL)
 		}
 	}
+	return pushed > 0
 }
 
 // priceToSetPoint maps a price (SEK/kWh) to a temperature setpoint (°C) using

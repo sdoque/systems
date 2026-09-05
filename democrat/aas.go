@@ -380,8 +380,8 @@ WHERE {
   ?svc afo:hasName ?svcName ;
        afo:hasUrl ?url .
   OPTIONAL { ?svc afo:hasServiceDefinition ?svcDef . }
-  OPTIONAL { ?svc alc:hasUnit ?unit . }
-  OPTIONAL { ?svc alc:hasQuantityKind ?quantityKind . }
+  OPTIONAL { ?svc afo:hasUnit ?unit . }
+  OPTIONAL { ?svc afo:hasQuantityKind ?quantityKind . }
   OPTIONAL { ?svc alc:hasMethods ?method . }
   OPTIONAL { ?svc afo:isSubscribable ?subscribable . }
   OPTIONAL { ?svc alc:hasForms ?form . }

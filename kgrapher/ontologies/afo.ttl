@@ -1,6 +1,7 @@
 @prefix :        <https://w3id.org/synecdoque/afo#> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix qudt:    <http://qudt.org/schema/qudt/> .
 @prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix vann:    <http://purl.org/vocab/vann/> .
@@ -8,9 +9,9 @@
 @base            <https://w3id.org/synecdoque/afo#> .
 
 <https://w3id.org/synecdoque/afo> rdf:type owl:Ontology ;
-    owl:versionIRI   <https://w3id.org/synecdoque/afo/2.0.0> ;
-    owl:priorVersion <http://www.synecdoque.com/2025/afo/1.2.0> ;
-    owl:versionInfo  "2.0.0" ;
+    owl:versionIRI   <https://w3id.org/synecdoque/afo/2.1.0> ;
+    owl:priorVersion <https://w3id.org/synecdoque/afo/2.0.0> ;
+    owl:versionInfo  "2.1.0" ;
     rdfs:label       "Arrowhead Framework Ontology" ;
     rdfs:comment     """Version 2.0.0 moves the ontology to a permanent identifier at w3id.org. Changing an ontology IRI changes its identity, which is why this is a major version and not a patch: every term minted under the previous namespace is a different term. It was done while nothing had adopted the vocabulary, when it costs nothing, and it is not a thing to do again.""" ;
     dcterms:title    "Arrowhead Framework Ontology (AFO)" ;
@@ -593,3 +594,57 @@
     rdfs:domain :SecurityPosture ; rdfs:range xsd:boolean ;
     rdfs:label "accepts plaintext" ;
     rdfs:comment "Whether the system still answers on its plaintext port. True alongside offersTLS is the ordinary state during enrollment, and a finding afterwards." .
+
+
+#################################################################
+#    Added in 2.1.0 — terms promoted from the local namespace
+#################################################################
+#
+# Four terms the framework has always written, under a namespace that means
+# nothing to a reader who dereferences it. None of them is deployment-specific:
+# every Arrowhead service in every cloud has a mode, and a service that carries
+# a measurement has a unit and a quantity kind. They were minted locally only
+# because the ontology had not declared them.
+
+###  How a service is used
+:Mode rdf:type owl:Class ;
+    rdfs:label "mode" ;
+    rdfs:comment """How a service is used: read a value, write one, or invoke an
+operation. The authorizer maps a mode to the action a policy grants, so this is
+a term access control depends on — which is the argument for declaring it here
+rather than leaving it in a namespace nothing can interpret.""" .
+
+:Get rdf:type :Mode ; rdfs:label "get" ; rdfs:comment "Read the current value." .
+:Set rdf:type :Mode ; rdfs:label "set" ; rdfs:comment "Write a value." .
+:Do  rdf:type :Mode ; rdfs:label "do"  ; rdfs:comment "Invoke an operation." .
+
+:Mode owl:equivalentClass [ rdf:type owl:Class ; owl:oneOf ( :Get :Set :Do ) ] .
+
+:hasMode rdf:type owl:ObjectProperty ;
+    rdfs:domain :Service ;
+    rdfs:range :Mode ;
+    rdfs:label "has mode" ;
+    rdfs:comment """Declared on Service rather than on ConsumedService, which is
+the only kind that carries it today: a provided service has a mode too, and a
+domain that excluded it would have to be widened later, which is the change this
+version exists to avoid making twice.""" .
+
+###  Units and quantity kinds, aligned to QUDT
+#
+# QUDT declares no domain on either property, only a range, so a sub-property
+# here inherits nothing unwanted about the subject — it says where the term
+# applies, which QUDT does not, and keeps the meaning QUDT gives it. The range
+# comes with the alignment: an object of afo:hasUnit is a qudt:Unit, which makes
+# a locally minted "unit" a detectable error rather than a silent one.
+
+:hasUnit rdf:type owl:ObjectProperty ;
+    rdfs:subPropertyOf qudt:hasUnit ;
+    rdfs:domain :Service ;
+    rdfs:label "has unit" ;
+    rdfs:comment "The unit a service's values are expressed in, as a QUDT unit." .
+
+:hasQuantityKind rdf:type owl:ObjectProperty ;
+    rdfs:subPropertyOf qudt:hasQuantityKind ;
+    rdfs:domain :Service ;
+    rdfs:label "has quantity kind" ;
+    rdfs:comment "What is being measured, as a QUDT quantity kind: temperature, angle, time." .

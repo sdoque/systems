@@ -190,8 +190,8 @@ WHERE {
   ?svc afo:hasName ?svcName .
   OPTIONAL { ?svc afo:hasServiceDefinition ?definition . }
   OPTIONAL { ?svc afo:isSubscribable ?subscribable . }
-  OPTIONAL { ?svc alc:hasUnit ?unit . }
-  OPTIONAL { ?svc alc:hasQuantityKind ?quantityKind . }
+  OPTIONAL { ?svc afo:hasUnit ?unit . }
+  OPTIONAL { ?svc afo:hasQuantityKind ?quantityKind . }
   OPTIONAL { ?svc afo:hasRegistrationPeriod ?regPeriod . }
   OPTIONAL { ?svc afo:hasUrl ?url . }
   OPTIONAL { ?svc alc:hasMethods ?method . }
@@ -259,7 +259,7 @@ WHERE {
   ?asset afo:consumesService ?cervice .
   OPTIONAL { ?cervice afo:consumes ?definition . FILTER(isLiteral(?definition)) }
   OPTIONAL { ?cervice afo:consumes ?target . FILTER(isIRI(?target)) }
-  OPTIONAL { ?cervice alc:hasMode ?mode . }
+  OPTIONAL { ?cervice afo:hasMode ?mode . }
   OPTIONAL { ?cervice alc:fromUrl ?fromUrl . }
 }
 `

@@ -22,6 +22,8 @@ github.com/sdoque/mbaigo v0.1.0-alpha.12 h1:gnMhYCGUWzaroorgckCf4gu2mKqFBCq99j5f
 github.com/sdoque/mbaigo v0.1.0-alpha.12/go.mod h1:uvuQ4Q1Qdi1U8BpaoBzDvst8BsskEVaVoMZ9T+5SyYc=
 github.com/sdoque/mbaigo v0.1.0 h1:n8lUHPzEd0LOSBIEbp3a6BIY2F1KE9E4P4nTuU2GRcA=
 github.com/sdoque/mbaigo v0.1.0/go.mod h1:uvuQ4Q1Qdi1U8BpaoBzDvst8BsskEVaVoMZ9T+5SyYc=
+github.com/sdoque/mbaigo v0.2.0 h1:lJO8HztQdTHgXEaNGkB7y+luyhBZPAq31RVATq88ilI=
+github.com/sdoque/mbaigo v0.2.0/go.mod h1:uvuQ4Q1Qdi1U8BpaoBzDvst8BsskEVaVoMZ9T+5SyYc=
 golang.org/x/exp v0.0.0-20260727155853-b88d891fe743 h1:ex206bKw+v3K0dm3andkrIF+ijyQKJG1pLgwQ2PYdQM=
 golang.org/x/exp v0.0.0-20260727155853-b88d891fe743/go.mod h1:EdfpwwqSu+0Li0mzskwHU6FWDV3t9Q+RZDo3QMUtL3Q=
 golang.org/x/mod v0.38.0 h1:MECBjubtXD7yj4HrhIUcywNaGeNVUdfVnxmPajOk4yk=

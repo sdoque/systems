@@ -272,7 +272,7 @@ Every submodel and every property democrat writes therefore carries a
     "type": "ExternalReference",
     "keys": [
       { "type": "GlobalReference",
-        "value": "http://www.synecdoque.com/2025/afo#hasServiceDefinition" }
+        "value": "https://w3id.org/synecdoque/afo#hasServiceDefinition" }
     ]
   }
 }

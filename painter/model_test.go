@@ -11,7 +11,7 @@ import (
 // quietly loses a line — the painter reads another program's output, and the
 // only honest way to test a reader is against what the writer actually writes.
 const beekeeperGraph = `@prefix alc: <http://www.synecdoque.com/lcloud/> .
-@prefix afo: <http://www.synecdoque.com/2025/afo#> .
+@prefix afo: <https://w3id.org/synecdoque/afo#> .
 
 alc:home_beekeeper a afo:System ;
     afo:hasName "beekeeper" ;
@@ -46,7 +46,7 @@ alc:home_beekeeper_KitchenHeater_OnOff a afo:Service ;
 `
 
 const ethermostatGraph = `@prefix alc: <http://www.synecdoque.com/lcloud/> .
-@prefix afo: <http://www.synecdoque.com/2025/afo#> .
+@prefix afo: <https://w3id.org/synecdoque/afo#> .
 
 alc:home_ethermostat a afo:System ;
     afo:hasName "ethermostat" ;

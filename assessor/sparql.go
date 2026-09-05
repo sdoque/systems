@@ -34,7 +34,7 @@ const prefixes = `
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX xsd:  <http://www.w3.org/2001/XMLSchema#>
 PREFIX alc:  <http://www.synecdoque.com/lcloud/>
-PREFIX afo:  <http://www.synecdoque.com/2025/afo#>
+PREFIX afo:  <https://w3id.org/synecdoque/afo#>
 PREFIX owl:  <http://www.w3.org/2002/07/owl#>
 PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 `

@@ -1,5 +1,5 @@
 @prefix alc: <http://www.synecdoque.com/lcloud/> .
-@prefix afo: <http://www.synecdoque.com/2025/afo#> .
+@prefix afo: <https://w3id.org/synecdoque/afo#> .
 @prefix bot: <https://w3id.org/bot#> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .

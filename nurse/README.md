@@ -190,7 +190,7 @@ imports). The first two come from the cloud's RDF — the
 INSERT…WHERE that joins by literal name:
 
 ```sparql
-PREFIX afo:       <http://www.synecdoque.com/2025/afo#>
+PREFIX afo:       <https://w3id.org/synecdoque/afo#>
 PREFIX arrowhead: <https://arrowheadweb.org/ont/arrowhead#>
 INSERT {
   GRAPH <https://example.org/graph/nurse-demo> {

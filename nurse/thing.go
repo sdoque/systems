@@ -549,7 +549,7 @@ func resolveActuator(endpoint, sensorName string, timeout time.Duration) (tag, i
 	// functional-location object is published. The mixed prefixes are
 	// intentional: each side keeps its own vocabulary; alignment ontologies
 	// bridge them at reasoning time.
-	query := fmt.Sprintf(`PREFIX afo: <http://www.synecdoque.com/2025/afo#>
+	query := fmt.Sprintf(`PREFIX afo: <https://w3id.org/synecdoque/afo#>
 PREFIX arrowhead: <https://arrowheadweb.org/ont/arrowhead#>
 SELECT ?valveFL ?valveTag WHERE {
   ?sensor afo:hasName %q .

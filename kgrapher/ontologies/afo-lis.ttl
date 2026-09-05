@@ -1,5 +1,5 @@
-@prefix : <http://www.synecdoque.com/2025/afo-lis#> .
-@prefix afo: <http://www.synecdoque.com/2025/afo#> .
+@prefix : <https://w3id.org/synecdoque/afo-lis#> .
+@prefix afo: <https://w3id.org/synecdoque/afo#> .
 @prefix lis: <http://rds.posccaesar.org/ontology/lis14/rdl/> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
@@ -8,11 +8,12 @@
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix lis-ext: <http://www.semanticweb.org/ARROWHEADfPVN/ontologies/ido-ext#> .
-@base <http://www.synecdoque.com/2025/afo-lis#> .
+@base <https://w3id.org/synecdoque/afo-lis#> .
 
-<http://www.synecdoque.com/2025/afo-lis> rdf:type owl:Ontology ;
-    owl:versionIRI <http://www.synecdoque.com/2025/afo-lis/1.1.0> ;
-    owl:versionInfo "1.1.0" ;
+<https://w3id.org/synecdoque/afo-lis> rdf:type owl:Ontology ;
+    owl:versionIRI <https://w3id.org/synecdoque/afo-lis/2.0.0> ;
+    owl:priorVersion <http://www.synecdoque.com/2025/afo-lis/1.1.0> ;
+    owl:versionInfo "2.0.0" ;
     rdfs:label "AFO to LIS-14 alignment" ;
     dcterms:title "Arrowhead Framework Ontology — LIS-14 alignment" ;
     dcterms:description "Aligns AFO's classes and properties onto the LIS-14 reference data library, so an Arrowhead local cloud can be read by tools that speak the upstream industrial vocabularies." ;
@@ -26,37 +27,37 @@
 #    Object Properties
 #################################################################
 
-###  http://www.synecdoque.com/2025/afo#hasHusk
+###  https://w3id.org/synecdoque/afo#hasHusk
 afo:hasHusk rdf:type owl:ObjectProperty ;
             rdfs:subPropertyOf lis:hasFunctionalPart .
 
 
-###  http://www.synecdoque.com/2025/afo#hasServer
+###  https://w3id.org/synecdoque/afo#hasServer
 afo:hasServer rdf:type owl:ObjectProperty ;
               rdfs:subPropertyOf lis:hasFunctionalPart .
 
 
-###  http://www.synecdoque.com/2025/afo#hasUnitAsset
+###  https://w3id.org/synecdoque/afo#hasUnitAsset
 afo:hasUnitAsset rdf:type owl:ObjectProperty ;
                  rdfs:subPropertyOf lis:hasFunctionalPart .
 
 
-###  http://www.synecdoque.com/2025/afo#providesService
+###  https://w3id.org/synecdoque/afo#providesService
 afo:providesService rdf:type owl:ObjectProperty ;
                     rdfs:subPropertyOf lis:hasFunction .
 
 
-###  http://www.synecdoque.com/2025/afo#runsOnHost
+###  https://w3id.org/synecdoque/afo#runsOnHost
 afo:runsOnHost rdf:type owl:ObjectProperty ;
                rdfs:subPropertyOf lis:containedBy .
 
 
-###  http://www.synecdoque.com/2025/afo-lis#functionalLocationOf
+###  https://w3id.org/synecdoque/afo-lis#functionalLocationOf
 afo:functionalLocationOf rdf:type owl:ObjectProperty ;
                       owl:inverseOf :hasFunctionalLocation .
 
 
-###  http://www.synecdoque.com/2025/afo-lis#hasFunctionalLocation
+###  https://w3id.org/synecdoque/afo-lis#hasFunctionalLocation
 afo:hasFunctionalLocation rdf:type owl:ObjectProperty ;
                        rdfs:subPropertyOf lis-ext:implements ;
                        rdfs:domain afo:UnitAsset ;
@@ -67,49 +68,49 @@ afo:hasFunctionalLocation rdf:type owl:ObjectProperty ;
 #    Classes
 #################################################################
 
-###  http://www.synecdoque.com/2025/afo#ConsumedService
+###  https://w3id.org/synecdoque/afo#ConsumedService
 afo:ConsumedService rdf:type owl:Class ;
                     rdfs:subClassOf lis:Function .
 
 
-###  http://www.synecdoque.com/2025/afo#Host
+###  https://w3id.org/synecdoque/afo#Host
 afo:Host rdf:type owl:Class ;
          rdfs:subClassOf lis:FunctionalObject ,
                          lis:PhysicalArtefact .
 
 
-###  http://www.synecdoque.com/2025/afo#Husk
+###  https://w3id.org/synecdoque/afo#Husk
 afo:Husk rdf:type owl:Class ;
          rdfs:subClassOf lis:System .
 
 
-###  http://www.synecdoque.com/2025/afo#LocalCloud
+###  https://w3id.org/synecdoque/afo#LocalCloud
 afo:LocalCloud rdf:type owl:Class ;
                rdfs:subClassOf lis:System .
 
 
-###  http://www.synecdoque.com/2025/afo#Server
+###  https://w3id.org/synecdoque/afo#Server
 afo:Server rdf:type owl:Class ;
            rdfs:subClassOf lis:FunctionalObject .
 
 
-###  http://www.synecdoque.com/2025/afo#Service
+###  https://w3id.org/synecdoque/afo#Service
 afo:Service rdf:type owl:Class ;
             rdfs:subClassOf lis:Function .
 
 
-###  http://www.synecdoque.com/2025/afo#System
+###  https://w3id.org/synecdoque/afo#System
 afo:System rdf:type owl:Class ;
            rdfs:subClassOf lis:System .
 
 
-###  http://www.synecdoque.com/2025/afo#UnitAsset
+###  https://w3id.org/synecdoque/afo#UnitAsset
 afo:UnitAsset rdf:type owl:Class ;
               rdfs:subClassOf lis:FunctionalObject ,
                               lis:PhysicalObject .
 
 
-###  http://www.synecdoque.com/2025/afo-lis#FunctionalLocation
+###  https://w3id.org/synecdoque/afo-lis#FunctionalLocation
 afo:FunctionalLocation rdf:type owl:Class ;
                     rdfs:subClassOf lis-ext:FunctionalLocation .
 

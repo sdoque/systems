@@ -393,3 +393,84 @@ func TestACompleteAssemblyLooksOnceMoreLater(t *testing.T) {
 		t.Fatal("the settling pass never ran")
 	}
 }
+
+// The ontologies a deployment mints have to reach the store, or the graph
+// refers to a vocabulary nothing can resolve. They must also not be re-sent on
+// every rebuild, and must be re-sent once the file is edited.
+func TestLoadOntologiesPutsEachOnceAndAgainWhenEdited(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "alc-local.ttl")
+	if err := os.WriteFile(path, []byte("# a vocabulary\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var puts []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			puts = append(puts, r.URL.Query().Get("graph"))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	tr := &Traits{
+		ontologyFiles: map[string]string{"alc": path},
+		ontologyMtime: make(map[string]time.Time),
+	}
+	client := srv.Client()
+
+	tr.loadOntologies(client, srv.URL)
+	if len(puts) != 1 || puts[0] != "urn:ontology:alc" {
+		t.Fatalf("first load put %v; want one PUT to urn:ontology:alc", puts)
+	}
+
+	tr.loadOntologies(client, srv.URL)
+	if len(puts) != 1 {
+		t.Errorf("an unchanged ontology was sent again: %v", puts)
+	}
+
+	// Edited: the store must be told.
+	later := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(path, later, later); err != nil {
+		t.Fatal(err)
+	}
+	tr.loadOntologies(client, srv.URL)
+	if len(puts) != 2 {
+		t.Errorf("an edited ontology was not sent again: %v", puts)
+	}
+}
+
+// A store that is not answering yet is not a reason to give up: the next
+// rebuild tries again, so nothing has to be restarted to recover.
+func TestLoadOntologiesRetriesAfterAFailure(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "alc-local.ttl")
+	if err := os.WriteFile(path, []byte("# a vocabulary\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	failing := true
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if failing {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	tr := &Traits{
+		ontologyFiles: map[string]string{"alc": path},
+		ontologyMtime: make(map[string]time.Time),
+	}
+	tr.loadOntologies(srv.Client(), srv.URL)
+	failing = false
+	tr.loadOntologies(srv.Client(), srv.URL)
+	if attempts != 2 {
+		t.Errorf("attempts = %d; want the failure to be retried", attempts)
+	}
+	if _, ok := tr.ontologyMtime["alc"]; !ok {
+		t.Error("the successful load was not recorded, so it would be sent again forever")
+	}
+}

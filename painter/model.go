@@ -110,11 +110,17 @@ type Link struct {
 
 // actionForMode mirrors usecases.ActionForMode. A cervice that declares no mode
 // reads, which is what the framework assumes when it mints the token.
+// actionForMode turns a service's mode into the word the canvas draws with.
+//
+// AFO 2.1.0 made hasMode an object property, so the graph carries afo:Set where
+// it once carried the string "set". Both spellings of the IRI are accepted
+// because a parser may or may not have expanded the prefix; the old string form
+// is not, since a graph still carrying it is a graph that needs rebuilding.
 func actionForMode(mode string) string {
 	switch mode {
-	case "set":
+	case "afo:Set", "https://w3id.org/synecdoque/afo#Set":
 		return "write"
-	case "do":
+	case "afo:Do", "https://w3id.org/synecdoque/afo#Do":
 		return "invoke"
 	default:
 		return "read"
@@ -258,7 +264,7 @@ func build(fallbackName string, graphs map[string]string) *Cloud {
 					urls := objects(facts, cerviceSubject, "alc:fromUrl")
 					want.Satisfied = len(urls) > 0
 					asset.Wants = append(asset.Wants, want)
-					action := actionForMode(object(facts, cerviceSubject, "alc:hasMode"))
+					action := actionForMode(object(facts, cerviceSubject, "afo:hasMode"))
 					for _, url := range urls {
 						pending = append(pending, pendingWant{asset: asset, want: want, url: url, action: action})
 					}

@@ -322,11 +322,19 @@ func newDeviceAsset(assetName, displayName string, services []string, lightID st
 		if err != nil {
 			log.Fatalf("beekeeper: asset %q: %v\n", assetName, err)
 		}
+		// A service with no unit says nothing about units. Carrying an empty
+		// one wrote afo:hasUnit "" into the graph, a literal where an object
+		// property expects a qudt:Unit — five of them at the cottage, on the
+		// booleans that have no unit to give.
+		details := map[string][]string{"Forms": {"SignalA_v1a"}, "Methods": methodsFor(svc)}
+		if spec.unit != "" {
+			details["Unit"] = []string{spec.unit}
+		}
 		s := &components.Service{
 			Definition:  spec.definition,
 			SubPath:     svc,
 			Mission:     mission,
-			Details:     map[string][]string{"Unit": {spec.unit}, "Forms": {"SignalA_v1a"}, "Methods": methodsFor(svc)},
+			Details:     details,
 			RegPeriod:   30,
 			Description: spec.description,
 		}

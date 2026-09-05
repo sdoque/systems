@@ -34,7 +34,7 @@ const prefixes = `
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX xsd:  <http://www.w3.org/2001/XMLSchema#>
 PREFIX alc:  <http://www.synecdoque.com/lcloud/>
-PREFIX afo:  <http://www.synecdoque.com/2025/afo#>
+PREFIX afo:  <https://w3id.org/synecdoque/afo#>
 PREFIX owl:  <http://www.w3.org/2002/07/owl#>
 PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 `
@@ -190,8 +190,8 @@ WHERE {
   ?svc afo:hasName ?svcName .
   OPTIONAL { ?svc afo:hasServiceDefinition ?definition . }
   OPTIONAL { ?svc afo:isSubscribable ?subscribable . }
-  OPTIONAL { ?svc alc:hasUnit ?unit . }
-  OPTIONAL { ?svc alc:hasQuantityKind ?quantityKind . }
+  OPTIONAL { ?svc afo:hasUnit ?unit . }
+  OPTIONAL { ?svc afo:hasQuantityKind ?quantityKind . }
   OPTIONAL { ?svc afo:hasRegistrationPeriod ?regPeriod . }
   OPTIONAL { ?svc afo:hasUrl ?url . }
   OPTIONAL { ?svc alc:hasMethods ?method . }
@@ -259,7 +259,7 @@ WHERE {
   ?asset afo:consumesService ?cervice .
   OPTIONAL { ?cervice afo:consumes ?definition . FILTER(isLiteral(?definition)) }
   OPTIONAL { ?cervice afo:consumes ?target . FILTER(isIRI(?target)) }
-  OPTIONAL { ?cervice alc:hasMode ?mode . }
+  OPTIONAL { ?cervice afo:hasMode ?mode . }
   OPTIONAL { ?cervice alc:fromUrl ?fromUrl . }
 }
 `

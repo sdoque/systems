@@ -214,9 +214,11 @@ func initTemplate() *components.UnitAsset {
 		Description: "retrieves all currently available services using a GET request [accessed via a browser by a deployment technician] or retrieves a specific set of services using a POST request with a payload [initiated by the Orchestrator]",
 	}
 	statusService := components.Service{
-		Definition:  "status",
-		SubPath:     "status",
-		Details:     map[string][]string{"Forms": {"none"}},
+		Definition: "status",
+		SubPath:    "status",
+		// No Forms detail rather than a form called "none". Written into the
+		// graph the word became alc:none, a term that looks like a payload
+		// format and names nothing — the same shape as a unit of "W".
 		Description: "reports (GET) the role of the Service Registrar as leading or on stand by",
 	}
 

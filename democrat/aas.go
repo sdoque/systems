@@ -190,7 +190,7 @@ type ServiceInfo struct {
 const (
 	// afo is the Arrowhead Framework Ontology, published with a DOI, which is
 	// what makes these identifiers worth dereferencing.
-	afo = "http://www.synecdoque.com/2025/afo#"
+	afo = "https://w3id.org/synecdoque/afo#"
 	// alc is the local cloud's own namespace, for what this project mints.
 	alc = "http://www.synecdoque.com/lcloud/"
 )
@@ -253,7 +253,7 @@ const sparqlPrefixes = `
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX xsd:  <http://www.w3.org/2001/XMLSchema#>
 PREFIX alc:  <http://www.synecdoque.com/lcloud/>
-PREFIX afo:  <http://www.synecdoque.com/2025/afo#>
+PREFIX afo:  <https://w3id.org/synecdoque/afo#>
 PREFIX owl:  <http://www.w3.org/2002/07/owl#>
 PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 `
@@ -380,8 +380,8 @@ WHERE {
   ?svc afo:hasName ?svcName ;
        afo:hasUrl ?url .
   OPTIONAL { ?svc afo:hasServiceDefinition ?svcDef . }
-  OPTIONAL { ?svc alc:hasUnit ?unit . }
-  OPTIONAL { ?svc alc:hasQuantityKind ?quantityKind . }
+  OPTIONAL { ?svc afo:hasUnit ?unit . }
+  OPTIONAL { ?svc afo:hasQuantityKind ?quantityKind . }
   OPTIONAL { ?svc alc:hasMethods ?method . }
   OPTIONAL { ?svc afo:isSubscribable ?subscribable . }
   OPTIONAL { ?svc alc:hasForms ?form . }

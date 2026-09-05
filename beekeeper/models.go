@@ -178,17 +178,23 @@ var binaryService = map[string]bool{
 
 // serviceSpecs maps service subpath names to their Arrowhead metadata.
 var serviceSpecs = map[string]serviceSpec{
+	// Units are QUDT IRIs, not symbols. A bare "W" is not a unit anyone else
+	// can resolve: written into the graph it became a locally minted term that
+	// looked like a unit and meant nothing, and under the QUDT alignment AFO
+	// 2.1.0 adds it would be asserted to be a qudt:Unit, which is false.
+	// An empty unit stays empty and the triple is left out — a boolean has no
+	// unit, and saying so with an empty string is not the same as not saying it.
 	"on_off":       {"OnOff", "", "device on/off state (SignalB_v1a)"},
-	"brightness":   {"Brightness", "%", "brightness level 0–100%"},
-	"temperature":  {"Temperature", "Celsius", "temperature"},
-	"humidity":     {"Humidity", "%", "relative humidity"},
-	"pressure":     {"Pressure", "hPa", "atmospheric pressure"},
-	"power":        {"Power", "W", "instantaneous power consumption"},
-	"energy":       {"Energy", "Wh", "cumulative energy consumption"},
+	"brightness":   {"Brightness", "<http://qudt.org/vocab/unit/PERCENT>", "brightness level 0–100%"},
+	"temperature":  {"Temperature", "<http://qudt.org/vocab/unit/DEG_C>", "temperature"},
+	"humidity":     {"Humidity", "<http://qudt.org/vocab/unit/PERCENT>", "relative humidity"},
+	"pressure":     {"Pressure", "<http://qudt.org/vocab/unit/HectoPA>", "atmospheric pressure"},
+	"power":        {"Power", "<http://qudt.org/vocab/unit/W>", "instantaneous power consumption"},
+	"energy":       {"Energy", "<http://qudt.org/vocab/unit/W-HR>", "cumulative energy consumption"},
 	"presence":     {"Presence", "", "motion or presence detected (SignalB_v1a)"},
 	"open":         {"OpenClose", "", "contact state, true = open (SignalB_v1a)"},
 	"button_event": {"ButtonEvent", "", "button event code"},
-	"light_level":  {"LightLevel", "lux", "ambient light level"},
+	"light_level":  {"LightLevel", "<http://qudt.org/vocab/unit/LUX>", "ambient light level"},
 	"vibration":    {"Vibration", "", "vibration detected (SignalB_v1a)"},
 }
 

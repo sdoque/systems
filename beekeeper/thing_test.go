@@ -222,17 +222,21 @@ func TestDeviceCache_BinaryService(t *testing.T) {
 // TestServiceUnit verifies the unit string for all known and unknown subpaths.
 func TestServiceUnit(t *testing.T) {
 	cases := map[string]string{
+		// QUDT IRIs, not symbols. A consumer that reads "W" has to already know
+		// what a watt is; one that reads the IRI can look it up, and a reasoner
+		// can check it. The booleans keep no unit at all, which is different
+		// from an empty one.
 		"on_off":       "",
-		"brightness":   "%",
-		"temperature":  "Celsius",
-		"humidity":     "%",
-		"pressure":     "hPa",
-		"power":        "W",
-		"energy":       "Wh",
+		"brightness":   "<http://qudt.org/vocab/unit/PERCENT>",
+		"temperature":  "<http://qudt.org/vocab/unit/DEG_C>",
+		"humidity":     "<http://qudt.org/vocab/unit/PERCENT>",
+		"pressure":     "<http://qudt.org/vocab/unit/HectoPA>",
+		"power":        "<http://qudt.org/vocab/unit/W>",
+		"energy":       "<http://qudt.org/vocab/unit/W-HR>",
 		"presence":     "",
 		"open":         "",
 		"button_event": "",
-		"light_level":  "lux",
+		"light_level":  "<http://qudt.org/vocab/unit/LUX>",
 		"vibration":    "",
 		"unknown":      "",
 	}

@@ -45,6 +45,13 @@ type Traits struct {
 	owner          *components.System        `json:"-"`
 	name           string                    `json:"-"`
 
+	// ontologyFiles is where each configured local ontology lives on disk, kept
+	// because resolveLocalOntologies rewrites LOntologies into URLs. Mtimes
+	// record what has been loaded, so an ontology goes into the store when it
+	// first can and again when it is edited, rather than on every rebuild.
+	ontologyFiles map[string]string    `json:"-"`
+	ontologyMtime map[string]time.Time `json:"-"`
+
 	// graph is the assembled cloud, rebuilt when the registry reports a change
 	// rather than when somebody asks for it. Written by the subscriber's
 	// goroutine and read by every request handler, so it is swapped as a whole.
@@ -172,7 +179,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 	serverAddress := sys.Husk.Host.IPAddresses[0]
 	ontologyURL := fmt.Sprintf("http://%s:20105/kgrapher/assembler/ontologies/", serverAddress)
-	resolveLocalOntologies(t.LOntologies, dir, ontologyURL)
+	t.ontologyFiles = resolveLocalOntologies(t.LOntologies, dir, ontologyURL)
+	t.ontologyMtime = make(map[string]time.Time)
 
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
@@ -205,16 +213,53 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 }
 
 // resolveLocalOntologies checks if the local ontology files exist in the specified directory.
-func resolveLocalOntologies(localOntologies map[string]string, dir string, baseURL string) {
+func resolveLocalOntologies(localOntologies map[string]string, dir string, baseURL string) map[string]string {
+	paths := make(map[string]string)
 	for prefix, filename := range localOntologies {
 		fullPath := filepath.Join(dir, filename)
 
 		if _, err := os.Stat(fullPath); err == nil {
+			paths[prefix] = fullPath
 			localOntologies[prefix] = baseURL + filename
 		} else {
 			fmt.Printf("Warning: ontology file %s not found in %s. Removing prefix '%s'.\n", filename, dir, prefix)
 			delete(localOntologies, prefix)
 		}
+	}
+	return paths
+}
+
+// loadOntologies puts each configured local ontology into a named graph of its
+// own, so the vocabulary a deployment mints sits in the store beside the graph
+// that uses it.
+//
+// Without this the classification is a file on a Raspberry Pi: the cloud graph
+// says a heater is at cottage:BathroomSpace and nothing in the store can say
+// what that is, which is the difference between a vocabulary and a note.
+func (t *Traits) loadOntologies(client *http.Client, repoBase string) {
+	for prefix, path := range t.ontologyFiles {
+		info, err := os.Stat(path)
+		if err != nil {
+			log.Printf("kgrapher: the ontology %s went missing: %v\n", path, err)
+			continue
+		}
+		if was, ok := t.ontologyMtime[prefix]; ok && was.Equal(info.ModTime()) {
+			continue // already in the store, and unchanged since
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			log.Printf("kgrapher: could not read %s: %v\n", path, err)
+			continue
+		}
+		iri := "urn:ontology:" + prefix
+		if err := putGraph(client, repoBase, iri, string(data)); err != nil {
+			// Left for the next rebuild rather than given up on: the store may
+			// simply not be answering yet.
+			log.Printf("kgrapher: could not load %s into %s: %v\n", path, iri, err)
+			continue
+		}
+		t.ontologyMtime[prefix] = info.ModTime()
+		log.Printf("kgrapher: loaded the %s ontology into %s\n", prefix, iri)
 	}
 }
 
@@ -465,6 +510,8 @@ func (t *Traits) publishToStore(graph string) {
 	statementsURL := t.TripleStoreURL
 	repoBase := strings.TrimSuffix(t.TripleStoreURL, "/statements")
 	client := &http.Client{Transport: http.DefaultClient.Transport, Timeout: 60 * time.Second}
+
+	t.loadOntologies(client, repoBase)
 
 	if err := putGraph(client, repoBase, stagingGraph, graph); err != nil {
 		log.Printf("kgrapher: staging the graph: %v\n", err)

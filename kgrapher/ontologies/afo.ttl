@@ -9,9 +9,9 @@
 @base            <https://w3id.org/synecdoque/afo#> .
 
 <https://w3id.org/synecdoque/afo> rdf:type owl:Ontology ;
-    owl:versionIRI   <https://w3id.org/synecdoque/afo/2.1.0> ;
-    owl:priorVersion <https://w3id.org/synecdoque/afo/2.0.0> ;
-    owl:versionInfo  "2.1.0" ;
+    owl:versionIRI   <https://w3id.org/synecdoque/afo/2.2.0> ;
+    owl:priorVersion <https://w3id.org/synecdoque/afo/2.1.0> ;
+    owl:versionInfo  "2.2.0" ;
     rdfs:label       "Arrowhead Framework Ontology" ;
     rdfs:comment     """Version 2.0.0 moves the ontology to a permanent identifier at w3id.org. Changing an ontology IRI changes its identity, which is why this is a major version and not a patch: every term minted under the previous namespace is a different term. It was done while nothing had adopted the vocabulary, when it costs nothing, and it is not a thing to do again.""" ;
     dcterms:title    "Arrowhead Framework Ontology (AFO)" ;
@@ -648,3 +648,37 @@ version exists to avoid making twice.""" .
     rdfs:domain :Service ;
     rdfs:label "has quantity kind" ;
     rdfs:comment "What is being measured, as a QUDT quantity kind: temperature, angle, time." .
+
+
+#################################################################
+#    Added in 2.2.0 — the last of the framework's own terms
+#################################################################
+#
+# What remained under the local namespace, less one. A display name is not
+# here: a label is what RDFS already defines, and minting afo:hasDisplayName
+# beside rdfs:label would be inventing a synonym for a term the world has.
+
+:hasForms rdf:type owl:DatatypeProperty ;
+    rdfs:domain :Service ;
+    rdfs:label "has forms" ;
+    rdfs:comment """The payload a service speaks — an Arrowhead form such as
+SignalA_v1a, or a media type such as application/json. That it carries both is
+known and not yet resolved: they are different kinds of thing sharing a
+predicate, and separating them is a change to every system's configuration
+rather than to this file.""" .
+
+:hasMethods rdf:type owl:ObjectProperty ;
+    rdfs:domain :Service ;
+    rdfs:label "has methods" ;
+    rdfs:comment """Which methods the service answers, as the W3C HTTP method
+IRIs the framework already writes. No range is declared: the vocabulary at
+w3.org/2011/http-methods names the individuals without a class to hold them,
+and inventing one here would put this ontology's word in someone else's
+mouth.""" .
+
+:consumesFrom rdf:type owl:ObjectProperty ;
+    rdfs:domain :ConsumedService ;
+    rdfs:label "consumes from" ;
+    rdfs:comment """The endpoint a consumed service was actually bound to,
+which is what distinguishes it from afo:consumes: one names the definition
+that was wanted, this names the provider that answered.""" .

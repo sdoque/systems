@@ -22,6 +22,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -185,10 +186,19 @@ func newResources(uac usecases.ConfigurableAsset, sys *components.System) ([]*co
 	}
 	log.Printf("beekeeper: discovered %d light(s), %d sensor(s)\n", len(lights), len(sensors))
 
+	// Where the gateway says each device is. Not worth failing discovery over: an
+	// asset with no functional location is merely less well described, whereas a
+	// cottage with no heater services is a cold room.
+	lightLocations, err := fetchFunctionalLocations(cfg)
+	if err != nil {
+		log.Printf("beekeeper: %v — assets will carry no functional location\n", err)
+	}
+
 	// assetSpec accumulates everything known about one physical device.
 	type assetSpec struct {
 		displayName string   // taken from the light entry when present, else sensor
 		services    []string // deduplicated list
+		locations   []string // deCONZ group names, from the light entry
 		entries     []assetEntry
 	}
 
@@ -213,18 +223,16 @@ func newResources(uac usecases.ConfigurableAsset, sys *components.System) ([]*co
 			}
 			macToName[mac] = norm
 		}
+		// Only lights carry group membership: a group's sensor list holds the
+		// switches that command it, which is wiring rather than placement.
+		if resource == "lights" {
+			for _, loc := range lightLocations[id] {
+				spec.locations = appendUnique(spec.locations, loc)
+			}
+		}
 		spec.entries = append(spec.entries, assetEntry{resource, id})
 		for _, svc := range svcs {
-			found := false
-			for _, existing := range spec.services {
-				if existing == svc {
-					found = true
-					break
-				}
-			}
-			if !found {
-				spec.services = append(spec.services, svc)
-			}
+			spec.services = appendUnique(spec.services, svc)
 		}
 	}
 
@@ -295,9 +303,13 @@ func newResources(uac usecases.ConfigurableAsset, sys *components.System) ([]*co
 				break
 			}
 		}
-		ua := newDeviceAsset(ns.name, ns.displayName, ns.services, lightID, cfg, sys, cache)
+		ua := newDeviceAsset(ns.name, ns.displayName, ns.services, ns.locations, lightID, cfg, sys, cache)
 		assets = append(assets, ua)
-		log.Printf("beekeeper: asset %q  services: %v\n", ns.name, ns.services)
+		where := ""
+		if len(ns.locations) > 0 {
+			where = fmt.Sprintf("  at: %v", ns.locations)
+		}
+		log.Printf("beekeeper: asset %q  services: %v%s\n", ns.name, ns.services, where)
 	}
 
 	go listenWebSocket(sys.Ctx, cfg, cache, assetIndex)
@@ -309,7 +321,7 @@ func newResources(uac usecases.ConfigurableAsset, sys *components.System) ([]*co
 }
 
 // newDeviceAsset creates a UnitAsset for one ZigBee device.
-func newDeviceAsset(assetName, displayName string, services []string, lightID string, cfg DeconzConfig, sys *components.System, cache *DeviceCache) *components.UnitAsset {
+func newDeviceAsset(assetName, displayName string, services, locations []string, lightID string, cfg DeconzConfig, sys *components.System, cache *DeviceCache) *components.UnitAsset {
 	t := &Traits{assetName: assetName, lightID: lightID, cfg: cfg, cache: cache}
 
 	svcMap := make(components.Services)
@@ -350,13 +362,21 @@ func newDeviceAsset(assetName, displayName string, services []string, lightID st
 		assetMission = components.MissionActuation
 	}
 
+	details := map[string][]string{
+		"DisplayName": {displayName},
+	}
+	// Omitted rather than empty when the gateway places the device nowhere, on the
+	// same reasoning as an empty unit: a detail that says nothing is noise in the
+	// knowledge graph.
+	if len(locations) > 0 {
+		details["FunctionalLocation"] = locations
+	}
+
 	ua := &components.UnitAsset{
-		Name:    assetName,
-		Mission: assetMission,
-		Owner:   sys,
-		Details: map[string][]string{
-			"DisplayName": {displayName},
-		},
+		Name:        assetName,
+		Mission:     assetMission,
+		Owner:       sys,
+		Details:     details,
 		ServicesMap: svcMap,
 		Traits:      t,
 	}
@@ -367,6 +387,97 @@ func newDeviceAsset(assetName, displayName string, services []string, lightID st
 }
 
 // fetchAllDevices retrieves all lights and sensors from the deCONZ REST API.
+// DeconzGroup is a group as returned by /groups. Phoscon presents groups to the
+// user as rooms, which is what makes a group name the closest thing the gateway
+// holds to a functional location.
+type DeconzGroup struct {
+	Name   string   `json:"name"`
+	Hidden bool     `json:"hidden"`
+	Lights []string `json:"lights"` // deCONZ light IDs
+}
+
+// reservedAllGroup is ZigBee's 0xFFF0 broadcast group, which every node joins and
+// which therefore names no place. The REST API omits it, but a node's own group
+// list carries it, so it is excluded here rather than assumed away.
+const reservedAllGroup = "65520"
+
+// fetchFunctionalLocations maps a deCONZ light ID to the names of the groups that
+// place it. A group qualifies only if it names a place: not hidden, not the
+// broadcast group, and not one of Phoscon's internal groups, which carry a
+// "Phoscon_" prefix. An empty group contributes nothing by construction.
+//
+// Membership is read once, at discovery. Moving a plug to another room in Phoscon
+// changes the graph at the next restart, not immediately.
+func fetchFunctionalLocations(cfg DeconzConfig) (map[string][]string, error) {
+	groups := make(map[string]DeconzGroup)
+	if err := getJSON(cfg.apiBase()+"/groups", &groups); err != nil {
+		return nil, fmt.Errorf("fetch groups: %w", err)
+	}
+	byLight := make(map[string][]string)
+	for id, group := range groups {
+		if group.Hidden || id == reservedAllGroup || strings.HasPrefix(group.Name, "Phoscon_") {
+			continue
+		}
+		place := placeName(group.Name)
+		if place == "" {
+			log.Printf("beekeeper: group %q yields no usable place name — ignored\n", group.Name)
+			continue
+		}
+		for _, lightID := range group.Lights {
+			byLight[lightID] = appendUnique(byLight[lightID], place)
+		}
+	}
+	// A device may be in more than one group, and map iteration is unordered:
+	// sort so the same gateway produces the same graph on every run.
+	for _, names := range byLight {
+		sort.Strings(names)
+	}
+	return byLight, nil
+}
+
+// placeName turns a Phoscon room name into the local part of an IRI:
+// "Living room" becomes "LivingRoom".
+//
+// This is not cosmetic. afo:hasFunctionalLocation is an object property whose
+// range is afo:FunctionalLocation, so its object must be an IRI. The knowledge
+// graph mints one only when the detail value is a legal name — a value with a
+// space in it becomes a string literal instead, which contradicts the range and
+// joins to nothing. "Living room" would also miss alc:LivingRoom in the local
+// classification scheme, which is the whole reason for publishing the group.
+//
+// Words are capitalized and joined; anything already written as one word is left
+// as it is, so "LivingRoom" survives unchanged.
+func placeName(groupName string) string {
+	var b strings.Builder
+	newWord := true
+	for _, r := range groupName {
+		switch {
+		case r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9':
+			if newWord && r >= 'a' && r <= 'z' {
+				r -= 'a' - 'A'
+			}
+			b.WriteRune(r)
+			newWord = false
+		case r == '\'' || r == '\u2019':
+			// An apostrophe separates nothing: "Jan's office" is two words, not
+			// three, so it is dropped without starting a new one.
+		default:
+			newWord = true
+		}
+	}
+	return b.String()
+}
+
+// appendUnique adds value to list unless it is already there.
+func appendUnique(list []string, value string) []string {
+	for _, existing := range list {
+		if existing == value {
+			return list
+		}
+	}
+	return append(list, value)
+}
+
 func fetchAllDevices(cfg DeconzConfig) (map[string]DeconzLight, map[string]DeconzSensor, error) {
 	lights := make(map[string]DeconzLight)
 	sensors := make(map[string]DeconzSensor)

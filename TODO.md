@@ -369,6 +369,80 @@ say why here and then delete the entry.
   installing the systems as a Windows service so they survive a reboot without
   a scheduled task — the test used `schtasks`.
 
+## Vocabulary
+
+### The form's type name and its wire version are different strings
+
+A service advertises `"Forms": ["SignalA_v1a"]` in its details, but the payload
+must carry `"version": "SignalA_v1.0"`. The first is the Go type, the second is
+the key in `FormTypeMap`. Anyone writing a client by reading the service
+registry gets it wrong, and it cost the Artitrax team an afternoon on 8
+September 2026.
+
+The mismatch is now in five forms, not two: `ScanA`, `PoseA` and `MapA` follow
+the same convention.
+
+Options, none of them taken yet:
+
+- have `Unpack` accept the type name as an alias for the version — forgiving,
+  but it makes two spellings correct forever;
+- advertise the wire version in `Forms` — honest, but it changes what the
+  kgrapher emits and what `alc:` carries, so it is a graph-visible change;
+- leave it and document it, which is what the loader README now does.
+
+The middle option is probably right and is exactly the kind of breaking change
+the release pause exists to batch.
+
+
+
+- **The painter shows no core systems on the cottage's canvas.** Fixed in the
+  code and deliberately not deployed: the cloud was left running on 6 September
+  rather than take a fifth restart in a day. The cause is worth keeping even
+  though the fix is done, because it caught two consumers and only one of them
+  was noticed. Written as `a afo:System, afo:CertificateAuthority` — valid
+  Turtle — the core systems stopped being systems to both hand-rolled parsers
+  in this project, which read a line at a time and made the object the whole
+  string. The kgrapher stopped counting them and the painter stopped drawing
+  them, and neither said anything, because a parser that does not know a
+  construct does not complain about it. The emitter repeats the predicate now.
+  The next deployment carries it.
+
+- **`alc:hasType` and `alc:hasDatabase` are declared and never read.** That is
+  not on its own a reason to remove them, and the reasoning that removed
+  `hasPKI` does not apply: X.509 was the only value the framework could state,
+  where `Database: InfluxDB` is contingent and `Type: Interactive` genuinely
+  separates the four systems a person opens in a browser from the twenty that
+  only talk to machines. Both are true and non-obvious facts about a
+  deployment, and a graph exists to be asked questions its author did not
+  anticipate — Triona is about to be exactly that reader. So decide what each
+  means rather than delete it: `Type: Interactive` is close to something AFO
+  could say properly, beside `Mission`; and `Database: InfluxDB` is a
+  *dependency on a service outside the cloud*, which the vocabulary cannot
+  express at all and which an FMEA plainly wants — every measurement the
+  collector writes ends somewhere the cloud does not control.
+
+  Two others were checked at the same time and must stay: `ModuleName` is read
+  three times by the ethermostat and is what pairs a heater with its room's
+  sensor, and `Format` is how the envoy knows what it has captured. Neither is
+  decoration, and the check that established it was made only after nearly
+  recommending their removal.
+
+- **mAF and AFO describe the same framework and have drifted.** `mAF.sysml` is
+  the SysML v2 vocabulary the modeler embeds, and it has no notion of the
+  security posture, of a functional location, or of units — so the SysML model
+  of a temperature service cannot say °C, which is the fault we spent a morning
+  fixing on the RDF side. Where the two do overlap they disagree in form: a
+  mission is a declared property in AFO and a bare `String` in mAF, and
+  `GetState`/`SetState`/`Compute` are plainly AFO's `Get`/`Set`/`Do` under
+  other names with nothing saying so.
+
+  The cheap step is to make `smodeling.go` carry units and quantity kinds
+  through, since it never looks at `Details` at all. The real answer is to
+  derive mAF from AFO: AFO is machine-readable and now declares everything the
+  framework writes, while `mAF.sysml` is hand-maintained and embedded with
+  `go:embed`. Generated, the two cannot drift. Today the drift is invisible
+  until somebody notices a model with no units.
+
 ## Not yet run on hardware
 
 The mission type, `ServicePointList_v1`, the cervice lock, the client transport

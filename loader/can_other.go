@@ -18,7 +18,10 @@
 
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // canFrame is declared here too so the rest of the system compiles off Linux.
 type canFrame struct {
@@ -38,4 +41,8 @@ func closeCAN(_ int) {}
 
 func sendCAN(_ int, _ uint32, _ []byte) error {
 	return fmt.Errorf("SocketCAN is only supported on Linux")
+}
+
+func recvCAN(_ int, _ time.Duration) (canFrame, error) {
+	return canFrame{}, fmt.Errorf("SocketCAN is only supported on Linux")
 }

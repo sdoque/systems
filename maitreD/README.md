@@ -8,8 +8,7 @@ It has four responsibilities — three of them security, and one that is there
 because of where it runs rather than what it is for:
 
 1. **Own enrollment** — the maitreD enrolls with the CA over the network using IP-based pre-authorization. The CA only signs its CSR if the request originates from a pre-configured host IP.
-2. **Whitelist sync** — after enrollment, the maitreD pulls the cloud-wide whitelist from the CA's `/ca/certification/whitelist` endpoint and refreshes it every 5 minutes. The fetched list lives in memory and is mirrored to `whitelist.cache.json` so the maitreD survives a CA outage. **The whitelist is no longer hand-edited per host** — the CA owns it (see [ca/README.md](../ca/README.md)).
-3. **Software attestation** — once a whitelist is loaded, the maitreD answers attestation requests from the CA. When any other system on the same host requests a certificate, the CA asks the maitreD to verify the SHA-256 hash of that system's running executable against the in-memory list. Until the first successful load, the maitreD returns `503 Service Unavailable` to every attestation request — fail-closed.
+2. **Software attestation** — when any other system on the same host requests a certificate, the CA asks this maitreD what that process is running. The maitreD resolves the pid to its executable, hashes it, and returns a **signed statement** of what it measured. It does not decide anything: the whitelist lives with the CA, which owns it (see [ca/README.md](../ca/README.md)).
 4. **Host load reporting** — the maitreD samples the machine it runs on and offers a `loadstatus` service, so that something deciding where work should run can ask. See *[Reporting the host's load](#reporting-the-hosts-load)* below.
 
 ## Startup order
@@ -55,12 +54,12 @@ sequenceDiagram
     CA->>MD: POST /maitreD/maitreD/attest<br/>Body: {"pid": &lt;pid&gt;}
     MD->>MD: readlink /proc/&lt;pid&gt;/exe → executable path
     MD->>MD: SHA-256 hash of executable file
-    MD->>MD: Check hash against whitelist
+    MD->>MD: Sign the measurement
     alt hash approved
         MD-->>CA: 200 OK
         CA->>CA: Sign CSR
         CA-->>S: 200 OK — signed certificate PEM
-    else hash not in whitelist
+    else cannot be measured
         MD-->>CA: 403 Forbidden
         CA-->>S: 403 Forbidden — attestation failed
     end
@@ -224,23 +223,46 @@ On first run the maitreD generates a `systemconfig.json` and exits so you can re
 }
 ```
 
-### The whitelist (CA-mastered)
+### There is no whitelist here
 
-The maitreD does **not** carry a hand-edited whitelist. It pulls the cloud's
-approved-executable list from the CA on startup and every 5 minutes
-afterwards, caching the last-good copy in `whitelist.cache.json` next to the
-binary. Until the first successful load (cache or fetch), every attestation
-request returns `503 Service Unavailable`.
+This system holds no list of approved binaries, in memory or on disk. It
+measures; the CA decides.
 
-To approve a new binary, edit the CA's `whitelist.json`. See
-[ca/README.md](../ca/README.md) for the CA-side instructions.
+That was not always so. The maitreD used to fetch the CA's whitelist, keep it in
+memory, and mirror it to `whitelist.cache.json` so it could start while the CA
+was unreachable — a case that cannot arise, because the CA is the only thing
+that ever asks for an attestation. What the file could do was grant a
+certificate to any binary whose hash somebody wrote into it, and a five-minute
+sync meant an approved binary waited up to five minutes to start. Both problems
+disappear when the policy stays on the machine that owns it. Any leftover
+`whitelist.cache.json` is deleted at startup.
 
-| Failure mode | Behavior |
-|---|---|
-| First-ever startup, CA reachable | Pull, cache, then start serving |
-| First-ever startup, CA unreachable | Log fatal, exit (no cache to fall back on) |
-| Subsequent startup, cache present | Use cache immediately, then refresh in background |
-| CA unreachable mid-run | Keep using current in-memory list, log a warning per failed sync |
+To approve a binary, edit the CA's `whitelist.json`. It takes effect on the next
+certificate request.
+
+### The statement, and why it is signed
+
+The CA reaches `attest` over plain HTTP, at an address the requesting system
+controls, and the service is deliberately exempt from authorization — the
+bootstrap plane is what makes tokens possible and cannot require one. So the
+transport proves nothing about who answered, and anything able to listen on this
+port could otherwise vouch for itself.
+
+The reply is therefore signed with the key behind this maitreD's own
+certificate:
+
+    POST /maitreD/maitreD/attest   {"pid": 4242, "nonce": "<32+ hex chars>"}
+
+    200 {"pid": 4242, "hash": "<sha256>", "nonce": "<echoed>",
+         "timestamp": "<RFC3339>", "signature": "<base64>", "certificate": "<PEM>"}
+
+The CA checks that the certificate is one it issued to a `maitreD`, that the
+signature covers this pid and this challenge, and only then looks the hash up.
+
+The nonce is required and must be at least 32 characters: without a challenge, a
+statement recorded once could be replayed for ever. Before this maitreD has
+enrolled it has no key, and it answers `503` rather than making a statement
+nobody could check.
 
 ### CA-side prerequisites
 

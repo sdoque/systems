@@ -9,9 +9,9 @@
 @base            <https://w3id.org/synecdoque/afo#> .
 
 <https://w3id.org/synecdoque/afo> rdf:type owl:Ontology ;
-    owl:versionIRI   <https://w3id.org/synecdoque/afo/2.2.0> ;
-    owl:priorVersion <https://w3id.org/synecdoque/afo/2.1.0> ;
-    owl:versionInfo  "2.2.0" ;
+    owl:versionIRI   <https://w3id.org/synecdoque/afo/2.3.0> ;
+    owl:priorVersion <https://w3id.org/synecdoque/afo/2.2.0> ;
+    owl:versionInfo  "2.3.0" ;
     rdfs:label       "Arrowhead Framework Ontology" ;
     rdfs:comment     """Version 2.0.0 moves the ontology to a permanent identifier at w3id.org. Changing an ontology IRI changes its identity, which is why this is a major version and not a patch: every term minted under the previous namespace is a different term. It was done while nothing had adopted the vocabulary, when it costs nothing, and it is not a thing to do again.""" ;
     dcterms:title    "Arrowhead Framework Ontology (AFO)" ;
@@ -19,7 +19,7 @@
     dcterms:creator  "Oskar Wintercorn" ;
     dcterms:publisher "Synecdoque" ;
     dcterms:license  <http://creativecommons.org/licenses/by/4.0/> ;
-    dcterms:modified "2026-09-05"^^xsd:date ;
+    dcterms:modified "2026-09-06"^^xsd:date ;
     rdfs:seeAlso     <https://doi.org/10.1109/OJIES.2026.3693084> ;
     dcterms:bibliographicCitation "O. Wintercorn and J. van Deventer, \"The Arrowhead Framework Ontology,\" IEEE Open Journal of the Industrial Electronics Society, 2026, doi: 10.1109/OJIES.2026.3693084." ;
     vann:preferredNamespacePrefix "afo" ;
@@ -682,3 +682,56 @@ mouth.""" .
     rdfs:comment """The endpoint a consumed service was actually bound to,
 which is what distinguishes it from afo:consumes: one names the definition
 that was wanted, this names the provider that answered.""" .
+
+
+#################################################################
+#    Added in 2.3.0 — the two core systems the ontology never named
+#################################################################
+#
+# AFO described the Arrowhead core it inherited — a registrar, an orchestrator,
+# a certificate authority — and not the two systems this framework added to make
+# security work. The maitreD attests the binary asking for a certificate and the
+# authorizer decides what a certified system may then do; between them they are
+# most of the security model, and neither had a name here.
+#
+# The maitreD's absence was visible in the graph: it announced itself with a
+# local detail reading "Role: host-attestation", which is a system describing
+# itself in prose because the vocabulary had no class for it to be.
+
+:CoreSystem rdf:type owl:Class ;
+    rdfs:subClassOf :System ;
+    rdfs:label "core system" ;
+    rdfs:comment """A system that mediates the cloud rather than doing its work:
+the ones an application system finds already there. Gathered under one class so
+a query can ask what infrastructure a cloud is running without naming each.""" .
+
+:CertificateAuthority rdfs:subClassOf :CoreSystem .
+:ServiceRegistrar     rdfs:subClassOf :CoreSystem .
+:Orchestrator         rdfs:subClassOf :CoreSystem .
+
+:MaitreD rdf:type owl:Class ;
+    rdfs:subClassOf :CoreSystem ;
+    rdfs:label "maitreD" ;
+    rdfs:comment """Attests the binaries running on its own host: it hashes the
+executable behind a process and answers the CA, which signs nothing without it.
+One per host, and it can only speak for processes of its own user.""" .
+
+:Authorizer rdf:type owl:Class ;
+    rdfs:subClassOf :CoreSystem ;
+    rdfs:label "authorizer" ;
+    rdfs:comment """Decides what a certified system may do, minting the per-action
+tokens a provider checks. A cloud that names none has authentication without
+authorization, which is a decision rather than an omission.""" .
+
+:hasDefaultForm rdf:type owl:DatatypeProperty ;
+    rdfs:domain :Service ;
+    rdfs:range xsd:string ;
+    rdfs:label "has default form" ;
+    rdfs:comment """The form assumed when a request names none. A narrower
+statement than hasForms, which lists what is accepted.""" .
+
+# hasPKI is deliberately absent. The framework issues X.509 and nothing else,
+# so a system declaring "PKI: X.509" stated the only value it could, to no
+# reader — and what a system does about security is now said by its
+# SecurityPosture, which reports what is true rather than what was intended.
+

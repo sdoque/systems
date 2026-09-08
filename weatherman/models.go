@@ -172,7 +172,7 @@ var issModuleInfo = moduleInfo{
 	services: []serviceSpec{
 		{"temperature", "temperature", "Celsius", "outdoor temperature from the ISS (GET)"},
 		{"humidity", "humidity", "%", "outdoor relative humidity from the ISS (GET)"},
-		{"wind_speed", "wind_speed", "km/h", "wind speed (GET)"},
+		{"wind_speed", "wind_speed", "<http://qudt.org/vocab/unit/KiloM-PER-HR>", "wind speed (GET)"},
 		{"wind_angle", "wind_angle", "°", "wind direction in degrees (GET)"},
 		{"rain_rate", "rain_rate", "mm/h", "current rain rate (GET)"},
 		{"rain_24h", "rain_24h", "mm", "day rain accumulation (GET)"},

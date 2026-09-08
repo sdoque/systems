@@ -264,7 +264,7 @@ func checkUnboundedWritable(c *Cloud) []*Finding {
 					"so nothing rejects an implausible value",
 				Detection: "None. The write succeeds and the resulting behaviour looks like ordinary operation",
 				Action:    "Declare a Range detail on the service and refuse writes outside it",
-				Evidence:  s.IRI + " declares alc:hasMethods PUT or POST and no alc:hasRange",
+				Evidence:  s.IRI + " declares afo:hasMethods PUT or POST and no alc:hasRange",
 			})
 		}
 	}

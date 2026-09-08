@@ -84,7 +84,6 @@ func initTemplate() *components.UnitAsset {
 		Name:     "orchestration",
 		Mission:  components.MissionCore,
 		Mobility: components.MobilityMovable,
-		Details:  map[string][]string{"Platform": {"Independent"}},
 		Traits:   &Traits{},
 		ServicesMap: components.Services{
 			squest.SubPath:  &squest,

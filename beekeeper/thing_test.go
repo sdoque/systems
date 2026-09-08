@@ -1,8 +1,13 @@
 package main
 
 import (
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -364,6 +369,77 @@ func TestSmartPlugSplitsActuationFromMetering(t *testing.T) {
 		}
 		if got.String() != mission {
 			t.Errorf("missionForService(%q) = %q; want %q", svc, got, mission)
+		}
+	}
+}
+
+// TestFetchFunctionalLocations uses the payload the lab gateway actually returns
+// (deCONZ 2.33.2, RaspBee II): two Aqara plugs, one room each, plus Phoscon's own
+// empty group. The reserved 0xFFF0 group is added here even though the REST API
+// omits it, because the exclusion must be tested rather than trusted.
+func TestFetchFunctionalLocations(t *testing.T) {
+	const payload = `{
+		"1": {"name": "Phoscon_All_Off", "lights": []},
+		"2": {"name": "Kitchen", "lights": ["2"]},
+		"3": {"name": "Living room", "lights": ["1"]},
+		"4": {"name": "Attic", "hidden": true, "lights": ["1"]},
+		"65520": {"name": "All", "lights": ["1", "2"]}
+	}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/testkey/groups" {
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+		fmt.Fprint(w, payload)
+	}))
+	defer srv.Close()
+
+	host, port, _ := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	apiPort, _ := strconv.Atoi(port)
+	cfg := DeconzConfig{Host: host, APIPort: apiPort, APIKey: "testkey"}
+
+	got, err := fetchFunctionalLocations(cfg)
+	if err != nil {
+		t.Fatalf("fetchFunctionalLocations: %v", err)
+	}
+	// "Living room" must arrive as LivingRoom: the graph mints alc:LivingRoom
+	// from it, and afo:hasFunctionalLocation takes an IRI, not a literal.
+	want := map[string][]string{"1": {"LivingRoom"}, "2": {"Kitchen"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// A device the gateway places nowhere must carry no FunctionalLocation at all,
+// rather than an empty one: an empty detail is a term in the graph that says
+// nothing.
+func TestNewDeviceAsset_FunctionalLocation(t *testing.T) {
+	sys := &components.System{Name: "beekeeper"}
+	cache := newDeviceCache()
+
+	placed := newDeviceAsset("bench1", "Bench1", []string{"on_off"}, []string{"LivingRoom"}, "1", DeconzConfig{}, sys, cache)
+	if got := placed.Details["FunctionalLocation"]; !reflect.DeepEqual(got, []string{"LivingRoom"}) {
+		t.Errorf("placed asset: got %v, want [LivingRoom]", got)
+	}
+
+	loose := newDeviceAsset("desk", "Desk", []string{"on_off"}, nil, "2", DeconzConfig{}, sys, cache)
+	if _, ok := loose.Details["FunctionalLocation"]; ok {
+		t.Errorf("unplaced asset carries FunctionalLocation %v, want it absent", loose.Details["FunctionalLocation"])
+	}
+}
+
+func TestPlaceName(t *testing.T) {
+	cases := map[string]string{
+		"Living room":  "LivingRoom",
+		"Kitchen":      "Kitchen",
+		"LivingRoom":   "LivingRoom", // already one word: left alone, not re-split
+		"dining room":  "DiningRoom",
+		"Bedroom 2":    "Bedroom2",
+		"Jan's office": "JansOffice",
+		"  ":           "", // nothing usable: the caller drops it
+	}
+	for in, want := range cases {
+		if got := placeName(in); got != want {
+			t.Errorf("placeName(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

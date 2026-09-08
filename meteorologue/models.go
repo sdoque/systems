@@ -74,7 +74,7 @@ var moduleTypeMap = map[string]moduleInfo{
 		services: []serviceSpec{
 			{"temperature", "temperature", "<http://qudt.org/vocab/unit/DEG_C>", "<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>", "indoor temperature (GET)"},
 			{"humidity", "humidity", "<http://qudt.org/vocab/unit/PERCENT>", "<http://qudt.org/vocab/quantitykind/RelativeHumidity>", "indoor relative humidity (GET)"},
-			{"co2", "co2", "ppm", "", "indoor CO2 concentration (GET)"},
+			{"co2", "co2", "<http://qudt.org/vocab/unit/PPM>", "<http://qudt.org/vocab/quantitykind/AmountOfSubstanceFraction>", "indoor CO2 concentration (GET)"},
 			{"pressure", "pressure", "<http://qudt.org/vocab/unit/MilliBAR>", "<http://qudt.org/vocab/quantitykind/Pressure>", "atmospheric pressure (GET)"},
 			{"noise", "noise", "<http://qudt.org/vocab/unit/DeciB>", "<http://qudt.org/vocab/quantitykind/SoundPressureLevel>", "indoor noise level (GET)"},
 		},
@@ -89,17 +89,17 @@ var moduleTypeMap = map[string]moduleInfo{
 	"NAModule2": {
 		assetName: "WindModule",
 		services: []serviceSpec{
-			{"wind_speed", "wind_speed", "km/h", "", "wind speed (GET)"},
+			{"wind_speed", "wind_speed", "<http://qudt.org/vocab/unit/KiloM-PER-HR>", "<http://qudt.org/vocab/quantitykind/Speed>", "wind speed (GET)"},
 			{"wind_angle", "wind_angle", "<http://qudt.org/vocab/unit/DEG>", "<http://qudt.org/vocab/quantitykind/Angle>", "wind direction in degrees (GET)"},
-			{"gust_speed", "gust_speed", "km/h", "", "gust speed (GET)"},
+			{"gust_speed", "gust_speed", "<http://qudt.org/vocab/unit/KiloM-PER-HR>", "<http://qudt.org/vocab/quantitykind/Speed>", "gust speed (GET)"},
 			{"gust_angle", "gust_angle", "<http://qudt.org/vocab/unit/DEG>", "<http://qudt.org/vocab/quantitykind/Angle>", "gust direction in degrees (GET)"},
 		},
 	},
 	"NAModule3": {
 		assetName: "RainModule",
 		services: []serviceSpec{
-			{"rain", "rain", "mm/h", "", "rain accumulation in last hour (GET)"},
-			{"rain_24h", "rain_24h", "mm", "", "rain accumulation in last 24 hours (GET)"},
+			{"rain", "rain", "<http://qudt.org/vocab/unit/MilliM-PER-HR>", "<http://qudt.org/vocab/quantitykind/Speed>", "rain accumulation in last hour (GET)"},
+			{"rain_24h", "rain_24h", "<http://qudt.org/vocab/unit/MilliM>", "<http://qudt.org/vocab/quantitykind/Length>", "rain accumulation in last 24 hours (GET)"},
 		},
 	},
 	"NAModule4": {
@@ -108,7 +108,7 @@ var moduleTypeMap = map[string]moduleInfo{
 		services: []serviceSpec{
 			{"temperature", "temperature", "<http://qudt.org/vocab/unit/DEG_C>", "<http://qudt.org/vocab/quantitykind/ThermodynamicTemperature>", "indoor temperature, secondary module (GET)"},
 			{"humidity", "humidity", "<http://qudt.org/vocab/unit/PERCENT>", "<http://qudt.org/vocab/quantitykind/RelativeHumidity>", "indoor relative humidity, secondary module (GET)"},
-			{"co2", "co2", "ppm", "", "indoor CO2 concentration, secondary module (GET)"},
+			{"co2", "co2", "<http://qudt.org/vocab/unit/PPM>", "<http://qudt.org/vocab/quantitykind/AmountOfSubstanceFraction>", "indoor CO2 concentration, secondary module (GET)"},
 		},
 	},
 }

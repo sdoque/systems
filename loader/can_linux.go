@@ -81,6 +81,29 @@ func openCAN(ifname string) (int, error) {
 	return fd, nil
 }
 
+// recvCAN reads one frame, waiting at most timeout. A timeout is reported as
+// errCANTimeout rather than as a failure: a quiet bus is normal, and a reader
+// loop needs to come back around to check whether it has been told to stop.
+func recvCAN(fd int, timeout time.Duration) (canFrame, error) {
+	tv := syscall.NsecToTimeval(int64(timeout))
+	if err := syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv); err != nil {
+		return canFrame{}, fmt.Errorf("set receive timeout: %w", err)
+	}
+	var f canFrame
+	buf := unsafe.Slice((*byte)(unsafe.Pointer(&f)), unsafe.Sizeof(f))
+	n, err := syscall.Read(fd, buf)
+	if err != nil {
+		if err == syscall.EAGAIN || err == syscall.EWOULDBLOCK {
+			return canFrame{}, errCANTimeout
+		}
+		return canFrame{}, err
+	}
+	if n < int(unsafe.Sizeof(f)) {
+		return canFrame{}, fmt.Errorf("short CAN read: %d bytes", n)
+	}
+	return f, nil
+}
+
 func closeCAN(fd int) {
 	if err := syscall.Close(fd); err != nil {
 		log.Printf("closeCAN: %v", err)

@@ -56,13 +56,24 @@ const (
 // LoaderConfig is what the operator may set. Every field has a working default
 // so the generated file needs no editing to drive a motor.
 type LoaderConfig struct {
-	Interface    string      `json:"canInterface"`
-	CommandHz    int         `json:"commandHz"`
-	SafetyStopMs int         `json:"safetyStopMs"`
-	MaxWheelRPM  float64     `json:"maxWheelRPM"`
-	AccelStep    int         `json:"accelStep"`
-	BrakeStep    int         `json:"brakeStep"`
-	Motors       []MotorSpec `json:"motors"`
+	Interface string `json:"canInterface"`
+	// SensorInterface is the second bus, carrying the waist angle sensor alone.
+	// The reference brings it up at 250 kbit/s while the motor bus runs at 500.
+	// Empty means the sensor is not fitted, and the waist service then says so
+	// rather than inventing an angle.
+	SensorInterface string `json:"canSensorInterface"`
+	// WaistPollHz is how often the articulation sensor is asked; it answers only
+	// when polled.
+	WaistPollHz int `json:"waistPollHz"`
+	// FeedbackStaleMs is how old a measurement may be before it stops counting
+	// as one.
+	FeedbackStaleMs int         `json:"feedbackStaleMs"`
+	CommandHz       int         `json:"commandHz"`
+	SafetyStopMs    int         `json:"safetyStopMs"`
+	MaxWheelRPM     float64     `json:"maxWheelRPM"`
+	AccelStep       int         `json:"accelStep"`
+	BrakeStep       int         `json:"brakeStep"`
+	Motors          []MotorSpec `json:"motors"`
 }
 
 // MotorSpec names one motor on the bus. Kind decides how a setpoint is read:
@@ -81,6 +92,8 @@ type drivetrain struct {
 	cfg LoaderConfig
 	fd  int
 
+	fb *feedback
+
 	mu        sync.Mutex
 	setpoint  map[int]float64 // node ID -> RPM (wheel) or percent (steering)
 	last      map[int]int16   // node ID -> last raw command, for rate limiting
@@ -93,7 +106,25 @@ type Traits struct {
 	NodeID int
 	Kind   string
 	unit   string
-	dt     *drivetrain
+	// encoderIndex is this motor's place in the wheel-encoder frames, or -1
+	// when it has none.
+	encoderIndex int
+	dt           *drivetrain
+}
+
+// servicesFor keeps only the services a given motor can actually answer. Every
+// asset is built from the same configured list, but a steering motor has no
+// wheel encoder and a wheel has no articulation sensor, and a service that is
+// registered but cannot answer is worse than one that was never offered.
+func servicesFor(kind string, configured []components.Service) components.Services {
+	svcs := usecases.MakeServiceMap(configured)
+	if kind == "steering" {
+		delete(svcs, "speed")
+		delete(svcs, "travel")
+	} else {
+		delete(svcs, "waist")
+	}
+	return svcs
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -111,6 +142,45 @@ func initTemplate() *components.UnitAsset {
 		Description: "reports the speed this motor is being commanded to (GET) or commands it (PUT)",
 	}
 
+	speed := components.Service{
+		Definition: "speed",
+		SubPath:    "speed",
+		Details: map[string][]string{
+			"Forms":        {"SignalA_v1a"},
+			"Unit":         {"<http://qudt.org/vocab/unit/REV-PER-MIN>"},
+			"QuantityKind": {"<http://qudt.org/vocab/quantitykind/AngularVelocity>"},
+			"Methods":      components.HTTPMethods("GET"),
+		},
+		RegPeriod:     2,
+		SubscribeAble: true,
+		Description:   "the speed this wheel is measured to be turning, from its encoder",
+	}
+
+	travel := components.Service{
+		Definition: "travel",
+		SubPath:    "travel",
+		Details: map[string][]string{
+			"Forms":   {"SignalA_v1a"},
+			"Unit":    {"<http://qudt.org/vocab/unit/REV>"},
+			"Methods": components.HTTPMethods("GET"),
+		},
+		RegPeriod:     2,
+		SubscribeAble: true,
+		Description:   "revolutions this wheel has turned since the encoder powered up",
+	}
+
+	waist := components.Service{
+		Definition: "waist",
+		SubPath:    "waist",
+		Details: map[string][]string{
+			"Forms":   {"SignalA_v1a"},
+			"Methods": components.HTTPMethods("GET"),
+		},
+		RegPeriod:     2,
+		SubscribeAble: true,
+		Description:   "the articulation sensor's raw 10-bit reading; see the note on its scale",
+	}
+
 	return &components.UnitAsset{
 		Name:     "Drivetrain",
 		Mission:  components.MissionActuation,
@@ -118,9 +188,15 @@ func initTemplate() *components.UnitAsset {
 		Details:  map[string][]string{"Model": {"artitrax"}, "FunctionalLocation": {"Loader"}},
 		ServicesMap: components.Services{
 			setpoint.SubPath: &setpoint,
+			speed.SubPath:    &speed,
+			travel.SubPath:   &travel,
+			waist.SubPath:    &waist,
 		},
 		Traits: &LoaderConfig{
-			Interface: "can0",
+			Interface:       "can0",
+			SensorInterface: "can1",
+			WaistPollHz:     10,
+			FeedbackStaleMs: 500,
 			// Above ten, because can_dds — and the hardware behind it — treats a
 			// command older than 100 ms as stale and zeroes the outputs. Twenty
 			// leaves margin for a missed cycle.
@@ -167,8 +243,31 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	dt := &drivetrain{
 		cfg:      cfg,
 		fd:       fd,
+		fb:       newFeedback(time.Duration(cfg.FeedbackStaleMs) * time.Millisecond),
 		setpoint: make(map[int]float64),
 		last:     make(map[int]int16),
+	}
+
+	// A second socket on the motor bus, for reading. One socket shared between
+	// the command loop and the encoder listener would make them take turns, and
+	// the command loop must never wait on a sensor: the drives zero their
+	// outputs if they are not spoken to.
+	encFd, err := openCAN(cfg.Interface)
+	if err != nil {
+		closeCAN(fd)
+		log.Fatalf("loader: cannot open %s for encoder feedback: %v", cfg.Interface, err)
+	}
+	go dt.fb.listenEncoders(sys.Ctx, encFd)
+
+	waistFd := -1
+	if cfg.SensorInterface != "" {
+		waistFd, err = openCAN(cfg.SensorInterface)
+		if err != nil {
+			log.Printf("loader: no waist angle sensor on %s (%v) — the waist service will report unavailable", cfg.SensorInterface, err)
+			waistFd = -1
+		} else {
+			go dt.fb.pollWaist(sys.Ctx, waistFd, time.Second/time.Duration(cfg.WaistPollHz))
+		}
 	}
 
 	if err := dt.initMotors(); err != nil {
@@ -178,7 +277,13 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 
 	var assets []*components.UnitAsset
 	for _, m := range cfg.Motors {
-		t := &Traits{Name: m.Name, NodeID: m.NodeID, Kind: m.Kind, dt: dt}
+		t := &Traits{Name: m.Name, NodeID: m.NodeID, Kind: m.Kind, dt: dt, encoderIndex: -1}
+		// Wheel encoders answer on 0x18B..0x18E in motor-node order, so node 1
+		// is index 0. The steering motor has no wheel encoder; the articulation
+		// is measured by its own sensor on the other bus.
+		if m.Kind == "wheel" && m.NodeID >= 1 && m.NodeID <= encoderCount {
+			t.encoderIndex = m.NodeID - 1
+		}
 		t.unit = "<http://qudt.org/vocab/unit/REV-PER-MIN>"
 		if m.Kind == "steering" {
 			t.unit = "<http://qudt.org/vocab/unit/PERCENT>"
@@ -198,7 +303,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			TetheredTo:  configuredAsset.TetheredTo,
 			Owner:       sys,
 			Details:     details,
-			ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
+			ServicesMap: servicesFor(m.Kind, configuredAsset.Services),
 			Traits:      t,
 		}
 		ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
@@ -212,6 +317,10 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	return assets, func() {
 		dt.stopAll()
 		closeCAN(fd)
+		closeCAN(encFd)
+		if waistFd >= 0 {
+			closeCAN(waistFd)
+		}
 		log.Println("loader: motors stopped and CAN closed")
 	}
 }
@@ -234,6 +343,12 @@ func applyDefaults(cfg *LoaderConfig) {
 	}
 	if cfg.BrakeStep <= 0 {
 		cfg.BrakeStep = 100
+	}
+	if cfg.WaistPollHz <= 0 {
+		cfg.WaistPollHz = 10
+	}
+	if cfg.FeedbackStaleMs <= 0 {
+		cfg.FeedbackStaleMs = 500
 	}
 }
 
@@ -460,4 +575,85 @@ func (t *Traits) set(sig forms.SignalA_v1a) forms.SignalA_v1a {
 		log.Printf("loader: %s asked for %.2f, clamped to %.2f", t.Name, sig.Value, v)
 	}
 	return t.get()
+}
+
+//-------------------------------------The measured services
+
+// speedService reports what the wheel is doing, as against the setpoint
+// service, which reports what it was asked to do.
+//
+// It answers 503 when the encoder has gone quiet, and that is the point of it.
+// The obvious alternative — fall back to the setpoint — would produce a system
+// that reports full speed for a wheel that is not turning, which is exactly the
+// number an odometry consumer would integrate into a map of a journey that
+// never happened.
+func (t *Traits) speedService(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+		return
+	}
+	reading, fresh := t.dt.fb.wheel(t.encoderIndex)
+	if !fresh {
+		http.Error(w, "no recent encoder frame for this wheel", http.StatusServiceUnavailable)
+		return
+	}
+	f := forms.SignalA_v1a{}
+	f.NewForm()
+	f.Value = reading.rpm
+	f.Unit = "<http://qudt.org/vocab/unit/REV-PER-MIN>"
+	f.Timestamp = reading.at
+	usecases.HTTPProcessGetRequest(w, r, &f)
+}
+
+// travelService reports the wheel's cumulative revolutions.
+//
+// The counter is 24 bits and free-running, so it wraps after 2^24 counts —
+// about 205 output revolutions. A consumer differencing it must expect that,
+// which is why the count is published as it is rather than as a distance: this
+// system does not know the wheel's diameter, and turning revolutions into
+// metres is the driver's job.
+func (t *Traits) travelService(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+		return
+	}
+	reading, fresh := t.dt.fb.wheel(t.encoderIndex)
+	if !fresh {
+		http.Error(w, "no recent encoder frame for this wheel", http.StatusServiceUnavailable)
+		return
+	}
+	f := forms.SignalA_v1a{}
+	f.NewForm()
+	f.Value = reading.revolutions
+	f.Unit = "<http://qudt.org/vocab/unit/REV>"
+	f.Timestamp = reading.at
+	usecases.HTTPProcessGetRequest(w, r, &f)
+}
+
+// waistService publishes the articulation sensor's RAW ten-bit reading, with no
+// unit, because its scale has not been established.
+//
+// The reference implementation calls the value degrees and computes it as
+// (raw-450)/150, which over the sensor's range spans about -3 to +3.8 — not
+// degrees for a machine that articulates tens of them. Publishing that number
+// with a unit attached would be asserting something nobody has checked, and a
+// heading is the one quantity a map cannot survive being wrong about.
+//
+// Calibration is a five-minute job: set the waist to a measured angle, read
+// this service, repeat at a second angle, and solve for zero and scale.
+func (t *Traits) waistService(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+		return
+	}
+	raw, at, fresh := t.dt.fb.waist()
+	if !fresh {
+		http.Error(w, "the articulation sensor is not answering", http.StatusServiceUnavailable)
+		return
+	}
+	f := forms.SignalA_v1a{}
+	f.NewForm()
+	f.Value = float64(raw)
+	f.Timestamp = at
+	usecases.HTTPProcessGetRequest(w, r, &f)
 }

@@ -70,12 +70,12 @@ alc:home_ethermostat_KitchenHeater a afo:UnitAsset ;
 alc:home_ethermostat_KitchenHeater_OnOff a afo:ConsumedService ;
     afo:consumes "OnOff" ;
     afo:consumes alc:home_beekeeper ;
-    alc:hasMode "set" ;
-    alc:fromUrl <https://192.168.1.109:30185/beekeeper/KitchenHeater/on_off> .
+    afo:hasMode afo:Set ;
+    afo:consumesFrom <https://192.168.1.109:30185/beekeeper/KitchenHeater/on_off> .
 
 alc:home_ethermostat_KitchenHeater_temperature a afo:ConsumedService ;
     afo:consumes "temperature" ;
-    alc:hasMode "get" .
+    afo:hasMode afo:Get .
 `
 
 func cloudOfTwo(t *testing.T) *Cloud {
@@ -341,5 +341,33 @@ func TestAProviderNobodyReachedDrawsNoLine(t *testing.T) {
 	cloud := build("AlphaCloud", map[string]string{"ethermostat": consumer})
 	if len(cloud.Links) != 0 {
 		t.Errorf("got %d links to a system that is not in the picture", len(cloud.Links))
+	}
+}
+
+// A core system carries two types. Written as a comma list — which is valid
+// Turtle — this line-based parser produced one statement whose object was the
+// whole string "afo:System, afo:CertificateAuthority", so no core system was a
+// system any more and the canvas lost every one of them. Nothing errored: a
+// parser that does not know a construct does not complain about it.
+//
+// The emitter repeats the predicate instead. This is the test that says so.
+func TestASystemWithTwoTypesIsStillASystem(t *testing.T) {
+	doc := `@prefix afo: <https://w3id.org/synecdoque/afo#> .
+@prefix alc: <http://www.synecdoque.com/lcloud/> .
+
+alc:home_ca a afo:System ;
+    a afo:CertificateAuthority ;
+    afo:hasName "ca" .
+
+alc:home_thermostat a afo:System ;
+    afo:hasName "thermostat" .
+`
+	facts := readTurtle(doc)
+
+	if systems := subjectsOfType(facts, "afo:System"); len(systems) != 2 {
+		t.Fatalf("subjectsOfType(afo:System) = %v; want the core system and the plain one", systems)
+	}
+	if cas := subjectsOfType(facts, "afo:CertificateAuthority"); len(cas) != 1 {
+		t.Errorf("subjectsOfType(afo:CertificateAuthority) = %v; want the CA", cas)
 	}
 }

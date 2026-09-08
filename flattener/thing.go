@@ -64,9 +64,13 @@ func initTemplate() *components.UnitAsset {
 	}
 
 	priceSvc := components.Service{
-		Definition:  "price",
-		SubPath:     "price",
-		Details:     map[string][]string{"Unit": {"SEK/kWh"}, "Forms": {"SignalA_v1a"}},
+		Definition: "price",
+		SubPath:    "price",
+		// A price is a cost and not a physical quantity, so it is stated as the
+		// service's cost unit. Written as Unit it became a string where an object
+		// property expects a qudt:Unit, and SEK per kilowatt-hour is not one.
+		CUnit:       "SEK/kWh",
+		Details:     map[string][]string{"Forms": {"SignalA_v1a"}},
 		RegPeriod:   30,
 		Description: "provides the current electricity spot price (GET)",
 	}

@@ -274,7 +274,7 @@ func propertyDefinition(base string, svc ServiceInfo, idShort string) SubmodelEl
 // saying nothing.
 //
 // What the template cannot hold is not thrown away: the Services submodel
-// carries the complete method list against alc:hasMethods. A consumer reading
+// carries the complete method list against afo:hasMethods. A consumer reading
 // only the AID sees how to read the value, and one reading the whole shell sees
 // that the setpoint can also be written.
 func forms(base string, svc ServiceInfo) SubmodelElement {

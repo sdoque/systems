@@ -382,9 +382,9 @@ WHERE {
   OPTIONAL { ?svc afo:hasServiceDefinition ?svcDef . }
   OPTIONAL { ?svc afo:hasUnit ?unit . }
   OPTIONAL { ?svc afo:hasQuantityKind ?quantityKind . }
-  OPTIONAL { ?svc alc:hasMethods ?method . }
+  OPTIONAL { ?svc afo:hasMethods ?method . }
   OPTIONAL { ?svc afo:isSubscribable ?subscribable . }
-  OPTIONAL { ?svc alc:hasForms ?form . }
+  OPTIONAL { ?svc afo:hasForms ?form . }
 }
 `
 	r3, err := sparqlSelect(client, sparqlEndpoint, qSvc)
@@ -591,7 +591,7 @@ func buildAASEnv(systems map[string]*SystemInfo) AASEnv {
 					ModelType: "Property",
 					IDShort:   "Methods_" + sanitizeIDShort(svc.ServiceName),
 					// Local, because afo: does not define it yet; the framework
-					// writes it as alc:hasMethods for the same reason.
+					// writes it as afo:hasMethods for the same reason.
 					SemanticID: meaning(alc + "hasMethods"),
 					ValueType:  "xs:string", Value: strings.Join(methodNames(svc.Methods), " "),
 				})

@@ -94,6 +94,12 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 	switch servicePath {
 	case "setpoint":
 		t.setpointService(w, r)
+	case "speed":
+		t.speedService(w, r)
+	case "travel":
+		t.travelService(w, r)
+	case "waist":
+		t.waistService(w, r)
 	default:
 		http.Error(w, "Invalid service path", http.StatusBadRequest)
 	}

@@ -79,6 +79,7 @@ type Traits struct {
 	lastSweep      time.Time
 	integrated     int
 	degenerate     int
+	failures       int
 	usingOdometry  bool
 }
 
@@ -252,13 +253,43 @@ func (t *Traits) run(ctx context.Context) {
 		case <-tick.C:
 			sw, err := t.fetchScan()
 			if err != nil {
-				// Expected and frequent: the guetteur answers 503 whenever it
-				// is blind or its sweep has gone stale, which is exactly the
-				// case where continuing to map would be inventing geometry.
+				// A 503 from the guetteur is expected and frequent: it says so
+				// whenever it is blind or its sweep has gone stale, which is
+				// exactly when mapping would be inventing geometry.
+				//
+				// Saying nothing at all was wrong, though. A cartographer that
+				// never finds a scan service produces a map of pure "unknown"
+				// and looks like it is working, which is how this system spent
+				// its first live run: the orchestrator was on an https URL in a
+				// cloud with no CA, every discovery failed, and the only
+				// evidence was a grey square.
+				t.noteFailure(err)
 				continue
 			}
+			t.mu.Lock()
+			t.failures = 0
+			t.mu.Unlock()
 			t.consume(sw)
 		}
+	}
+}
+
+// noteFailure reports that no sweep could be had, loudly the first time and
+// rarely after that. The first one is what a person needs; the rest would bury
+// it at five per second.
+func (t *Traits) noteFailure(err error) {
+	t.mu.Lock()
+	t.failures++
+	n := t.failures
+	t.mu.Unlock()
+
+	switch {
+	case n == 1:
+		log.Printf("cartographer: no sweep to map: %v", err)
+		log.Println("cartographer: if this repeats, check that a guetteur is running and registered, " +
+			"and that the orchestrator's coreSystems URL uses http in a cloud with no CA")
+	case n%100 == 0:
+		log.Printf("cartographer: still no sweep after %d attempts: %v", n, err)
 	}
 }
 

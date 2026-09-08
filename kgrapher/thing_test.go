@@ -474,3 +474,28 @@ func TestLoadOntologiesRetriesAfterAFailure(t *testing.T) {
 		t.Error("the successful load was not recorded, so it would be sent again forever")
 	}
 }
+
+// A core system is written as what it is as well as what it is generally, so
+// the test for a system block has to read the type list rather than match one
+// spelling of it. Matching " a afo:System " with a trailing space stopped
+// recognising every core system the moment a second type appeared, and took
+// the cloud name — which only the registrar declares — with it.
+func TestIsSystemBlockReadsTheWholeTypeList(t *testing.T) {
+	cases := []struct {
+		name  string
+		block string
+		want  bool
+	}{
+		{"plain system", "alc:home_thermostat a afo:System ;\n    afo:hasName \"thermostat\" .", true},
+		{"core system with its class", "alc:home_ca a afo:System, afo:CertificateAuthority ;\n    afo:hasName \"ca\" .", true},
+		{"class listed first", "alc:home_esr a afo:ServiceRegistrar, afo:System ;\n    afo:hasName \"esr\" .", true},
+		{"not a system", "alc:home_ca_Husk a afo:Husk ;\n    afo:hasName \"husk\" .", false},
+		{"a lookalike is not a system", "alc:x a afo:SystemPosture ;\n    afo:hasName \"x\" .", false},
+		{"empty", "", false},
+	}
+	for _, c := range cases {
+		if got := isSystemBlock(c.block); got != c.want {
+			t.Errorf("%s: isSystemBlock = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

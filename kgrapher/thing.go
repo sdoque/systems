@@ -137,7 +137,7 @@ func initTemplate() *components.UnitAsset {
 		// text/html because it is a page for a person: listOntologies writes
 		// markup. Saying so keeps it out of analyses that ask what depends on
 		// what — documentation has no failure mode worth reporting.
-		Details:     map[string][]string{"Location": {"Ontologies"}, "Forms": {"text/html"}},
+		Details:     map[string][]string{"Forms": {"text/html"}},
 		RegPeriod:   61,
 		Description: "provides the list of local ontologies (GET)",
 	}
@@ -761,13 +761,29 @@ func ensurePrefixed(v string) string {
 }
 
 // isSystemBlock reports whether this TTL block defines an afo:System individual.
+// isSystemBlock reports whether a block describes a system.
+//
+// It matches the type list rather than one literal string. A core system is
+// written as what it is as well as what it is generally — "a afo:System,
+// afo:CertificateAuthority ;" — and a test for " a afo:System " with the
+// trailing space silently stopped recognising every one of them. Nothing
+// errored: the registrar's block was simply no longer read as a system, the
+// cloud name went with it, and the graph stopped being published.
 func isSystemBlock(block string) bool {
 	lines := strings.Split(strings.TrimSpace(block), "\n")
 	if len(lines) == 0 {
 		return false
 	}
-	first := lines[0]
-	return strings.Contains(first, " a afo:System ")
+	_, types, found := strings.Cut(lines[0], " a ")
+	if !found {
+		return false
+	}
+	for _, t := range strings.Split(strings.TrimRight(strings.TrimSpace(types), ";"), ",") {
+		if strings.TrimSpace(t) == "afo:System" {
+			return true
+		}
+	}
+	return false
 }
 
 // extractSubject returns the subject IRI (first token of the first line).

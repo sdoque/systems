@@ -261,7 +261,7 @@ func build(fallbackName string, graphs map[string]string) *Cloud {
 				// What it asks for, and whether it found it.
 				for _, cerviceSubject := range objects(facts, assetSubject, "afo:consumesService") {
 					want := &Want{Definition: wantedDefinition(facts, cerviceSubject)}
-					urls := objects(facts, cerviceSubject, "alc:fromUrl")
+					urls := objects(facts, cerviceSubject, "afo:consumesFrom")
 					want.Satisfied = len(urls) > 0
 					asset.Wants = append(asset.Wants, want)
 					action := actionForMode(object(facts, cerviceSubject, "afo:hasMode"))

@@ -194,9 +194,9 @@ WHERE {
   OPTIONAL { ?svc afo:hasQuantityKind ?quantityKind . }
   OPTIONAL { ?svc afo:hasRegistrationPeriod ?regPeriod . }
   OPTIONAL { ?svc afo:hasUrl ?url . }
-  OPTIONAL { ?svc alc:hasMethods ?method . }
+  OPTIONAL { ?svc afo:hasMethods ?method . }
   OPTIONAL { ?svc alc:hasRange ?range . }
-  OPTIONAL { ?svc alc:hasForms ?form . }
+  OPTIONAL { ?svc afo:hasForms ?form . }
 }
 `
 	r, err := ask(client, endpoint, q)
@@ -260,7 +260,7 @@ WHERE {
   OPTIONAL { ?cervice afo:consumes ?definition . FILTER(isLiteral(?definition)) }
   OPTIONAL { ?cervice afo:consumes ?target . FILTER(isIRI(?target)) }
   OPTIONAL { ?cervice afo:hasMode ?mode . }
-  OPTIONAL { ?cervice alc:fromUrl ?fromUrl . }
+  OPTIONAL { ?cervice afo:consumesFrom ?fromUrl . }
 }
 `
 	r, err := ask(client, endpoint, q)

@@ -17,7 +17,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -49,26 +48,60 @@ func (t *Traits) isMaitreDAuthorized(ip string) bool {
 	return false
 }
 
-// requestAttestation contacts the maitreD on hostIP and asks it to verify the executable
-// identified by pid. Returns nil if the maitreD approves, an error otherwise.
+// requestAttestation asks the maitreD on hostIP what is running as pid, checks
+// that the answer really came from a maitreD this CA certified, and compares
+// the measured hash against the whitelist. Returns nil only if all of that
+// holds.
+//
+// The decision is made here, on the machine that owns whitelist.json. The
+// maitreD is asked for a measurement, not for a verdict: it is the only thing
+// that can see the process, and this is the only thing that should be deciding
+// what is allowed to run.
+//
+// The channel is plain HTTP to an address the requesting system controls, and
+// the maitreD's attest service is exempt from authorization because the
+// bootstrap plane cannot require the tokens it exists to create. Neither can be
+// helped, so neither is relied on: the signature is what makes the answer worth
+// anything.
 //
 // hostIP comes from net.SplitHostPort on the requester's RemoteAddr, which strips
 // the IPv6 brackets. We use net.JoinHostPort to put them back, otherwise a same-host
 // request from the IPv6 loopback (::1) would build the malformed URL
 // "http://::1:20101/..." that http.Post cannot parse.
 func (t *Traits) requestAttestation(hostIP string, pid int) error {
+	// Read the whitelist first. If the operator's policy cannot be read there
+	// is no basis for a decision, and the honest outcome is to refuse rather
+	// than to ask a question whose answer could not be judged.
+	wl, err := loadWhitelist(t.WhitelistPath)
+	if err != nil {
+		return fmt.Errorf("cannot read the whitelist: %w", err)
+	}
+
+	nonce, err := newNonce()
+	if err != nil {
+		return fmt.Errorf("cannot generate a challenge: %w", err)
+	}
+
 	host := net.JoinHostPort(hostIP, strconv.Itoa(t.MaitreDPort))
 	url := "http://" + host + "/maitreD/maitreD/attest"
-	body, _ := json.Marshal(map[string]int{"pid": pid})
-	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+	st, err := askMaitreD(http.DefaultClient, url, pid, nonce)
 	if err != nil {
-		return fmt.Errorf("cannot reach maitreD at %s: %w", hostIP, err)
+		return fmt.Errorf("cannot get an attestation from %s: %w", hostIP, err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		msg, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("maitreD rejected attestation: %s", string(msg))
+
+	hash, err := verifyStatement(st, t.certificate, pid, nonce)
+	if err != nil {
+		return fmt.Errorf("attestation from %s not trusted: %w", hostIP, err)
 	}
+
+	if !approved(wl, hash) {
+		return fmt.Errorf("executable hash %s is not in the whitelist", hash)
+	}
+	// Logged on success as well as on refusal, because a post-incident review
+	// needs to know which binary was let in and under which version of the
+	// policy — the version being the whitelist file's mtime.
+	log.Printf("certify: attested pid=%d on %s: hash=%s (whitelist version %d)",
+		pid, hostIP, hash, wl.Version)
 	return nil
 }
 
@@ -86,6 +119,23 @@ type Traits struct {
 	name          string             `json:"-"`
 }
 
+// servedServices drops services this CA no longer answers.
+//
+// Configure reads the systemconfig.json that already exists, so removing a
+// service from the template never reaches a host that has run before: a CA
+// deployed at the cottage still lists "whitelist" and would register a service
+// whose handler is gone. Filtering here means an existing deployment needs no
+// hand-editing — which is the failure mode this project keeps rediscovering,
+// most recently with Forms, Role, Platform and Location.
+func servedServices(configured []components.Service) components.Services {
+	svcs := usecases.MakeServiceMap(configured)
+	if _, stale := svcs["whitelist"]; stale {
+		delete(svcs, "whitelist")
+		log.Println("ignoring the obsolete 'whitelist' service in systemconfig.json: the CA no longer serves its whitelist to anyone")
+	}
+	return svcs
+}
+
 //-------------------------------------Instantiate a unit asset template
 
 // initTemplate initializes a UnitAsset with default values.
@@ -97,22 +147,13 @@ func initTemplate() *components.UnitAsset {
 		RegPeriod:   30,
 		Description: "signs a certificate signing request (POST) from authenticated systems in its local cloud",
 	}
-	whitelist := components.Service{
-		Definition:  "whitelist",
-		SubPath:     "whitelist",
-		Details:     map[string][]string{"Forms": {"application/json"}},
-		RegPeriod:   30,
-		Description: "serves the cloud's approved-executable hash list (GET) to authenticated maitreD hosts",
-	}
 
 	return &components.UnitAsset{
 		Name:     "certification",
 		Mission:  components.MissionCore,
 		Mobility: components.MobilityMovable,
-		Details:  map[string][]string{"PKI": {"X.509"}, "Location": {"LocalCloud"}},
 		ServicesMap: map[string]*components.Service{
-			certify.SubPath:   &certify,
-			whitelist.SubPath: &whitelist,
+			certify.SubPath: &certify,
 		},
 		// Defaults are secure-by-default:
 		//   - MaitreDHosts includes both loopback addresses so a CA and a
@@ -181,7 +222,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		TetheredTo:  configuredAsset.TetheredTo,
 		Owner:       sys,
 		Details:     configuredAsset.Details,
-		ServicesMap: usecases.MakeServiceMap(configuredAsset.Services),
+		ServicesMap: servedServices(configuredAsset.Services),
 		Traits:      t,
 	}
 	ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {

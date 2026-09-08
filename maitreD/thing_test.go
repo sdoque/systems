@@ -87,7 +87,7 @@ func TestTraitsSerialization(t *testing.T) {
 	// All Traits fields are runtime state, not config: marshalling must
 	// produce no operator-visible fields. A future schema addition that
 	// accidentally exposes one of these will fail this test.
-	original := &Traits{Whitelist: []string{"abc123"}, version: 42, loaded: true}
+	original := &Traits{name: "maitreD", LoadPeriod: 15}
 	data, err := json.Marshal(original)
 	if err != nil {
 		t.Fatalf("marshal failed: %v", err)
@@ -172,8 +172,8 @@ func TestNewResource(t *testing.T) {
 		if !ok {
 			t.Fatal("traits are not of type *Traits")
 		}
-		if len(tr.Whitelist) != 0 {
-			t.Errorf("Whitelist must remain empty (CA is the source of truth); got %v", tr.Whitelist)
+		if tr.owner == nil {
+			t.Error("the asset was built without a system to sign on behalf of")
 		}
 	})
 }
@@ -183,13 +183,13 @@ func TestNewResource(t *testing.T) {
 func TestServing(t *testing.T) {
 	exeData := []byte("fake-executable")
 	exePath := writeTempFile(t, exeData)
-	hash := sha256Hex(exeData)
-	tr := &Traits{Whitelist: []string{hash}, loaded: true}
+	caCert, caKey := testCA(t)
+	tr, _ := testTraitsWithCert(t, caCert, caKey)
 
 	withResolveExecutable(t, func(pid int) (string, error) { return exePath, nil })
 
 	t.Run("attest path dispatches correctly", func(t *testing.T) {
-		body, _ := json.Marshal(map[string]int{"pid": 42})
+		body, _ := json.Marshal(attestationRequest{PID: 42, Nonce: "0123456789abcdef0123456789abcdef"})
 		req := httptest.NewRequest(http.MethodPost, "/maitreD/maitreD/attest", bytes.NewReader(body))
 		w := httptest.NewRecorder()
 		serving(tr, w, req, "attest")
@@ -211,35 +211,56 @@ func TestServing(t *testing.T) {
 // ── attest ────────────────────────────────────────────────────────────────────
 
 func TestAttest(t *testing.T) {
-	exeData := []byte("approved-binary-content")
+	exeData := []byte("some-binary-content")
 	exePath := writeTempFile(t, exeData)
-	approvedHash := sha256Hex(exeData)
+	wantHash := sha256Hex(exeData)
 
-	tr := &Traits{Whitelist: []string{approvedHash}, loaded: true}
+	caCert, caKey := testCA(t)
+	tr, mKey := testTraitsWithCert(t, caCert, caKey)
 
-	t.Run("approved executable returns 200", func(t *testing.T) {
+	const nonce = "0123456789abcdef0123456789abcdef"
+
+	post := func(t *testing.T, tr *Traits, body []byte) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/attest", bytes.NewReader(body))
+		w := httptest.NewRecorder()
+		tr.attest(w, req)
+		return w
+	}
+
+	t.Run("returns a signed measurement, not a verdict", func(t *testing.T) {
 		withResolveExecutable(t, func(pid int) (string, error) { return exePath, nil })
 
-		body, _ := json.Marshal(map[string]int{"pid": 99})
-		req := httptest.NewRequest(http.MethodPost, "/attest", bytes.NewReader(body))
-		w := httptest.NewRecorder()
-		tr.attest(w, req)
+		body, _ := json.Marshal(attestationRequest{PID: 99, Nonce: nonce})
+		w := post(t, tr, body)
 		if w.Code != http.StatusOK {
-			t.Errorf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+			t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
 		}
+		var st attestationStatement
+		if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if st.Hash != wantHash {
+			t.Errorf("hash = %s, want %s", st.Hash, wantHash)
+		}
+		if st.Nonce != nonce || st.PID != 99 {
+			t.Errorf("statement does not answer the question asked: pid=%d nonce=%q", st.PID, st.Nonce)
+		}
+		if st.Signature == "" || st.Certificate == "" {
+			t.Error("statement is unsigned; the CA would have no way to tell it from anything else on the port")
+		}
+		verifyWithKey(t, st, &mKey.PublicKey)
 	})
 
-	t.Run("unknown executable hash returns 403", func(t *testing.T) {
-		otherData := []byte("untrusted-binary")
-		otherPath := writeTempFile(t, otherData)
+	// The maitreD no longer knows what is allowed, so an unrecognized binary is
+	// not its business: it measures and answers 200. The CA refuses.
+	t.Run("an unknown binary is still measured", func(t *testing.T) {
+		otherPath := writeTempFile(t, []byte("untrusted-binary"))
 		withResolveExecutable(t, func(pid int) (string, error) { return otherPath, nil })
 
-		body, _ := json.Marshal(map[string]int{"pid": 99})
-		req := httptest.NewRequest(http.MethodPost, "/attest", bytes.NewReader(body))
-		w := httptest.NewRecorder()
-		tr.attest(w, req)
-		if w.Code != http.StatusForbidden {
-			t.Errorf("status = %d, want 403", w.Code)
+		body, _ := json.Marshal(attestationRequest{PID: 99, Nonce: nonce})
+		if w := post(t, tr, body); w.Code != http.StatusOK {
+			t.Errorf("status = %d, want 200: judging is the CA's job now", w.Code)
 		}
 	})
 
@@ -247,12 +268,8 @@ func TestAttest(t *testing.T) {
 		withResolveExecutable(t, func(pid int) (string, error) {
 			return "", fmt.Errorf("no such process")
 		})
-
-		body, _ := json.Marshal(map[string]int{"pid": 99})
-		req := httptest.NewRequest(http.MethodPost, "/attest", bytes.NewReader(body))
-		w := httptest.NewRecorder()
-		tr.attest(w, req)
-		if w.Code != http.StatusInternalServerError {
+		body, _ := json.Marshal(attestationRequest{PID: 99, Nonce: nonce})
+		if w := post(t, tr, body); w.Code != http.StatusInternalServerError {
 			t.Errorf("status = %d, want 500", w.Code)
 		}
 	})
@@ -267,32 +284,37 @@ func TestAttest(t *testing.T) {
 	})
 
 	t.Run("invalid JSON body returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/attest", bytes.NewReader([]byte("not json")))
-		w := httptest.NewRecorder()
-		tr.attest(w, req)
-		if w.Code != http.StatusBadRequest {
+		if w := post(t, tr, []byte("not json")); w.Code != http.StatusBadRequest {
 			t.Errorf("status = %d, want 400", w.Code)
 		}
 	})
 
 	t.Run("zero PID returns 400", func(t *testing.T) {
-		body, _ := json.Marshal(map[string]int{"pid": 0})
-		req := httptest.NewRequest(http.MethodPost, "/attest", bytes.NewReader(body))
-		w := httptest.NewRecorder()
-		tr.attest(w, req)
-		if w.Code != http.StatusBadRequest {
+		body, _ := json.Marshal(attestationRequest{PID: 0, Nonce: nonce})
+		if w := post(t, tr, body); w.Code != http.StatusBadRequest {
 			t.Errorf("status = %d, want 400", w.Code)
 		}
 	})
 
-	t.Run("returns 503 when whitelist not yet loaded", func(t *testing.T) {
-		// loaded=false ⇒ no successful sync yet ⇒ refuse to make a decision.
-		notReady := &Traits{Whitelist: []string{approvedHash}}
-		body, _ := json.Marshal(map[string]int{"pid": 99})
-		req := httptest.NewRequest(http.MethodPost, "/attest", bytes.NewReader(body))
-		w := httptest.NewRecorder()
-		notReady.attest(w, req)
-		if w.Code != http.StatusServiceUnavailable {
+	// A statement signed against no challenge, or a guessable one, could be
+	// recorded and replayed. There is no unsigned or un-nonced mode.
+	t.Run("a missing or short nonce returns 400", func(t *testing.T) {
+		withResolveExecutable(t, func(pid int) (string, error) { return exePath, nil })
+		for _, n := range []string{"", "short"} {
+			body, _ := json.Marshal(attestationRequest{PID: 99, Nonce: n})
+			if w := post(t, tr, body); w.Code != http.StatusBadRequest {
+				t.Errorf("nonce %q gave %d, want 400", n, w.Code)
+			}
+		}
+	})
+
+	// Before enrolment there is no key, and an unsigned answer is worth less
+	// than none: the CA could not tell this maitreD from anything else.
+	t.Run("returns 503 before this maitreD has enrolled", func(t *testing.T) {
+		withResolveExecutable(t, func(pid int) (string, error) { return exePath, nil })
+		notReady := &Traits{owner: &components.System{Husk: &components.Husk{}}}
+		body, _ := json.Marshal(attestationRequest{PID: 99, Nonce: nonce})
+		if w := post(t, notReady, body); w.Code != http.StatusServiceUnavailable {
 			t.Errorf("status = %d, want 503", w.Code)
 		}
 	})
@@ -322,22 +344,6 @@ func TestHashFile(t *testing.T) {
 	})
 }
 
-// ── isApproved ────────────────────────────────────────────────────────────────
-
-func TestIsApproved(t *testing.T) {
-	tr := &Traits{Whitelist: []string{"aaa", "bbb"}}
-
-	if !tr.isApproved("aaa") {
-		t.Error("expected aaa to be approved")
-	}
-	if tr.isApproved("ccc") {
-		t.Error("expected ccc to be rejected")
-	}
-	if (&Traits{}).isApproved("aaa") {
-		t.Error("empty whitelist should reject everything")
-	}
-}
-
 // TestAProcessOwnedByAnotherUserSaysSo is the failure seen on a live Pi: a
 // system started with sudo, for the GPIO access it needs, could never be
 // attested — Linux lets a process read another's /proc/<pid>/exe only if it
@@ -345,13 +351,13 @@ func TestIsApproved(t *testing.T) {
 // once a minute for as long as it ran, and the only clue was "Cannot resolve
 // executable for PID", which names neither the cause nor a remedy.
 func TestAProcessOwnedByAnotherUserSaysSo(t *testing.T) {
-	tr := &Traits{Whitelist: []string{}, loaded: true}
+	tr := &Traits{}
 
 	withResolveExecutable(t, func(pid int) (string, error) {
 		return "", &fs.PathError{Op: "readlink", Path: "/proc/1234/exe", Err: syscall.EACCES}
 	})
 
-	body, _ := json.Marshal(map[string]int{"pid": 1234})
+	body, _ := json.Marshal(attestationRequest{PID: 1234, Nonce: "0123456789abcdef0123456789abcdef"})
 	w := httptest.NewRecorder()
 	tr.attest(w, httptest.NewRequest(http.MethodPost, "/attest", bytes.NewReader(body)))
 
@@ -380,13 +386,13 @@ func TestAProcessOwnedByAnotherUserSaysSo(t *testing.T) {
 // TestAProcessThatExitedIsNotAFault: the other resolution failure, which is
 // nothing to worry about and must not read like the one above.
 func TestAProcessThatExitedIsNotAFault(t *testing.T) {
-	tr := &Traits{Whitelist: []string{}, loaded: true}
+	tr := &Traits{}
 
 	withResolveExecutable(t, func(pid int) (string, error) {
 		return "", &fs.PathError{Op: "readlink", Path: "/proc/1234/exe", Err: syscall.ENOENT}
 	})
 
-	body, _ := json.Marshal(map[string]int{"pid": 1234})
+	body, _ := json.Marshal(attestationRequest{PID: 1234, Nonce: "0123456789abcdef0123456789abcdef"})
 	w := httptest.NewRecorder()
 	tr.attest(w, httptest.NewRequest(http.MethodPost, "/attest", bytes.NewReader(body)))
 

@@ -20,18 +20,25 @@ import (
 	"context"
 	"crypto/x509/pkix"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
 	"github.com/sdoque/mbaigo/usecases"
 )
 
-// whitelistCachePath is the on-disk location of the maitreD's CA-synced
-// whitelist cache. Hard-coded relative to the working directory because it
-// is runtime state, not operator-tunable config.
-const whitelistCachePath = "whitelist.cache.json"
+// staleCachePath is a file this system used to write and no longer does.
+//
+// The maitreD once kept a copy of the CA's whitelist on disk so it could start
+// while the CA was unreachable — a case that cannot arise, because the CA is
+// the only thing that ever asks for an attestation. What the file could do was
+// grant a certificate to any binary whose hash somebody added to it. It is
+// removed at startup rather than merely abandoned, because a dead file with
+// that consequence should not be left lying on a deployed host.
+const staleCachePath = "whitelist.cache.json"
 
 func main() {
 	// prepare for graceful shutdown
@@ -42,7 +49,7 @@ func main() {
 	sys := components.NewSystem("maitreD", ctx)
 
 	// Watch for SIGINT immediately so that Ctrl+C can interrupt blocking
-	// startup steps (RequestCertificate retry loop, whitelist bootstrap).
+	// startup steps (the RequestCertificate retry loop).
 	usecases.WatchShutdown(&sys, cancel)
 
 	// Instantiate the husk
@@ -87,12 +94,7 @@ func main() {
 	// Generate PKI keys and CSR to obtain a authentication certificate from the CA
 	usecases.RequestCertificate(&sys)
 
-	// Bootstrap the whitelist from the CA. This must happen after enrollment
-	// (we need the CA URL and, eventually, mTLS) and before service registration
-	// so that attestation requests cannot arrive against an unloaded whitelist.
-	if err := bootstrapWhitelist(&sys); err != nil {
-		log.Fatalf("whitelist bootstrap failed: %v", err)
-	}
+	removeStaleCache(staleCachePath)
 
 	// Register the (system) and its services
 	usecases.RegisterServices(&sys)
@@ -117,5 +119,17 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 		t.loadstatus(w, r)
 	default:
 		http.Error(w, "Invalid service request [Do not modify the services subpath in the configuration file]", http.StatusBadRequest)
+	}
+}
+
+// removeStaleCache deletes the whitelist cache left by earlier versions.
+func removeStaleCache(path string) {
+	err := os.Remove(path)
+	if err == nil {
+		log.Printf("removed the obsolete whitelist cache %s: this system no longer holds a whitelist", path)
+		return
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		log.Printf("warning: could not remove the obsolete whitelist cache %s: %v", path, err)
 	}
 }

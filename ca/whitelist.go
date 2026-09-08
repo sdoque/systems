@@ -19,20 +19,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
-	"net"
-	"net/http"
 	"os"
-	"strconv"
 	"time"
 )
 
-// Whitelist is the wire format served by the CA at /ca/certification/whitelist.
+// Whitelist is the operator's policy: the SHA-256 hashes of the binaries this
+// cloud will issue certificates to.
 //
-// Version is the Unix-second mtime of whitelist.json; bumping the file's mtime
-// (any edit, or `touch`) advances the version automatically — operators do not
-// hand-maintain a counter. UpdatedAt is the same timestamp in RFC3339 for
-// human readers.
+// It is read on every certificate request rather than held, so an edit takes
+// effect immediately. Version is the Unix-second mtime of whitelist.json and
+// UpdatedAt the same in RFC3339; both are kept because they cost nothing and
+// they are what a log line needs to say which policy was applied.
 type Whitelist struct {
 	Version   int64    `json:"version"`
 	UpdatedAt string   `json:"updatedAt"`
@@ -71,42 +68,9 @@ func loadWhitelist(path string) (Whitelist, error) {
 	}, nil
 }
 
-// whitelisting handles GET /ca/certification/whitelist.
-//
-// Source IP must be in MaitreDHosts (same gating as maitreD enrollment) so
-// that only authenticated host sentinels can pull the list. ?since=N
-// short-circuits with 304 Not Modified when the on-disk version has not
-// advanced past N, so an unchanged whitelist costs the maitreD a single
-// HEAD-equivalent round trip.
-func (t *Traits) whitelisting(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not supported", http.StatusMethodNotAllowed)
-		return
-	}
-	clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		http.Error(w, "Failed to determine client IP", http.StatusInternalServerError)
-		return
-	}
-	if !t.isMaitreDAuthorized(clientIP) {
-		log.Printf("whitelist: denied source IP %q (maitreDHosts=%v)", clientIP, t.MaitreDHosts)
-		http.Error(w, "Unauthorized maitreD host", http.StatusForbidden)
-		return
-	}
-
-	wl, err := loadWhitelist(t.WhitelistPath)
-	if err != nil {
-		http.Error(w, "Cannot load whitelist", http.StatusInternalServerError)
-		return
-	}
-
-	if since := r.URL.Query().Get("since"); since != "" {
-		if n, err := strconv.ParseInt(since, 10, 64); err == nil && wl.Version <= n {
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(wl)
-}
+// The CA no longer serves this list to anyone. It used to: every maitreD
+// fetched a copy, cached it on disk and applied it on the CA's behalf, which
+// put the policy on every host, gave each copy a five-minute staleness, and
+// left a file that granted a certificate to whatever hash was written into it.
+// The maitreD now reports a measurement and the decision is made here, against
+// this file, at the moment a certificate is asked for.

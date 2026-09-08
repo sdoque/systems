@@ -20,8 +20,9 @@ import (
 // PROCESS_QUERY_LIMITED_INFORMATION is enough to ask, and is granted for a
 // process of the same user without any privilege — including one of higher
 // integrity. Tested 31 August 2026: an unelevated maitreD attests a system
-// started "Run as administrator". That is correct, not a gap: the whitelist is
-// the control, a non-whitelisted binary fails the hash whatever its integrity,
+// started "Run as administrator". That is correct, not a gap: the whitelist the
+// CA holds is the control, and a binary that is not in it fails whatever its
+// integrity,
 // and elevation buys no cloud rights, which come from the certificate's name.
 // The boundary that holds is the user: another user's process answers access
 // denied without SeDebugPrivilege, so it is refused as a sudo-started one is

@@ -9,7 +9,7 @@ The Certificate Authority (CA) is the trust anchor for a local cloud of mbaigo s
 - Exposes the CA certificate at `GET /ca/certification` so systems can build their trust store
 - Enforces IP-based pre-authorization for maitreD enrollment
 - Delegates executable verification to the maitreD before signing any other system's CSR
-- **Owns the cloud's approved-binary whitelist** at `whitelist.json` and serves it to maitreDs on demand
+- **Owns the cloud's approved-binary whitelist** at `whitelist.json`, and is the only thing that reads it
 
 Because the CA certificate is the root of trust for the entire local cloud, `ca_certificate.pem` and `ca_private_key.pem` must be kept secure and backed up. The same applies to `whitelist.json`: anyone who can edit it can authorize a binary to run anywhere in the cloud.
 
@@ -24,7 +24,9 @@ A flat JSON array of hex-encoded SHA-256 hashes of approved executables, kept ne
 ]
 ```
 
-A missing file is a deliberate "no binaries approved yet" — the CA serves an empty list and every maitreD denies every attestation request until the file appears. The on-disk file's modification time becomes the wire-format `version`; bumping the file (any edit, or `touch`) signals every maitreD to refresh on its next sync (5 min by default).
+A missing file is a deliberate "no binaries approved yet" — an empty list matches no hash, so every certificate request is refused until the file appears.
+
+**An edit takes effect on the next certificate request.** The file is read on each attestation, not held in memory and not distributed, so there is nothing to sync and nobody to wait for. The file's modification time is recorded as the `version` in the CA's log line, so a review can say which policy was applied.
 
 To approve a new binary:
 1. Compute its hash: `shasum -a 256 path/to/binary | cut -d' ' -f1`
@@ -67,14 +69,15 @@ sequenceDiagram
     S->>CA: POST /ca/certification/certify<br/>Body: CSR PEM<br/>Header: X-Process-PID: &lt;pid&gt;
     CA->>CA: Extract client IP and PID
     alt maitreDPort != 0 (attestation enabled)
-        CA->>MD: POST /maitreD/maitreD/attest<br/>Body: {"pid": &lt;pid&gt;}
+        CA->>MD: POST /maitreD/maitreD/attest<br/>Body: {"pid": &lt;pid&gt;, "nonce": &lt;challenge&gt;}
         MD->>MD: readlink /proc/&lt;pid&gt;/exe
         MD->>MD: SHA-256 hash of executable
-        MD->>MD: Check hash against whitelist
-        alt hash is approved
-            MD-->>CA: 200 OK
-        else hash not in whitelist
-            MD-->>CA: 403 Forbidden
+        MD->>MD: Sign (pid, hash, nonce, time)<br/>with its own enrolled key
+        MD-->>CA: 200 OK — signed statement + certificate
+        CA->>CA: Check the certificate was issued<br/>by this CA to a "maitreD"
+        CA->>CA: Check the signature, the pid<br/>and the nonce
+        CA->>CA: Look the hash up in whitelist.json
+        alt not trusted, or hash not approved
             CA-->>S: 403 Forbidden — attestation failed
         end
     end
@@ -147,6 +150,8 @@ All systems that also have a non-zero https port will use mTLS for their outboun
 ### Enabling PID-based attestation
 
 Set `maitreDPort` to the port the maitreD listens on (default 20101). When non-zero, every non-maitreD CSR triggers an attestation call to the maitreD on the requester's host before the CSR is signed. Set to `0` to disable attestation (development mode — all CSRs are signed without verification).
+
+**Why the answer is signed.** The CA reaches that port over plain HTTP, at an address the requesting system controls, and the maitreD's `attest` service is exempt from authorization because the bootstrap plane cannot require the tokens it exists to create. So anything could listen there and answer. The statement is therefore signed with the key behind the maitreD's own certificate, and the CA checks that the certificate is one it issued to a `maitreD`, that the signature covers this pid and this challenge, and only then looks the hash up. A bare `200 OK` — which is what the maitreD used to send on approval — is now refused.
 
 ```json
 "maitreDPort": 20101

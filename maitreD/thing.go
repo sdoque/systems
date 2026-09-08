@@ -28,7 +28,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -41,17 +40,11 @@ import (
 
 // Traits holds the runtime state of the maitreD unit asset.
 //
-// The Whitelist is fetched from the CA and refreshed periodically (see
-// sync.go); it is not part of the operator-edited systemconfig.json schema.
-// Any "whitelist" entry that an older systemconfig still carries is silently
-// ignored by Go's json package because the field is tagged `json:"-"`.
+// There is no whitelist here, and that is deliberate. This system measures; the
+// CA, which owns whitelist.json, decides. See attestation.go.
 type Traits struct {
-	Whitelist []string           `json:"-"` // approved SHA-256 hashes (kept in sync with the CA)
-	version   int64              `json:"-"` // current whitelist version (CA-issued)
-	loaded    bool               `json:"-"` // true after first successful cache load or fetch
-	mu        sync.RWMutex       `json:"-"` // protects Whitelist, version, loaded
-	owner     *components.System `json:"-"`
-	name      string             `json:"-"`
+	owner *components.System `json:"-"`
+	name  string             `json:"-"`
 
 	// LoadPeriod is how often the host is sampled, in seconds. An int rather
 	// than a Duration: the unit belongs in the name and the conversion at the
@@ -108,7 +101,7 @@ func initTemplate() *components.UnitAsset {
 		SubPath:     "attest",
 		Details:     map[string][]string{"Forms": {"application/json"}, "Methods": components.HTTPMethods("POST")},
 		RegPeriod:   0,
-		Description: "verifies (POST) the executable hash of the requesting system against the whitelist",
+		Description: "measures (POST) the executable behind a process and returns a signed statement of its hash",
 	}
 
 	loadstatus := components.Service{
@@ -140,7 +133,6 @@ func initTemplate() *components.UnitAsset {
 		Name:     "maitreD",
 		Mission:  components.MissionCore,
 		Mobility: components.MobilityFixed,
-		Details:  map[string][]string{"Role": {"host-attestation"}},
 		ServicesMap: map[string]*components.Service{
 			attest.SubPath:     &attest,
 			loadstatus.SubPath: &loadstatus,
@@ -193,26 +185,28 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 // attest handles a POST request from the CA. It resolves the executable of the given PID,
 // hashes it, and returns 200 if the hash is on the whitelist or 403 if it is not.
 //
-// Returns 503 Service Unavailable until the maitreD has loaded a whitelist
-// at least once (from cache or fresh fetch). This prevents the brief
-// post-startup window in which attestation could otherwise run against an
-// empty in-memory list and approve nothing legitimately, or — worse — be
-// silently misconfigured into a permissive state.
+// attest measures the executable behind a process and returns a signed
+// statement of its hash.
+//
+// It does not decide anything. The caller supplies a nonce and a pid; the reply
+// says "at this time, the file behind this pid hashed to this, and here is my
+// certificate and my signature over all of it". Whether that hash is acceptable
+// is the CA's question to answer, against the whitelist the CA already owns.
 func (t *Traits) attest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not supported", http.StatusMethodNotAllowed)
 		return
 	}
-	if !t.IsLoaded() {
-		http.Error(w, "Whitelist not yet loaded", http.StatusServiceUnavailable)
+
+	var req attestationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PID <= 0 {
+		http.Error(w, "Invalid request body: expected {\"pid\": <n>, \"nonce\": \"<hex>\"}", http.StatusBadRequest)
 		return
 	}
-
-	var req struct {
-		PID int `json:"pid"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PID <= 0 {
-		http.Error(w, "Invalid request body: expected {\"pid\": <n>}", http.StatusBadRequest)
+	// A statement without a challenge is a statement that can be replayed, so
+	// there is no unsigned or un-nonced mode to fall back to.
+	if len(req.Nonce) < minNonceLength {
+		http.Error(w, "Missing or too-short nonce", http.StatusBadRequest)
 		return
 	}
 
@@ -224,10 +218,6 @@ func (t *Traits) attest(w http.ResponseWriter, r *http.Request) {
 		// be certified, retrying once a minute for as long as it runs.
 		reason, refused := describeResolutionFailure(req.PID, err)
 		log.Printf("attestation impossible: pid=%d: %s\n", req.PID, reason)
-		// A refusal where maitreD is certain, an error where it is not. It
-		// cannot see a process belonging to another user and never will, so
-		// retrying is pointless and 403 says so; an unexpected failure might be
-		// transient and 500 leaves that open.
 		status := http.StatusInternalServerError
 		if refused {
 			status = http.StatusForbidden
@@ -242,29 +232,29 @@ func (t *Traits) attest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !t.isApproved(hash) {
-		log.Printf("attestation denied: pid=%d exe=%s hash=%s\n", req.PID, exePath, hash)
-		http.Error(w, "Executable not in whitelist", http.StatusForbidden)
+	// Before enrolment this maitreD has no key, so it cannot make a statement
+	// anyone should believe. Answering unsigned would be worse than not
+	// answering: the CA would have no way to tell this maitreD from anything
+	// else listening on the port.
+	statement, err := sign(t.owner.Husk.Pkey, t.owner.Husk.Certificate, req.PID, hash, req.Nonce)
+	if err != nil {
+		log.Printf("attestation unsigned: pid=%d: %v\n", req.PID, err)
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 
-	log.Printf("attestation approved: pid=%d exe=%s\n", req.PID, exePath)
-	w.WriteHeader(http.StatusOK)
+	log.Printf("attestation measured: pid=%d exe=%s hash=%s\n", req.PID, exePath, hash)
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(statement); err != nil {
+		log.Printf("attestation: writing response: %v\n", err)
+	}
 }
 
-// isApproved reports whether hash is present in the in-memory whitelist.
-// The read lock keeps this safe against the sync loop concurrently swapping
-// the slice during a refresh.
-func (t *Traits) isApproved(hash string) bool {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	for _, h := range t.Whitelist {
-		if h == hash {
-			return true
-		}
-	}
-	return false
-}
+// minNonceLength is the shortest challenge this system will sign against, in
+// characters of hex. Sixteen bytes is far more than enough to make a repeat
+// improbable, and refusing anything shorter stops a lazy caller from weakening
+// the guarantee for everybody.
+const minNonceLength = 32
 
 // hashFile returns the lowercase hex-encoded SHA-256 digest of the file at path.
 func hashFile(path string) (string, error) {

@@ -97,8 +97,19 @@ $(STAGING)/$(1)/$(1)$(4): $$($(1)_SRC)
 	cd $(1) && GOOS=$(2) GOARCH=$(3) go build -ldflags "$(LDFLAGS)" -o $(STAGING)/$(1)/$(1)$(4)
 endef
 
+# What every system is built from, besides its own sources: the framework, and
+# its own module files.
+#
+# Without this a change in mbaigo rebuilt nothing. `make rpi` reported every
+# system "done", staged the binaries from the previous build, and generated a
+# whitelist that agreed with them — so the CA attested them happily and the
+# cloud ran the old code while the operator believed it was running the new.
+# Caught by fixing a re-binding bug in the framework, deploying, and finding the
+# deployed hash unchanged.
+MBAIGO_SRC := $(shell find $(HOME)/go/src/github.com/sdoque/mbaigo -name '*.go' 2>/dev/null)
+
 define build_system
-$(1)_SRC := $(shell find $(1) -name '*.go' 2>/dev/null)
+$(1)_SRC := $(shell find $(1) -name '*.go' 2>/dev/null) $(wildcard $(1)/go.mod) $(wildcard $(1)/go.sum) $(MBAIGO_SRC)
 $(1): $(STAGING)/$(1)/$(1)_rpi64 $(if $(wildcard $(1)/README.md),$(STAGING)/$(1)/README.md)
 	@echo "$(1) done"
 $(call build_for,$(1),$(GOOS),$(GOARCH),_rpi64)

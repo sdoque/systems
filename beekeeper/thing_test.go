@@ -443,3 +443,76 @@ func TestPlaceName(t *testing.T) {
 		}
 	}
 }
+
+// The gateway's answer to a bad or missing key, captured from deCONZ 2.33.2:
+// HTTP 403 with an array of error objects, where a success is always an object
+// keyed by device id.
+const deconzUnauthorizedBody = `[{"error":{"address":"/lights","description":"unauthorized user","type":1}}]`
+
+// A freshly generated systemconfig.json has an empty apiKey, so this is the
+// state every new deployment starts in. It used to surface as "json: cannot
+// unmarshal array into Go value of type map[string]main.DeconzLight", which
+// names the shape of the failure and not its cause.
+func TestARefusedKeyIsReportedAsARefusedKey(t *testing.T) {
+	err := gatewayRefusal(http.StatusForbidden, []byte(deconzUnauthorizedBody))
+	if err == nil {
+		t.Fatal("a 403 with an unauthorized-user body was treated as success")
+	}
+	msg := err.Error()
+	for _, want := range []string{"refused the API key", "unauthorized user", "apiKey"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the message does not mention %q: %s", want, msg)
+		}
+	}
+	if !strings.Contains(msg, "Phoscon") {
+		t.Errorf("the message does not say where to get a key: %s", msg)
+	}
+}
+
+// An error message is the one place a credential must not end up, and the URL
+// this system fetches carries the API key in its path.
+func TestTheRefusalNeverCarriesTheKey(t *testing.T) {
+	err := gatewayRefusal(http.StatusForbidden, []byte(deconzUnauthorizedBody))
+	if strings.Contains(err.Error(), "/api/") || strings.Contains(err.Error(), "http://") {
+		t.Errorf("the message contains a URL, which carries the key: %s", err.Error())
+	}
+}
+
+// deCONZ answers some refusals with 200 and an error body, so the status alone
+// is not enough to tell.
+func TestAnErrorBodyWithA200IsStillARefusal(t *testing.T) {
+	if err := gatewayRefusal(http.StatusOK, []byte(deconzUnauthorizedBody)); err == nil {
+		t.Error("an error body with a 200 was treated as success")
+	}
+}
+
+// A refusal that is not about the key keeps the gateway's own words rather than
+// being flattened into a guess about credentials.
+func TestANonKeyRefusalIsReportedAsItself(t *testing.T) {
+	body := `[{"error":{"address":"/lights/9","description":"resource, /lights/9, not available","type":3}}]`
+	err := gatewayRefusal(http.StatusNotFound, []byte(body))
+	if err == nil {
+		t.Fatal("a 404 refusal was treated as success")
+	}
+	if strings.Contains(err.Error(), "API key") {
+		t.Errorf("a missing resource was blamed on the key: %s", err.Error())
+	}
+	if !strings.Contains(err.Error(), "not available") {
+		t.Errorf("the gateway's own words were dropped: %s", err.Error())
+	}
+}
+
+// The normal path must stay quiet.
+func TestAGoodAnswerIsNotARefusal(t *testing.T) {
+	if err := gatewayRefusal(http.StatusOK, []byte(`{"1":{"name":"BenchHeater"}}`)); err != nil {
+		t.Errorf("a normal reply was reported as a refusal: %v", err)
+	}
+}
+
+// A non-2xx with a body this system cannot parse is still a failure, and must
+// not fall through to a type-mismatch error.
+func TestAnUnparseableFailureStillFails(t *testing.T) {
+	if err := gatewayRefusal(http.StatusBadGateway, []byte("<html>proxy error</html>")); err == nil {
+		t.Error("a 502 with an HTML body was treated as success")
+	}
+}

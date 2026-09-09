@@ -501,8 +501,62 @@ func getJSON(url string, target interface{}) error {
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(body, target)
+	if err := gatewayRefusal(resp.StatusCode, body); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(body, target); err != nil {
+		return fmt.Errorf("the gateway answered something this system cannot read: %w", err)
+	}
+	return nil
 }
+
+// deconzRefusal is what deCONZ answers with when it will not serve a request:
+// an array of error objects. A successful reply is always a JSON object keyed
+// by device id, so the array is unambiguous.
+type deconzRefusal struct {
+	Error struct {
+		Type        int    `json:"type"`
+		Address     string `json:"address"`
+		Description string `json:"description"`
+	} `json:"error"`
+}
+
+// gatewayRefusal turns a refusal into an error that names the cause and the
+// cure, and returns nil when the gateway answered normally.
+//
+// Without this the failure surfaced as
+//
+//	json: cannot unmarshal array into Go value of type map[string]main.DeconzLight
+//
+// which describes the shape of the disappointment rather than its reason. The
+// reason is almost always the API key: a freshly generated systemconfig.json
+// has an empty one, so this is the state every new deployment starts in, and
+// the gateway answers 403 with "unauthorized user" while the system reports a
+// type mismatch.
+//
+// The gateway's own words are quoted because it distinguishes cases this system
+// should not try to enumerate — an unknown key, a key without permission for a
+// resource, a resource that does not exist.
+//
+// The URL is never included. It carries the API key, and an error message is
+// the one place a credential should not end up.
+func gatewayRefusal(status int, body []byte) error {
+	var refusals []deconzRefusal
+	if err := json.Unmarshal(body, &refusals); err == nil && len(refusals) > 0 && refusals[0].Error.Description != "" {
+		d := refusals[0].Error
+		if d.Type == deconzUnauthorized || status == http.StatusForbidden || status == http.StatusUnauthorized {
+			return fmt.Errorf("the gateway refused the API key (%q): set \"apiKey\" in systemconfig.json to a key from Phoscon → Gateway → Advanced → Authenticate app", d.Description)
+		}
+		return fmt.Errorf("the gateway refused the request for %s: %s", d.Address, d.Description)
+	}
+	if status < 200 || status > 299 {
+		return fmt.Errorf("the gateway answered %d", status)
+	}
+	return nil
+}
+
+// deconzUnauthorized is deCONZ's error type 1, "unauthorized user".
+const deconzUnauthorized = 1
 
 // pollREST periodically refreshes the cache from the deCONZ REST API.
 // This is a fallback for devices whose WebSocket events are missed during reconnection gaps.

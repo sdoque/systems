@@ -10,12 +10,12 @@ BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 BUILD_HASH := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 PKG        := github.com/sdoque/mbaigo/components
 
-SYSTEMS := assessor authorizer beehive beekeeper busdriver ca clerk collector democrat \
-           drafter ds18b20 ds18b20F emulator envoy esr ethermostat filmer flattener \
-           hobbyist kgrapher leveler loader maitreD meteorologue modboss \
-           modeler nurse orchestrator painter parallax photographer recognizer \
-           revolutionary sailor sapper telegrapher thermostat tracker \
-           uaclient weatherman
+SYSTEMS := assessor authorizer beehive beekeeper busdriver ca cartographer clerk \
+           collector democrat drafter ds18b20 ds18b20F emulator envoy esr ethermostat \
+           filmer flattener guetteur hobbyist kgrapher leveler loader maitreD \
+           meteorologue modboss modeler nurse orchestrator painter parallax \
+           photographer recognizer revolutionary sailor sapper telegrapher \
+           thermostat tracker uaclient weatherman
 
 .PHONY: all ci release rpi win mac test lint clean whitelist $(SYSTEMS)
 
@@ -113,10 +113,14 @@ $(foreach sys,$(SYSTEMS),$(eval $(call build_system,$(sys))))
 # --- Whitelist generation -----------------------------------------------------
 #
 # A release of mbaigo systems must be paired with a whitelist that authorises
-# exactly the binaries in that release. The security/ca Certificate Authority
-# reads `whitelist.json` (a flat JSON array of SHA-256 hex strings) at runtime
-# and serves it to maitreDs on every host; the maitreDs deny attestation for
-# any process whose hash is not on that list.
+# exactly the binaries in that release. The Certificate Authority reads
+# `whitelist.json` (a flat JSON array of SHA-256 hex strings) on every
+# certificate request, and refuses to sign for a binary whose hash is not on
+# that list.
+#
+# The list stays on the CA's host. The maitreDs used to hold a copy and apply
+# it on the CA's behalf; they now report a signed measurement of what is running
+# and the CA decides.
 #
 # This section walks the just-built binaries in $(STAGING) and writes both
 # files into $(STAGING)/ca/, alongside the CA binary they belong to:
@@ -132,7 +136,8 @@ $(foreach sys,$(SYSTEMS),$(eval $(call build_system,$(sys))))
 #
 # Deployment: rsync the CA's directory to its host, e.g.
 #     rsync -av $(STAGING)/ca/ ca-host:/path/to/ca/
-# Every maitreD picks up the new list on its next sync (≤5 min by default).
+# It takes effect on the next certificate request — the file is read per
+# request, so there is nothing to distribute and nobody to wait for.
 #
 # `release` depends on `whitelist`, so a single `make release VERSION=1.2.3`
 # produces binaries and the matching authorisation file in one shot.

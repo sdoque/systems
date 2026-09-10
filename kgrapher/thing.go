@@ -41,9 +41,16 @@ import (
 type Traits struct {
 	SystemList     forms.SystemRecordList_v1 `json:"-"`
 	TripleStoreURL string                    `json:"graphDBurl"`
-	LOntologies    map[string]string         `json:"localOntologies"` // map of ontology names to their file paths
-	owner          *components.System        `json:"-"`
-	name           string                    `json:"-"`
+
+	// StoreUser and StorePassword are used only if the triple store was
+	// deployed with security enabled. Left empty, this system connects openly.
+	// They sit in the configuration file beside the store's address, in the
+	// clear, as the other deployment credentials in this framework do.
+	StoreUser     string             `json:"graphDBuser,omitempty"`
+	StorePassword string             `json:"graphDBpassword,omitempty"`
+	LOntologies   map[string]string  `json:"localOntologies"` // map of ontology names to their file paths
+	owner         *components.System `json:"-"`
+	name          string             `json:"-"`
 
 	// ontologyFiles is where each configured local ontology lives on disk, kept
 	// because resolveLocalOntologies rewrites LOntologies into URLs. Mtimes
@@ -510,6 +517,12 @@ func (t *Traits) publishToStore(graph string) {
 	statementsURL := t.TripleStoreURL
 	repoBase := strings.TrimSuffix(t.TripleStoreURL, "/statements")
 	client := &http.Client{Transport: http.DefaultClient.Transport, Timeout: 60 * time.Second}
+	client = withStoreAuth(client, t.StoreUser, t.StorePassword)
+	if t.StoreUser == "" {
+		log.Println("kgrapher: connecting to the triple store without credentials; if it has security enabled, set graphDBuser and graphDBpassword")
+	} else {
+		log.Printf("kgrapher: authenticating to the triple store as %q\n", t.StoreUser)
+	}
 
 	t.loadOntologies(client, repoBase)
 
@@ -903,4 +916,44 @@ func (t *Traits) localOntologies(sp string) string {
 	sb.WriteString(`</ul>
 </body></html>`)
 	return sb.String()
+}
+
+//-------------------------------------Optional credentials for the triple store
+
+// storeAuth adds a credential to every request when one is configured.
+//
+// A triple store may be deployed with its security switched on or off, and the
+// technician who installed it made that choice. This system follows it rather
+// than assuming: with a username configured it authenticates, and without one
+// it connects openly, which is exactly what an unsecured store expects.
+//
+// Applied as a transport rather than at each call site, so a request added
+// later cannot forget it.
+type storeAuth struct {
+	base     http.RoundTripper
+	user, pw string
+}
+
+func (t *storeAuth) RoundTrip(r *http.Request) (*http.Response, error) {
+	// Cloned, because a RoundTripper must not modify the request it is given:
+	// the caller may retry it, and a redirect will reuse it.
+	r2 := r.Clone(r.Context())
+	r2.SetBasicAuth(t.user, t.pw)
+	return t.base.RoundTrip(r2)
+}
+
+// withStoreAuth wraps a client so it authenticates, when there is something to
+// authenticate with. An empty username means the store is open and the request
+// goes as it did before.
+func withStoreAuth(c *http.Client, user, pw string) *http.Client {
+	if user == "" {
+		return c
+	}
+	base := c.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	wrapped := *c
+	wrapped.Transport = &storeAuth{base: base, user: user, pw: pw}
+	return &wrapped
 }

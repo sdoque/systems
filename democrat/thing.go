@@ -57,6 +57,11 @@ type DemocratConfig struct {
 	//   http://localhost:7200/repositories/Arrowhead
 	GraphDBURL string `json:"graphdbUrl"`
 
+	// GraphDBUser and GraphDBPassword are used only if the triple store was
+	// deployed with security enabled; empty means connect openly.
+	GraphDBUser     string `json:"graphdbUser,omitempty"`
+	GraphDBPassword string `json:"graphdbPassword,omitempty"`
+
 	// FAASTURL is the FA³ST REST API v3 base URL, e.g.:
 	//   http://localhost:8080/api/v3.0
 	FAASTURL string `json:"faaastUrl"`
@@ -89,6 +94,11 @@ type Traits struct {
 	GraphDBURL   string `json:"graphdbUrl"`
 	FAASTURL     string `json:"faaastUrl"`
 	SyncInterval int    `json:"syncInterval"`
+
+	// Used only if the triple store was deployed with security enabled; empty
+	// means connect openly, which is what an unsecured store expects.
+	GraphDBUser     string `json:"graphdbUser,omitempty"`
+	GraphDBPassword string `json:"graphdbPassword,omitempty"`
 
 	lastResult  SyncResult
 	triggerChan chan SyncRequest
@@ -273,6 +283,12 @@ func (t *Traits) runSync() SyncResult {
 	result := SyncResult{Time: start}
 
 	client := &http.Client{Timeout: 15 * time.Second}
+	client = withStoreAuth(client, t.GraphDBUser, t.GraphDBPassword)
+	if t.GraphDBUser == "" {
+		log.Println("democrat: connecting to the triple store without credentials; if it has security enabled, set graphdbUser and graphdbPassword")
+	} else {
+		log.Printf("democrat: authenticating to the triple store as %q\n", t.GraphDBUser)
+	}
 
 	systems, err := loadSystems(client, t.GraphDBURL)
 	if err != nil {
@@ -328,4 +344,44 @@ func (t *Traits) runSync() SyncResult {
 			len(result.Errors), result.Duration)
 	}
 	return result
+}
+
+//-------------------------------------Optional credentials for the triple store
+
+// storeAuth adds a credential to every request when one is configured.
+//
+// A triple store may be deployed with its security switched on or off, and the
+// technician who installed it made that choice. This system follows it rather
+// than assuming: with a username configured it authenticates, and without one
+// it connects openly, which is exactly what an unsecured store expects.
+//
+// Applied as a transport rather than at each call site, so a request added
+// later cannot forget it.
+type storeAuth struct {
+	base     http.RoundTripper
+	user, pw string
+}
+
+func (t *storeAuth) RoundTrip(r *http.Request) (*http.Response, error) {
+	// Cloned, because a RoundTripper must not modify the request it is given:
+	// the caller may retry it, and a redirect will reuse it.
+	r2 := r.Clone(r.Context())
+	r2.SetBasicAuth(t.user, t.pw)
+	return t.base.RoundTrip(r2)
+}
+
+// withStoreAuth wraps a client so it authenticates, when there is something to
+// authenticate with. An empty username means the store is open and the request
+// goes as it did before.
+func withStoreAuth(c *http.Client, user, pw string) *http.Client {
+	if user == "" {
+		return c
+	}
+	base := c.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	wrapped := *c
+	wrapped.Transport = &storeAuth{base: base, user: user, pw: pw}
+	return &wrapped
 }

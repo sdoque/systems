@@ -42,10 +42,18 @@ type GuetteurConfig struct {
 	Port     string `json:"port"`
 	BaudRate int    `json:"baudRate"`
 
+	// SweepHz and PointsPerSweep shape the simulator only. The sensor sweeps
+	// at whatever its scan delay and sector make of it.
 	SweepHz        float64 `json:"sweepHz"`
 	PointsPerSweep int     `json:"pointsPerSweep"`
-	SectorDegrees  float64 `json:"sectorDegrees"`
-	MaxRange       float64 `json:"maxRangeMetres"`
+
+	// UpdateRate and ScanDelay are written to the sensor (commands 66 and 85).
+	// UpdateRate is the sensor's own enumeration, whose meaning depends on its
+	// firmware; see lwnx.go. The defaults are what the students ran with.
+	UpdateRate    int     `json:"updateRate"`
+	ScanDelay     int     `json:"scanDelay"`
+	SectorDegrees float64 `json:"sectorDegrees"`
+	MaxRange      float64 `json:"maxRangeMetres"`
 
 	// ForwardSectorDegrees is the arc, centred straight ahead, that clearance
 	// reduces to a single number.
@@ -141,6 +149,8 @@ func initTemplate() *components.UnitAsset {
 			BaudRate:             921600,
 			SweepHz:              5,
 			PointsPerSweep:       160,
+			UpdateRate:           8,
+			ScanDelay:            5,
 			SectorDegrees:        160,
 			MaxRange:             50,
 			ForwardSectorDegrees: 40,
@@ -214,6 +224,12 @@ func applyDefaults(cfg *GuetteurConfig) {
 	}
 	if cfg.SectorDegrees <= 0 {
 		cfg.SectorDegrees = 160
+	}
+	if cfg.UpdateRate <= 0 || cfg.UpdateRate > 12 {
+		cfg.UpdateRate = 8
+	}
+	if cfg.ScanDelay < 5 || cfg.ScanDelay > 2000 {
+		cfg.ScanDelay = 5
 	}
 	if cfg.MaxRange <= 0 {
 		cfg.MaxRange = 50

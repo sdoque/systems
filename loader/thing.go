@@ -23,6 +23,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -67,13 +68,18 @@ type LoaderConfig struct {
 	WaistPollHz int `json:"waistPollHz"`
 	// FeedbackStaleMs is how old a measurement may be before it stops counting
 	// as one.
-	FeedbackStaleMs int         `json:"feedbackStaleMs"`
-	CommandHz       int         `json:"commandHz"`
-	SafetyStopMs    int         `json:"safetyStopMs"`
-	MaxWheelRPM     float64     `json:"maxWheelRPM"`
-	AccelStep       int         `json:"accelStep"`
-	BrakeStep       int         `json:"brakeStep"`
-	Motors          []MotorSpec `json:"motors"`
+	FeedbackStaleMs int `json:"feedbackStaleMs"`
+	CommandHz       int `json:"commandHz"`
+	// SafetyStopMs is how long the system in control may say nothing before
+	// the vehicle stops.
+	SafetyStopMs int     `json:"safetyStopMs"`
+	MaxWheelRPM  float64 `json:"maxWheelRPM"`
+	AccelStep    int     `json:"accelStep"`
+	BrakeStep    int     `json:"brakeStep"`
+	// Priority names the systems that may take control from anyone, and the
+	// only ones that may take it after a stop. See helm.go.
+	Priority []string    `json:"priority"`
+	Motors   []MotorSpec `json:"motors"`
 }
 
 // MotorSpec names one motor on the bus. Kind decides how a setpoint is read:
@@ -91,13 +97,14 @@ type MotorSpec struct {
 type drivetrain struct {
 	cfg LoaderConfig
 	fd  int
+	sys *components.System
 
 	fb *feedback
 
-	mu        sync.Mutex
-	setpoint  map[int]float64 // node ID -> RPM (wheel) or percent (steering)
-	last      map[int]int16   // node ID -> last raw command, for rate limiting
-	commanded time.Time       // when a client last set anything
+	mu       sync.Mutex
+	helm     *helm
+	setpoint map[int]float64 // node ID -> RPM (wheel) or percent (steering)
+	last     map[int]int16   // node ID -> last raw command, for rate limiting
 }
 
 // Traits is one motor, and what a service handler is given.
@@ -110,22 +117,34 @@ type Traits struct {
 	// when it has none.
 	encoderIndex int
 	dt           *drivetrain
+	ua           *components.UnitAsset
 }
 
-// servicesFor keeps only the services a given motor can actually answer. Every
+// servicesFor keeps only the services a given asset can actually answer. Every
 // asset is built from the same configured list, but a steering motor has no
-// wheel encoder and a wheel has no articulation sensor, and a service that is
-// registered but cannot answer is worse than one that was never offered.
+// wheel encoder, a wheel has no articulation sensor, and control belongs to the
+// vehicle rather than to any one motor. A service that is registered but cannot
+// answer is worse than one that was never offered.
 func servicesFor(kind string, configured []components.Service) components.Services {
 	svcs := usecases.MakeServiceMap(configured)
-	if kind == "steering" {
-		delete(svcs, "speed")
-		delete(svcs, "travel")
-	} else {
-		delete(svcs, "waist")
+	keep := map[string][]string{
+		"wheel":    {"setpoint", "speed", "travel"},
+		"steering": {"setpoint", "waist"},
+		"vehicle":  {"control", "stop"},
+	}[kind]
+	for name := range svcs {
+		if !slices.Contains(keep, name) {
+			delete(svcs, name)
+		}
 	}
 	return svcs
 }
+
+// vehicleServices are the ones the helm answers. A configuration file written
+// before they existed does not list them, and a loader started from it would
+// register no way to take control — and so could never be driven, with nothing
+// in the log to say why.
+var vehicleServices = []string{"control", "stop"}
 
 //-------------------------------------Instantiate a unit asset template
 
@@ -153,7 +172,12 @@ func initTemplate() *components.UnitAsset {
 		},
 		RegPeriod:     2,
 		SubscribeAble: true,
-		Description:   "the speed this wheel is measured to be turning, from its encoder",
+		// A reading that does not change is not sent, so a wheel standing
+		// still would be heard from only at the heartbeat. One second, the
+		// framework's shortest, lets a follower tell it from a dead encoder:
+		// the heartbeat carries the newest reading and its timestamp.
+		Heartbeat:   1,
+		Description: "the speed this wheel is measured to be turning, from its encoder",
 	}
 
 	travel := components.Service{
@@ -166,7 +190,12 @@ func initTemplate() *components.UnitAsset {
 		},
 		RegPeriod:     2,
 		SubscribeAble: true,
-		Description:   "revolutions this wheel has turned since the encoder powered up",
+		// A reading that does not change is not sent, so a wheel standing
+		// still would be heard from only at the heartbeat. One second, the
+		// framework's shortest, lets a follower tell it from a dead encoder:
+		// the heartbeat carries the newest reading and its timestamp.
+		Heartbeat:   1,
+		Description: "revolutions this wheel has turned since the loader started",
 	}
 
 	waist := components.Service{
@@ -178,37 +207,76 @@ func initTemplate() *components.UnitAsset {
 		},
 		RegPeriod:     2,
 		SubscribeAble: true,
-		Description:   "the articulation sensor's raw 10-bit reading; see the note on its scale",
+		// A reading that does not change is not sent, so a wheel standing
+		// still would be heard from only at the heartbeat. One second, the
+		// framework's shortest, lets a follower tell it from a dead encoder:
+		// the heartbeat carries the newest reading and its timestamp.
+		Heartbeat:   1,
+		Description: "the articulation sensor's raw 10-bit reading; see the note on its scale",
+	}
+
+	control := components.Service{
+		Definition: "control",
+		SubPath:    "control",
+		Details: map[string][]string{
+			"Forms":   {"SignalA_v1a"},
+			"Methods": components.HTTPMethods("GET", "PUT"),
+		},
+		RegPeriod:   30,
+		Description: "PUT 1 to take control of the vehicle, 0 to release it; GET says whether the caller has it",
+	}
+
+	stop := components.Service{
+		Definition: "stop",
+		SubPath:    "stop",
+		Details: map[string][]string{
+			"Forms":   {"SignalA_v1a"},
+			"Methods": components.HTTPMethods("GET", "PUT"),
+		},
+		RegPeriod:   30,
+		Description: "PUT 1 to stop the vehicle, whoever has control; GET says whether it is stopped",
 	}
 
 	return &components.UnitAsset{
-		Name:     "Drivetrain",
-		Mission:  components.MissionActuation,
-		Mobility: components.MobilityMovable,
+		Name:    "Drivetrain",
+		Mission: components.MissionActuation,
+		// Fixed: it needs this host's CAN bus. It said movable, which would
+		// have let a balancer propose moving it to a machine with no vehicle.
+		Mobility: components.MobilityFixed,
 		Details:  map[string][]string{"Model": {"artitrax"}, "FunctionalLocation": {"Loader"}},
 		ServicesMap: components.Services{
 			setpoint.SubPath: &setpoint,
 			speed.SubPath:    &speed,
 			travel.SubPath:   &travel,
 			waist.SubPath:    &waist,
+			control.SubPath:  &control,
+			stop.SubPath:     &stop,
 		},
 		Traits: &LoaderConfig{
 			Interface:       "can0",
 			SensorInterface: "can1",
 			WaistPollHz:     10,
 			FeedbackStaleMs: 500,
-			// Above ten, because can_dds — and the hardware behind it — treats a
-			// command older than 100 ms as stale and zeroes the outputs. Twenty
-			// leaves margin for a missed cycle.
-			CommandHz: 20,
-			// The vehicle stops if nothing has commanded it for this long. Every
-			// other actuator in this cloud holds its last state when the
-			// controller goes quiet, which is right for a heater and wrong for
-			// something with wheels.
-			SafetyStopMs: 2000,
+			// The reference's own cycle: can_dds writes every 20 ms. The drives
+			// treat a command older than 100 ms as stale, so anything above ten
+			// works, but the ramp steps below are per cycle and were tuned at
+			// this rate.
+			CommandHz: 50,
+			// The vehicle stops if the system in control says nothing for this
+			// long. Every other actuator in this cloud holds its last state when
+			// the controller goes quiet, which is right for a heater and wrong
+			// for something with wheels. can_dds allows 100 ms; this allows
+			// half a second, for a command that crosses the network.
+			SafetyStopMs: 500,
 			MaxWheelRPM:  120,
-			AccelStep:    30,
-			BrakeStep:    100,
+			// The values can_dds passes in main.cpp — not the MotorController
+			// constructor's defaults of 30 and 100, which is what this system
+			// first copied. At 20 Hz those took 51 s to reach full speed and
+			// 15 s to stop from it; at these values and 50 Hz it is 4.1 s and
+			// 1.2 s, which is what the vehicle has always done under can_dds.
+			AccelStep: 150,
+			BrakeStep: 500,
+			Priority:  []string{"gamepad"},
 			Motors: []MotorSpec{
 				{Name: "FrontLeft", NodeID: 1, Kind: "wheel"},
 				{Name: "FrontRight", NodeID: 2, Kind: "wheel"},
@@ -240,10 +308,21 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 	log.Printf("loader: opened %s", cfg.Interface)
 
+	configured := usecases.MakeServiceMap(configuredAsset.Services)
+	for _, name := range vehicleServices {
+		if _, ok := configured[name]; !ok {
+			closeCAN(fd)
+			log.Fatalf("loader: the configuration lists no %q service, so the vehicle could never be driven; "+
+				"it was written by an older version — delete systemconfig.json and start again to regenerate it", name)
+		}
+	}
+
 	dt := &drivetrain{
 		cfg:      cfg,
 		fd:       fd,
+		sys:      sys,
 		fb:       newFeedback(time.Duration(cfg.FeedbackStaleMs) * time.Millisecond),
+		helm:     newHelm(cfg.Priority),
 		setpoint: make(map[int]float64),
 		last:     make(map[int]int16),
 	}
@@ -257,6 +336,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		closeCAN(fd)
 		log.Fatalf("loader: cannot open %s for encoder feedback: %v", cfg.Interface, err)
 	}
+	initEncoders(encFd)
 	go dt.fb.listenEncoders(sys.Ctx, encFd)
 
 	waistFd := -1
@@ -289,10 +369,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 			t.unit = "<http://qudt.org/vocab/unit/PERCENT>"
 		}
 
-		details := make(map[string][]string)
-		for k, v := range configuredAsset.Details {
-			details[k] = v
-		}
+		details := copyDetails(configuredAsset.Details)
 		details["Unit"] = []string{t.unit}
 		details["NodeID"] = []string{fmt.Sprintf("%d", m.NodeID)}
 
@@ -309,8 +386,30 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		ua.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
 			serving(t, w, r, servicePath)
 		}
+		t.ua = ua
 		assets = append(assets, ua)
 	}
+
+	// The vehicle itself, which is what control and stop act on.
+	vt := &Traits{Name: "Vehicle", Kind: "vehicle", dt: dt, encoderIndex: -1}
+	vehicle := &components.UnitAsset{
+		Name:        vt.Name,
+		Mission:     configuredAsset.Mission,
+		Mobility:    configuredAsset.Mobility,
+		TetheredTo:  configuredAsset.TetheredTo,
+		Owner:       sys,
+		Details:     copyDetails(configuredAsset.Details),
+		ServicesMap: servicesFor(vt.Kind, configuredAsset.Services),
+		Traits:      vt,
+	}
+	vehicle.ServingFunc = func(w http.ResponseWriter, r *http.Request, servicePath string) {
+		serving(vt, w, r, servicePath)
+	}
+	vt.ua = vehicle
+	assets = append(assets, vehicle)
+
+	dt.publishFeedback(assets)
+	log.Printf("loader: the vehicle is stopped until %s takes control", dt.helm.priorityNames())
 
 	go dt.run(sys.Ctx)
 
@@ -330,7 +429,7 @@ func applyDefaults(cfg *LoaderConfig) {
 		cfg.Interface = "can0"
 	}
 	if cfg.CommandHz <= 0 {
-		cfg.CommandHz = 20
+		cfg.CommandHz = 50
 	}
 	if cfg.SafetyStopMs <= 0 {
 		cfg.SafetyStopMs = 2000
@@ -339,10 +438,10 @@ func applyDefaults(cfg *LoaderConfig) {
 		cfg.MaxWheelRPM = 120
 	}
 	if cfg.AccelStep <= 0 {
-		cfg.AccelStep = 30
+		cfg.AccelStep = 150
 	}
 	if cfg.BrakeStep <= 0 {
-		cfg.BrakeStep = 100
+		cfg.BrakeStep = 500
 	}
 	if cfg.WaistPollHz <= 0 {
 		cfg.WaistPollHz = 10
@@ -407,26 +506,20 @@ func (d *drivetrain) run(ctx context.Context) {
 // has said anything recently.
 func (d *drivetrain) writeCycle() {
 	d.mu.Lock()
-	stale := !d.commanded.IsZero() &&
-		time.Since(d.commanded) > time.Duration(d.cfg.SafetyStopMs)*time.Millisecond
+	if d.helm.silent(time.Now(), time.Duration(d.cfg.SafetyStopMs)*time.Millisecond) {
+		log.Printf("loader: stopped — %s", d.helm.why)
+		d.haltLocked()
+	}
 	targets := make(map[int]int16, len(d.cfg.Motors))
 	for _, m := range d.cfg.Motors {
 		desired := int16(0)
-		if !stale {
+		if !d.helm.stopped {
 			desired = d.rawFor(m)
 		}
 		limited := rateLimit(d.last[m.NodeID], desired,
 			int16(d.cfg.AccelStep), int16(d.cfg.BrakeStep))
 		d.last[m.NodeID] = limited
 		targets[m.NodeID] = limited
-	}
-	if stale {
-		// Announced once: commanded is cleared so the next cycle is quiet.
-		log.Printf("loader: no command for %d ms — stopping", d.cfg.SafetyStopMs)
-		d.commanded = time.Time{}
-		for k := range d.setpoint {
-			d.setpoint[k] = 0
-		}
 	}
 	fd := d.fd
 	d.mu.Unlock()
@@ -488,6 +581,52 @@ func rateLimit(last, desired, accel, brake int16) int16 {
 	return desired
 }
 
+// haltLocked clears every setpoint and the rate limiter's memory, so the next
+// cycle commands zero outright rather than ramping down to it. This is what
+// can_dds does on an emergency, by resetting its motor controllers: a stop that
+// took the braking ramp would take 1.2 s from full speed. Caller holds the lock.
+func (d *drivetrain) haltLocked() {
+	for k := range d.setpoint {
+		d.setpoint[k] = 0
+	}
+	for k := range d.last {
+		d.last[k] = 0
+	}
+}
+
+// clearSetpointsLocked zeroes what is asked for but keeps the ramp, for a
+// handover: the vehicle comes to rest at the normal braking rate. Caller holds
+// the lock.
+func (d *drivetrain) clearSetpointsLocked() {
+	for k := range d.setpoint {
+		d.setpoint[k] = 0
+	}
+}
+
+// callerOf names who sent a request, and brings the helm up to date with
+// whether this loader can tell callers apart at all.
+func (d *drivetrain) callerOf(r *http.Request) caller {
+	certified := false
+	select {
+	case <-usecases.EnsureCertReady(d.sys):
+		certified = true
+	default:
+	}
+	d.mu.Lock()
+	if d.helm.anonymousPilot == certified { // it changed
+		d.helm.anonymousPilot = !certified
+		if !certified {
+			log.Println("loader: this loader holds no certificate, so callers cannot be told apart; " +
+				"anyone may take control and control protects nothing")
+		}
+	}
+	d.mu.Unlock()
+	if cn, ok := usecases.PeerCN(r); ok {
+		return caller{name: cn, known: true}
+	}
+	return caller{}
+}
+
 // stopAll zeroes every motor immediately, bypassing the rate limiter. Used on
 // shutdown, where the point is that the wheels stop.
 func (d *drivetrain) stopAll() {
@@ -525,17 +664,12 @@ func (t *Traits) setpointService(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "malformed request", http.StatusBadRequest)
 			return
 		}
-		confirmation := t.set(sig)
-		body, err := usecases.Pack(&confirmation, "application/json")
+		confirmation, err := t.set(t.dt.callerOf(r), sig)
 		if err != nil {
-			log.Printf("loader: packing response: %v", err)
+			refuse(w, err)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write(body); err != nil {
-			log.Printf("loader: writing response: %v", err)
-		}
+		respond(w, &confirmation)
 	default:
 		http.Error(w, "Method is not supported.", http.StatusNotFound)
 	}
@@ -551,9 +685,10 @@ func (t *Traits) get() (f forms.SignalA_v1a) {
 	return f
 }
 
-// set records what was asked for and clamps it. The value reaches a motor on
-// the next cycle of the loop, not here, so a request never blocks on the bus.
-func (t *Traits) set(sig forms.SignalA_v1a) forms.SignalA_v1a {
+// set records what was asked for and clamps it, if the caller has control. The
+// value reaches a motor on the next cycle of the loop, not here, so a request
+// never blocks on the bus.
+func (t *Traits) set(c caller, sig forms.SignalA_v1a) (forms.SignalA_v1a, error) {
 	v := sig.Value
 	limit := t.dt.cfg.MaxWheelRPM
 	if t.Kind == "steering" {
@@ -567,14 +702,17 @@ func (t *Traits) set(sig forms.SignalA_v1a) forms.SignalA_v1a {
 	}
 
 	t.dt.mu.Lock()
+	if err := t.dt.helm.command(c, time.Now()); err != nil {
+		t.dt.mu.Unlock()
+		return forms.SignalA_v1a{}, err
+	}
 	t.dt.setpoint[t.NodeID] = v
-	t.dt.commanded = time.Now()
 	t.dt.mu.Unlock()
 
 	if v != sig.Value {
 		log.Printf("loader: %s asked for %.2f, clamped to %.2f", t.Name, sig.Value, v)
 	}
-	return t.get()
+	return t.get(), nil
 }
 
 //-------------------------------------The measured services
@@ -597,18 +735,13 @@ func (t *Traits) speedService(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no recent encoder frame for this wheel", http.StatusServiceUnavailable)
 		return
 	}
-	f := forms.SignalA_v1a{}
-	f.NewForm()
-	f.Value = reading.rpm
-	f.Unit = "<http://qudt.org/vocab/unit/REV-PER-MIN>"
-	f.Timestamp = reading.at
-	usecases.HTTPProcessGetRequest(w, r, &f)
+	usecases.HTTPProcessGetRequest(w, r, speedForm(reading))
 }
 
 // travelService reports the wheel's cumulative revolutions.
 //
-// The counter is 24 bits and free-running, so it wraps after 2^24 counts —
-// about 205 output revolutions. A consumer differencing it must expect that,
+// The counter is 24 bits, preset to zero when this system starts, so it wraps
+// after 2^24 counts — about 205 output revolutions. A consumer differencing it must expect that,
 // which is why the count is published as it is rather than as a distance: this
 // system does not know the wheel's diameter, and turning revolutions into
 // metres is the driver's job.
@@ -622,12 +755,7 @@ func (t *Traits) travelService(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no recent encoder frame for this wheel", http.StatusServiceUnavailable)
 		return
 	}
-	f := forms.SignalA_v1a{}
-	f.NewForm()
-	f.Value = reading.revolutions
-	f.Unit = "<http://qudt.org/vocab/unit/REV>"
-	f.Timestamp = reading.at
-	usecases.HTTPProcessGetRequest(w, r, &f)
+	usecases.HTTPProcessGetRequest(w, r, travelForm(reading))
 }
 
 // waistService publishes the articulation sensor's RAW ten-bit reading, with no
@@ -651,9 +779,5 @@ func (t *Traits) waistService(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "the articulation sensor is not answering", http.StatusServiceUnavailable)
 		return
 	}
-	f := forms.SignalA_v1a{}
-	f.NewForm()
-	f.Value = float64(raw)
-	f.Timestamp = at
-	usecases.HTTPProcessGetRequest(w, r, &f)
+	usecases.HTTPProcessGetRequest(w, r, waistForm(raw, at))
 }

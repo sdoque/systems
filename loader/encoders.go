@@ -35,8 +35,9 @@ import (
 var errCANTimeout = errors.New("no CAN frame within the timeout")
 
 const (
-	// Wheel encoders answer unsolicited, one CAN ID each, in the order the
-	// motors are numbered: front left, front right, back left, back right.
+	// Wheel encoders report on their own once started, one CAN ID each, in the
+	// order the motors are numbered: front left, front right, back left, back
+	// right.
 	encoderBaseID = 0x18B
 	encoderCount  = 4
 
@@ -53,9 +54,50 @@ const (
 	waistReplyID = 0x701
 )
 
+// initEncoders configures the encoders and starts them, as can_dds does.
+//
+// They are CANopen nodes, and a CANopen node comes up pre-operational and says
+// nothing until it is told to start. This system first assumed the encoders
+// reported unsolicited, and on the vehicle they reported nothing; the students
+// found the missing step in the reference and ported it (fix-encoder-init).
+//
+// Each node gets three SDO writes and then an NMT start:
+//
+//	0x2005 = 2    PDO1 carries position, speed and acceleration
+//	0x6200 = 50   send it every 50 ms
+//	0x6003 = 0    preset the position to zero
+//
+// The preset means the position counts from when this system started, not from
+// when the encoder powered up.
+//
+// Nodes 0x0B to 0x0F: the reference starts five, one more than there are
+// wheels. Nothing here reads the fifth (it would report on 0x18F); it is
+// started because the reference starts it, and a node left pre-operational is
+// the kind of difference that is expensive to find later.
+//
+// The SDO frames are seven bytes, exactly as the reference sends them. CANopen
+// specifies eight, and a stricter node could refuse them; these do not.
+func initEncoders(fd int) {
+	send := func(id uint32, data []byte, what string, node byte) {
+		if err := sendCAN(fd, id, data); err != nil {
+			log.Printf("loader: encoder 0x%02X: %s: %v", node, what, err)
+		}
+	}
+	for node := byte(0x0B); node <= 0x0F; node++ {
+		sdo := uint32(0x600) + uint32(node)
+		send(sdo, []byte{0x2F, 0x05, 0x20, 0x00, 0x02, 0x00, 0x00}, "select PDO type 2", node)
+		time.Sleep(10 * time.Millisecond)
+		send(sdo, []byte{0x2B, 0x00, 0x62, 0x00, 0x32, 0x00, 0x00}, "set the 50 ms cycle", node)
+		send(sdo, []byte{0x23, 0x03, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00}, "preset the position to zero", node)
+		time.Sleep(10 * time.Millisecond)
+		send(0x000, []byte{0x01, node}, "NMT start", node)
+	}
+	log.Println("loader: wheel encoders configured and started")
+}
+
 // wheelReading is one wheel's own account of itself.
 type wheelReading struct {
-	revolutions float64 // since the encoder powered up
+	revolutions float64 // since this system started and preset the counter
 	rpm         float64 // of the output shaft, after the gearbox
 	at          time.Time
 }
@@ -72,6 +114,11 @@ type feedback struct {
 	waistFresh bool
 
 	staleAfter time.Duration
+
+	// Called with every fresh reading, outside the lock, so that the services
+	// can hand it to whoever follows them. Set once, before the listeners start.
+	onWheel func(index int, r wheelReading)
+	onWaist func(raw int, at time.Time)
 }
 
 func newFeedback(staleAfter time.Duration) *feedback {
@@ -154,6 +201,9 @@ func (fb *feedback) listenEncoders(ctx context.Context, fd int) {
 			fb.mu.Lock()
 			fb.wheels[i] = r
 			fb.mu.Unlock()
+			if fb.onWheel != nil {
+				fb.onWheel(i, r)
+			}
 		}
 	}
 }
@@ -185,11 +235,13 @@ func (fb *feedback) pollWaist(ctx context.Context, fd int, period time.Duration)
 		if f.ID != waistReplyID || f.DLC < 2 {
 			continue
 		}
+		raw, at := int(f.Data[0]&0x03)<<8|int(f.Data[1]), time.Now()
 		fb.mu.Lock()
-		fb.waistRaw = int(f.Data[0]&0x03)<<8 | int(f.Data[1])
-		fb.waistAt = time.Now()
-		fb.waistFresh = true
+		fb.waistRaw, fb.waistAt, fb.waistFresh = raw, at, true
 		fb.mu.Unlock()
+		if fb.onWaist != nil {
+			fb.onWaist(raw, at)
+		}
 	}
 }
 

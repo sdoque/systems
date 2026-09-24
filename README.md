@@ -83,6 +83,19 @@ own — and what it looks like when it has gone wrong.
 | `parallax` | Controls a standard servo motor with PWM; exposes a rotation service (GET current position, PUT new position) |
 | `parallax4` | Controls four independent PWM servo motors; exposes a rotation service per channel |
 
+### Mobile machines
+
+The Artitrax mini wheel loader, driven by hand or by software, and mapping as it
+goes. The loader is the vehicle; everything above it speaks in velocity and
+curvature, with left positive (ISO 8855), and knows nothing of the machine.
+
+| System | Description |
+|---|---|
+| `loader` | The vehicle: drives the wheel and waist motors over CAN, reads the encoders and the articulation sensor, owns the geometry, kinematics and steering limits, and decides which one system may drive |
+| `gamer` | Drives the loader by hand from a game controller; the pilot with priority, which can take control from software and stop the vehicle whoever is driving |
+| `guetteur` | Reads a LightWare SF45/B scanning LiDAR over serial and exposes each sweep, and the clearance ahead, as services |
+| `cartographer` | Builds an occupancy map from the guetteur's sweeps and the loader's wheel travel (SLAM front end), and reports where the scanner is in it |
+
 ### Imaging
 
 | System | Description |
@@ -143,6 +156,8 @@ sense meant here:
 | Abbreviation | In full |
 |---|---|
 | AAS | Asset Administration Shell — the Industry 4.0 digital-twin format |
+| ISO 8855 | The road-vehicle axis convention: x forward, y left, z up, turning left positive |
+| LiDAR | Light detection and ranging, a laser rangefinder; the SF45/B sweeps one across an arc |
 | BDD, IBD | Block definition diagram and internal block diagram, the two SysML v2 structure views |
 | CAN | Controller Area Network, the vehicle and machine bus |
 | GPIO | General-purpose input/output, the Raspberry Pi's pin header |
@@ -159,6 +174,7 @@ sense meant here:
 | REST | Representational State Transfer, the resource-oriented style these services follow |
 | RTU | Remote Terminal Unit, the serial form of Modbus |
 | SAP PM/MM | The Plant Maintenance and Materials Management modules of SAP |
+| SLAM | Simultaneous localization and mapping: building a map while working out where one is in it |
 | SysML | Systems Modeling Language |
 
 `PID` is the one worth reading twice. In `busdriver` it is a Parameter

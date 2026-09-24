@@ -393,7 +393,7 @@ func TestSetCervicePicksOneMotor(t *testing.T) {
 // The newest value replaces a pending one: a zero is never queued behind a
 // speed that is no longer wanted.
 func TestSenderKeepsOnlyTheNewest(t *testing.T) {
-	s := newSender("FrontLeft", nil, nil, unitRPM, nil, setpointReply)
+	s := newSender("velocity", nil, nil, unitMPerS, nil, commandReply)
 	s.offer(120, 1)
 	s.offer(60, 1)
 	s.offer(0, 2)
@@ -420,7 +420,7 @@ func TestRepliesReachThePilot(t *testing.T) {
 		t.Fatal("a successful control reply did not grant control")
 	}
 	e := p.step(connected(), at(6)).epoch
-	applyReply(p, reply{kind: setpointReply, epoch: e,
+	applyReply(p, reply{kind: commandReply, epoch: e,
 		err: &usecases.ProviderRefusal{StatusCode: http.StatusConflict, Detail: "painter stopped it"}})
 	if p.inControl {
 		t.Fatal("a 409 on a setpoint did not take control away")
@@ -431,8 +431,37 @@ func TestAnUnreachableLoaderIsNotALossOfControl(t *testing.T) {
 	p := newTestPilot()
 	takeControl(t, p)
 	e := p.step(connected(), at(7)).epoch
-	applyReply(p, reply{kind: setpointReply, epoch: e, err: errors.New("connection refused")})
+	applyReply(p, reply{kind: commandReply, epoch: e, err: errors.New("connection refused")})
 	if !p.inControl {
 		t.Fatal("a network failure was taken as a loss of control")
+	}
+}
+
+// ISO 8855: left is positive. The stick reports left as negative, so the pad
+// must turn it round, or the vehicle steers the opposite way to the thumb.
+func TestSticksAreISO(t *testing.T) {
+	p := newTestPilot()
+	takeControl(t, p)
+	a := p.step(stick(stick(connected(), steerAxis, -32767), speedAxis, -32767), at(7))
+	if a.steer != 1 {
+		t.Errorf("left stick fully left gave steer %v, want +1 (left)", a.steer)
+	}
+	if a.speed != 1 {
+		t.Errorf("right stick fully up gave speed %v, want +1 (forward)", a.speed)
+	}
+	a = p.step(stick(connected(), steerAxis, 32767), at(7.1))
+	if a.steer != -1 {
+		t.Errorf("left stick fully right gave steer %v, want -1 (right)", a.steer)
+	}
+}
+
+func TestSteerValue(t *testing.T) {
+	tr := &Traits{cfg: PadConfig{Steering: steerByEffort, MaxSteeringPercent: 50, MaxCurvature: 0.5}}
+	if v := tr.steerValue(-0.5); v != -25 {
+		t.Errorf("half right by effort: %v, want -25", v)
+	}
+	tr.cfg.Steering = steerByCurvature
+	if v := tr.steerValue(1); v != 0.5 {
+		t.Errorf("full left by curvature: %v, want 0.5", v)
 	}
 }

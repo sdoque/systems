@@ -111,7 +111,7 @@ func (p *pad) run(ctx context.Context) {
 		f, err := os.Open(p.path)
 		if err != nil {
 			if !reported {
-				log.Printf("gamepad: cannot open %s: %v — will keep trying", p.path, err)
+				log.Printf("gamer: cannot open %s: %v — will keep trying", p.path, err)
 				reported = true
 			}
 			select {
@@ -121,7 +121,7 @@ func (p *pad) run(ctx context.Context) {
 			continue
 		}
 		reported = false
-		log.Printf("gamepad: %s opened", p.path)
+		log.Printf("gamer: %s opened", p.path)
 
 		// Closing the file is what unblocks the read when the system shuts down.
 		done := make(chan struct{})
@@ -140,7 +140,7 @@ func (p *pad) run(ctx context.Context) {
 		p.state = padState{}
 		p.mu.Unlock()
 		if ctx.Err() == nil {
-			log.Printf("gamepad: %s lost", p.path)
+			log.Printf("gamer: %s lost", p.path)
 		}
 	}
 }

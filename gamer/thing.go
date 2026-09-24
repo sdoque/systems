@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -32,8 +33,20 @@ import (
 )
 
 const (
-	unitRPM     = "<http://qudt.org/vocab/unit/REV-PER-MIN>"
+	unitMPerS   = "<http://qudt.org/vocab/unit/M-PER-SEC>"
+	unitPerM    = "<http://qudt.org/vocab/unit/PER-M>"
 	unitPercent = "<http://qudt.org/vocab/unit/PERCENT>"
+)
+
+// How the left stick steers.
+const (
+	// steerByEffort pushes the waist motor directly, as a percentage of its
+	// effort. It is how the vehicle is steered before the waist sensor is
+	// calibrated, and the loader's guard keeps it inside its limits.
+	steerByEffort = "effort"
+	// steerByCurvature asks for a curvature and lets the loader's angle loop
+	// steer the waist to it. It needs a calibrated waist.
+	steerByCurvature = "curvature"
 )
 
 // PadConfig is what the operator may set. The defaults are for a PlayStation
@@ -43,13 +56,23 @@ type PadConfig struct {
 	Device    string `json:"device"`
 	CommandHz int    `json:"commandHz"`
 
-	MaxWheelRPM float64 `json:"maxWheelRPM"`
-	// MaxSteeringPercent caps the steering effort. The loader's steering takes
-	// an effort, not an angle, so full stick is "push this hard", and the
-	// operator closes the loop by eye. Half effort is a guess to be tuned on
-	// the vehicle, chosen low because the waist has no angle limit in software.
+	// MaxSpeed is full stick, in m/s of the front axle.
+	MaxSpeed float64 `json:"maxSpeedMetresPerSecond"`
+
+	// Steering is "effort" or "curvature"; see steerByEffort. Effort until
+	// the waist is calibrated, curvature after.
+	Steering string `json:"steering"`
+	// MaxSteeringPercent is full stick when steering by effort: "push this
+	// hard", with the operator closing the loop by eye.
 	MaxSteeringPercent float64 `json:"maxSteeringPercent"`
-	DeadZone           float64 `json:"deadZone"`
+	// MaxCurvature is full stick when steering by curvature, in 1/m. The
+	// loader clamps it to what the waist can do.
+	MaxCurvature float64 `json:"maxCurvature"`
+	// SteeringNodeID picks the loader's steering motor, when steering by
+	// effort.
+	SteeringNodeID int `json:"steeringNodeID"`
+
+	DeadZone float64 `json:"deadZone"`
 
 	SpeedAxis int `json:"speedAxis"` // right stick, vertical
 	SteerAxis int `json:"steerAxis"` // left stick, horizontal
@@ -69,18 +92,8 @@ type PadConfig struct {
 	// that does not.
 	StopRepeats int `json:"stopRepeats"`
 
-	// Vehicle picks the loader out of the cloud, and Motors picks each motor
-	// out of the loader: a loader registers one asset per motor, each with its
-	// NodeID in its details.
+	// Vehicle picks the loader out of the cloud.
 	Vehicle map[string][]string `json:"vehicle"`
-	Motors  []MotorRef          `json:"motors"`
-}
-
-// MotorRef names a motor this pad drives.
-type MotorRef struct {
-	Name   string `json:"name"`
-	NodeID int    `json:"nodeID"`
-	Kind   string `json:"kind"` // "wheel" or "steering"
 }
 
 // Traits is the gamepad asset's state.
@@ -89,10 +102,11 @@ type Traits struct {
 	pad   *pad
 	owner *components.System
 
-	motors  []*sender
-	control *sender
-	stop    *sender
-	replies chan reply
+	velocity *sender
+	steer    *sender
+	control  *sender
+	stop     *sender
+	replies  chan reply
 
 	mu        sync.Mutex
 	inControl bool
@@ -123,8 +137,11 @@ func initTemplate() *components.UnitAsset {
 		Traits: &PadConfig{
 			Device:             "/dev/input/js0",
 			CommandHz:          20,
-			MaxWheelRPM:        120,
+			MaxSpeed:           1.0,
+			Steering:           steerByEffort,
 			MaxSteeringPercent: 50,
+			MaxCurvature:       0.5,
+			SteeringNodeID:     5,
 			DeadZone:           0.10,
 			SpeedAxis:          4,
 			SteerAxis:          0,
@@ -135,13 +152,6 @@ func initTemplate() *components.UnitAsset {
 			HoldSeconds:        5,
 			StopRepeats:        5,
 			Vehicle:            map[string][]string{"Model": {"artitrax"}},
-			Motors: []MotorRef{
-				{Name: "FrontLeft", NodeID: 1, Kind: "wheel"},
-				{Name: "FrontRight", NodeID: 2, Kind: "wheel"},
-				{Name: "BackLeft", NodeID: 3, Kind: "wheel"},
-				{Name: "BackRight", NodeID: 4, Kind: "wheel"},
-				{Name: "Steering", NodeID: 5, Kind: "steering"},
-			},
 		},
 	}
 }
@@ -152,7 +162,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	cfg := PadConfig{}
 	if len(configuredAsset.Traits) > 0 {
 		if err := json.Unmarshal(configuredAsset.Traits[0], &cfg); err != nil {
-			log.Fatalf("gamepad: cannot parse traits: %v", err)
+			log.Fatalf("gamer: cannot parse traits: %v", err)
 		}
 	}
 	applyDefaults(&cfg)
@@ -166,21 +176,24 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 
 	protos := components.SProtocols(sys.Husk.ProtoPort)
 	cervices := make(components.Cervices)
-	for _, m := range cfg.Motors {
-		cer := setCervice("setpoint", m.Name, cfg.Vehicle,
-			map[string][]string{"NodeID": {strconv.Itoa(m.NodeID)}}, protos)
-		cervices[m.Name] = cer
-		unit := unitRPM
-		if m.Kind == "steering" {
-			unit = unitPercent
-		}
-		t.motors = append(t.motors, newSender(m.Name, cer, sys, unit, t.replies, setpointReply))
+	velocityCer := setCervice("velocity", "velocity", cfg.Vehicle, nil, protos)
+	t.velocity = newSender("velocity", velocityCer, sys, unitMPerS, t.replies, commandReply)
+	var steerCer *components.Cervice
+	if cfg.Steering == steerByCurvature {
+		steerCer = setCervice("curvature", "steer", cfg.Vehicle, nil, protos)
+		t.steer = newSender("curvature", steerCer, sys, unitPerM, t.replies, commandReply)
+	} else {
+		steerCer = setCervice("setpoint", "steer", cfg.Vehicle,
+			map[string][]string{"NodeID": {strconv.Itoa(cfg.SteeringNodeID)}}, protos)
+		t.steer = newSender("steering effort", steerCer, sys, unitPercent, t.replies, commandReply)
 	}
 	controlCer := setCervice("control", "control", cfg.Vehicle, nil, protos)
 	stopCer := setCervice("stop", "stop", cfg.Vehicle, nil, protos)
+	cervices["velocity"], cervices["steer"] = velocityCer, steerCer
 	cervices["control"], cervices["stop"] = controlCer, stopCer
 	t.control = newSender("control", controlCer, sys, "", t.replies, controlReply)
 	t.stop = newSender("stop", stopCer, sys, "", t.replies, stopReply)
+	log.Printf("gamer: steering by %s; full stick is %s", cfg.Steering, t.fullSteer())
 
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
@@ -204,7 +217,7 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	go t.run(sys.Ctx)
 
 	return ua, func() {
-		log.Println("gamepad: shut down")
+		log.Println("gamer: shut down")
 	}
 }
 
@@ -215,11 +228,20 @@ func applyDefaults(cfg *PadConfig) {
 	if cfg.CommandHz <= 0 {
 		cfg.CommandHz = 20
 	}
-	if cfg.MaxWheelRPM <= 0 {
-		cfg.MaxWheelRPM = 120
+	if cfg.MaxSpeed <= 0 {
+		cfg.MaxSpeed = 1.0
+	}
+	if cfg.Steering != steerByCurvature {
+		cfg.Steering = steerByEffort
 	}
 	if cfg.MaxSteeringPercent <= 0 {
 		cfg.MaxSteeringPercent = 50
+	}
+	if cfg.MaxCurvature <= 0 {
+		cfg.MaxCurvature = 0.5
+	}
+	if cfg.SteeringNodeID <= 0 {
+		cfg.SteeringNodeID = 5
 	}
 	if cfg.DeadZone <= 0 || cfg.DeadZone >= 1 {
 		cfg.DeadZone = 0.10
@@ -278,7 +300,14 @@ func (t *Traits) newPilot() *pilot {
 }
 
 func (t *Traits) allSenders() []*sender {
-	return append(append([]*sender{}, t.motors...), t.control, t.stop)
+	return []*sender{t.velocity, t.steer, t.control, t.stop}
+}
+
+func (t *Traits) fullSteer() string {
+	if t.cfg.Steering == steerByCurvature {
+		return fmt.Sprintf("a curvature of %.2f /m (a %.1f m radius)", t.cfg.MaxCurvature, 1/t.cfg.MaxCurvature)
+	}
+	return fmt.Sprintf("%.0f%% of the waist motor's effort", t.cfg.MaxSteeringPercent)
 }
 
 //-------------------------------------The control loop
@@ -314,18 +343,19 @@ func (t *Traits) run(ctx context.Context) {
 			t.control.offer(0, a.epoch)
 		}
 		if a.drive {
-			for i, s := range t.motors {
-				s.offer(t.valueFor(t.cfg.Motors[i], a), a.epoch)
-			}
+			t.velocity.offer(a.speed*t.cfg.MaxSpeed, a.epoch)
+			t.steer.offer(t.steerValue(a.steer), a.epoch)
 		}
 	}
 }
 
-func (t *Traits) valueFor(m MotorRef, a action) float64 {
-	if m.Kind == "steering" {
-		return a.steer * t.cfg.MaxSteeringPercent
+// steerValue turns the stick, a fraction positive to the left, into what the
+// loader is sent.
+func (t *Traits) steerValue(fraction float64) float64 {
+	if t.cfg.Steering == steerByCurvature {
+		return fraction * t.cfg.MaxCurvature
 	}
-	return a.speed * t.cfg.MaxWheelRPM
+	return fraction * t.cfg.MaxSteeringPercent
 }
 
 // shutdown stops the vehicle if this pad was driving it. Closing the program
@@ -343,12 +373,12 @@ func (t *Traits) shutdown(p *pilot) {
 	select {
 	case err := <-done:
 		if err != nil {
-			log.Printf("gamepad: had control on the way out, and the vehicle did not confirm the stop: %v", err)
+			log.Printf("gamer: had control on the way out, and the vehicle did not confirm the stop: %v", err)
 			return
 		}
-		log.Println("gamepad: had control on the way out — the vehicle is stopped")
+		log.Println("gamer: had control on the way out — the vehicle is stopped")
 	case <-time.After(time.Second):
-		log.Println("gamepad: had control on the way out, and the vehicle did not confirm the stop within a second")
+		log.Println("gamer: had control on the way out, and the vehicle did not confirm the stop within a second")
 	}
 }
 
@@ -357,7 +387,7 @@ func (t *Traits) shutdown(p *pilot) {
 type replyKind int
 
 const (
-	setpointReply replyKind = iota
+	commandReply replyKind = iota
 	controlReply
 	stopReply
 )
@@ -374,7 +404,11 @@ func applyReply(p *pilot, r reply) {
 	var refused *usecases.ProviderRefusal
 	isRefusal := errors.As(r.err, &refused) && refused.StatusCode == http.StatusConflict
 	switch r.kind {
-	case setpointReply:
+	case commandReply:
+		// 409 is the loader saying this pad no longer has control: someone
+		// stopped the vehicle or took over. Anything else — a 503 because the
+		// waist is not calibrated, say — is not about control, and the sender
+		// has already logged it.
 		if isRefusal {
 			p.refused(r.epoch, refused.Detail)
 		}
@@ -385,7 +419,7 @@ func applyReply(p *pilot, r reply) {
 		case r.err == nil:
 			p.released(r.epoch)
 		case isRefusal:
-			log.Printf("gamepad: the vehicle refused: %s", refused.Detail)
+			log.Printf("gamer: the vehicle refused: %s", refused.Detail)
 		}
 	}
 	// Anything else — an unreachable loader, a stop that failed — the sender
@@ -447,7 +481,7 @@ func (s *sender) run(ctx context.Context) {
 				// At twenty requests a second an unreachable loader would fill
 				// the journal; once every five seconds per service still says
 				// it is happening.
-				log.Printf("gamepad: %s: %v", s.name, err)
+				log.Printf("gamer: %s: %v", s.name, err)
 				s.lastErr = time.Now()
 			}
 			select {

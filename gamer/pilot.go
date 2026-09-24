@@ -98,9 +98,9 @@ func (p *pilot) step(s padState, now time.Time) action {
 		if p.stopsOwed == 0 {
 			switch {
 			case lostInControl:
-				log.Println("gamepad: pad lost while in control — stopping the vehicle")
+				log.Println("gamer: pad lost while in control — stopping the vehicle")
 			default:
-				log.Println("gamepad: STOP")
+				log.Println("gamer: STOP")
 			}
 		}
 		// Refreshed for as long as the stop is held, and owed a few cycles
@@ -152,9 +152,9 @@ func (p *pilot) trackHold(s padState, now time.Time, a *action) {
 		p.holding, p.heldSince, p.done, p.warned = c, now, false, false
 		switch c {
 		case takeChord:
-			log.Printf("gamepad: hold L1+R1 for %.0f s to take control", p.holdFor.Seconds())
+			log.Printf("gamer: hold L1+R1 for %.0f s to take control", p.holdFor.Seconds())
 		case releaseChord:
-			log.Printf("gamepad: hold L2+R2 for %.0f s to release control", p.holdFor.Seconds())
+			log.Printf("gamer: hold L2+R2 for %.0f s to release control", p.holdFor.Seconds())
 		}
 	}
 	if c == noChord || p.done || now.Sub(p.heldSince) < p.holdFor {
@@ -170,22 +170,22 @@ func (p *pilot) trackHold(s padState, now time.Time, a *action) {
 		speed, steer := p.sticks(s)
 		if speed != 0 || steer != 0 {
 			if !p.warned {
-				log.Println("gamepad: not taking control with a stick pushed — center both sticks")
+				log.Println("gamer: not taking control with a stick pushed — center both sticks")
 				p.warned = true
 			}
 			return // keep holding; it goes through once the sticks are centered
 		}
 		p.done = true
 		a.take = true
-		log.Println("gamepad: asking for control")
+		log.Println("gamer: asking for control")
 	case releaseChord:
 		p.done = true
 		if !p.inControl {
-			log.Println("gamepad: nothing to release — this pad does not have control")
+			log.Println("gamer: nothing to release — this pad does not have control")
 			return
 		}
 		a.release = true
-		log.Println("gamepad: releasing control")
+		log.Println("gamer: releasing control")
 	}
 }
 
@@ -196,7 +196,7 @@ func (p *pilot) granted(e int) {
 	}
 	p.inControl = true
 	p.epoch++
-	log.Println("gamepad: in control")
+	log.Println("gamer: in control")
 }
 
 // released is the loader's confirmation of a release made in epoch e.
@@ -205,7 +205,7 @@ func (p *pilot) released(e int) {
 		return
 	}
 	p.lose()
-	log.Println("gamepad: control released")
+	log.Println("gamer: control released")
 }
 
 // refused is a setpoint the loader would not take in epoch e: someone stopped
@@ -215,7 +215,7 @@ func (p *pilot) refused(e int, reason string) {
 		return
 	}
 	p.lose()
-	log.Printf("gamepad: control lost: %s", reason)
+	log.Printf("gamer: control lost: %s", reason)
 }
 
 func (p *pilot) lose() {
@@ -225,10 +225,12 @@ func (p *pilot) lose() {
 	p.epoch++
 }
 
-// sticks reads the two axes as fractions of full deflection. Up is negative on
-// the wire, and forward is positive on the vehicle.
+// sticks reads the two axes as fractions of full deflection, in the vehicle's
+// convention (ISO 8855): forward and left are positive. On the wire both are
+// the other way round — pushing a stick up or to the left gives a negative
+// value — so both are negated.
 func (p *pilot) sticks(s padState) (speed, steer float64) {
-	return -shape(axisOf(s, p.speedAxis), p.deadZone), shape(axisOf(s, p.steerAxis), p.deadZone)
+	return -shape(axisOf(s, p.speedAxis), p.deadZone), -shape(axisOf(s, p.steerAxis), p.deadZone)
 }
 
 func axisOf(s padState, i int) int16 {

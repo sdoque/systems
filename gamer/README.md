@@ -1,14 +1,19 @@
-# gamepad
+# gamer
 
-Drives the Artitrax mini wheel loader from a game controller, through the
-[loader](../loader/) system.
+Drives the Artitrax mini wheel loader by hand, from a game controller, through
+the [loader](../loader/) system. The system is the gamer; its asset is the
+Gamepad.
 
-It replaces the artitrax `gamepad_controller`, which published the same
-commands over DDS to `can_dds`. Here there is no DDS, no ROS, no SDL and no C:
-the loader is the bridge to CAN, the gamepad reads the controller straight from
-the Linux joystick device, and the commands between them are ordinary service
-calls — discovered, authorized and, in a secured cloud, encrypted like any
-other.
+It commands the vehicle as any pilot does, with a velocity and a steering
+command, and it is the pilot with priority: it can take control from any other
+system, it is the only one that can take control after a stop, and it can stop
+the vehicle whoever is driving.
+
+It replaces the artitrax `gamepad_controller`, which published motor commands
+over DDS to `can_dds`. Here there is no DDS, no ROS, no SDL and no C: the loader
+is the vehicle, the gamer reads the controller straight from the Linux joystick
+device, and the commands between them are ordinary service calls — discovered,
+authorized and, in a secured cloud, encrypted like any other.
 
 > **Not yet run against the vehicle.** Tested in software (the handover and
 > stop rules, the stick shaping and the joystick decoding) and started on a
@@ -27,12 +32,12 @@ The [loader](../loader/README.md#who-drives) keeps the rules; the pad asks.
 | **L2 + R2**, held **5 s** | give control back |
 | **L1 + L2 + R1 + R2** together | **stop the vehicle, whoever is driving** |
 | any face button (✕ ○ △ □) | **stop the vehicle, whoever is driving** |
-| right stick, up/down | wheel speed, ±`maxWheelRPM` (120), while in control |
-| left stick, left/right | steering effort, ±`maxSteeringPercent` (50 %), while in control |
+| right stick, up/down | velocity, ±`maxSpeedMetresPerSecond` (1 m/s), while in control |
+| left stick, left/right | steering, while in control — see [Steering](#steering) |
 
 **Taking control.** Hold L1 and R1. After five seconds the pad asks the loader
 for control, and drives once the loader grants it — the log says
-`gamepad: in control`. The pad has priority, so it can take control from any
+`gamer: in control`. The pad has priority, so it can take control from any
 other system, and it is the only kind of system that can take control after a
 stop. With a stick pushed the take waits, and says so, until both sticks are
 centered.
@@ -66,22 +71,34 @@ control away, and the log gives the loader's reason. A loader that cannot be
 reached is not a loss of control: the pad keeps sending, and the loader's own
 half-second silence limit stops a vehicle nobody can reach.
 
-`GET /gamepad/Gamepad/engaged` answers `1` while the pad has control.
+`GET /gamer/Gamepad/engaged` answers `1` while the pad has control.
 
 **The pad cannot show you anything.** No rumble, no light bar: everything it
 has to say is in the log. The PlayStation pad's light bar is reachable through
 `/sys/class/leds` on Linux and would be the natural place to show "in control";
 that is not done yet.
 
-## What it does not do
+## Steering
 
-- **Steering is an effort, not an angle.** The loader has no angle loop yet, so
-  the stick says how hard to push the waist and the operator closes the loop by
-  eye. 50 % is a cautious starting value, not a measured one.
-- **No kinematics.** All four wheels get the same speed. On an articulated
-  vehicle the outer wheels in a turn should run faster than the inner — at 15°
-  of articulation and full speed, about 128 against 112 RPM. The difference is
-  scrubbed off by the tires for now.
+Left is positive, as everywhere in the vehicle (ISO 8855): stick left, vehicle
+left. There are two ways, set by `steering` in the configuration.
+
+**`effort`**, the default, until the waist sensor is calibrated. The stick says
+how hard to push the waist motor, up to `maxSteeringPercent` (50 %), and the
+operator closes the loop by eye. The loader's steering guard keeps the waist
+inside its limit whatever the stick says — before calibration a small window
+either side of straight — and stops the vehicle if the chain or the motor
+misbehaves.
+
+**`curvature`**, once the waist is calibrated. The stick asks for a curvature,
+up to `maxCurvature` (0.5 /m, a 2 m radius), and the loader steers the waist to
+the angle that gives it and sets the four wheels to match. Let go of the stick
+and the vehicle straightens, which it does not by effort. Until the waist is
+calibrated the loader refuses a curvature with `503`, the gamer logs why, and it
+keeps control.
+
+In both, the loader applies the kinematics: on a curve the inner wheels run
+slower than the outer, as the geometry says.
 
 ## Running it
 
@@ -99,9 +116,10 @@ The user running the system needs to be in the `input` group to read it:
 sudo usermod -aG input $USER    # then log out and in again
 ```
 
-In an authorized cloud, the policy must allow `gamepad` to write to the
-loader's `setpoint`, `control` and `stop` services, which are actuation, and
-the loader's `priority` list must name `gamepad` (it does by default).
+In an authorized cloud, the policy must allow `gamer` to write to the loader's
+`velocity`, `curvature`, `setpoint`, `control` and `stop` services, which are
+actuation, and the loader's `priority` list must name `gamer` (it does by
+default).
 
 ## Finding your controller's numbers
 
@@ -130,9 +148,12 @@ Generated on the first run.
 | field | default | |
 |---|---|---|
 | `device` | `/dev/input/js0` | |
-| `commandHz` | 20 | how often setpoints are sent; the loader's watchdog is 2 s |
-| `maxWheelRPM` | 120 | full stick |
-| `maxSteeringPercent` | 50 | full stick, as a percentage of full effort |
+| `commandHz` | 20 | how often commands are sent; the loader stops after 0.5 s of silence |
+| `maxSpeedMetresPerSecond` | 1.0 | full stick forward or back |
+| `steering` | `effort` | `effort` until the waist is calibrated, then `curvature` |
+| `maxSteeringPercent` | 50 | full stick by effort |
+| `maxCurvature` | 0.5 | full stick by curvature, in 1/m |
+| `steeringNodeID` | 5 | the loader's steering motor, for effort |
 | `deadZone` | 0.10 | fraction of travel ignored around the center |
 | `speedAxis` / `steerAxis` | 4 / 0 | |
 | `stopButtons` | 0, 1, 2, 3 | any one stops |
@@ -142,12 +163,10 @@ Generated on the first run.
 | `holdSeconds` | 5 | |
 | `stopRepeats` | 5 | cycles a stop is still sent after the buttons are let go |
 | `vehicle` | `{"Model": ["artitrax"]}` | details that pick the loader out of the cloud |
-| `motors` | the loader's five | each found by its `NodeID` detail |
 
-Each motor is its own consumed service, found by definition `setpoint` together
-with its node ID and the vehicle's details; `control` and `stop` are found by
-the vehicle's details alone. A cloud with two loaders needs the `vehicle`
-details to tell them apart.
+The loader's services are found by their definitions and the `vehicle` details;
+the steering motor by effort is found by its `NodeID` as well. A cloud with two
+loaders needs the `vehicle` details to tell them apart.
 
 Only the newest value is ever waiting to be sent. If a request is still in
 flight when the next cycle comes, the older value is replaced rather than

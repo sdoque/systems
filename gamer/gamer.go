@@ -14,14 +14,15 @@
  *   Jan A. van Deventer, Luleå - initial implementation
  ***************************************************************************SDG*/
 
-// The gamepad drives the loader by hand. It reads a game controller and
-// commands the loader's wheel and steering setpoints, and its emergency stop
-// sends zero and then nothing.
+// The gamer drives the loader by hand, from a game controller. It commands the
+// vehicle as any pilot does — a velocity and, once the waist is calibrated, a
+// curvature — and it is the pilot with priority: it can take control from any
+// other system, it is the only one that can take control after a stop, and it
+// can stop the vehicle whoever is driving.
 //
-// It replaces the artitrax gamepad_controller, which published the same
-// commands over DDS to can_dds; here the loader is the bridge and the commands
-// are ordinary service calls, discovered, authorized and encrypted like any
-// other in the cloud.
+// It replaces the artitrax gamepad_controller, which published motor commands
+// over DDS to can_dds; here the loader is the vehicle and the commands are
+// ordinary service calls, discovered, authorized and encrypted like any other.
 package main
 
 import (
@@ -40,7 +41,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	sys := components.NewSystem("gamepad", ctx)
+	sys := components.NewSystem("gamer", ctx)
 	usecases.WatchShutdown(&sys, cancel)
 
 	sys.Husk = &components.Husk{
@@ -48,7 +49,7 @@ func main() {
 		Details:     map[string][]string{"Developer": {"Synecdoque"}},
 		Host:        components.NewDevice(),
 		ProtoPort:   map[string]int{"https": 30198, "http": 20198, "coap": 0},
-		InfoLink:    "https://github.com/sdoque/systems/tree/main/gamepad",
+		InfoLink:    "https://github.com/sdoque/systems/tree/main/gamer",
 		DName: pkix.Name{
 			CommonName:         sys.Name,
 			Organization:       []string{"Synecdoque"},

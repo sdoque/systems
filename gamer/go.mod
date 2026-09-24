@@ -1,4 +1,4 @@
-module github.com/sdoque/systems/gamepad
+module github.com/sdoque/systems/gamer
 
 go 1.26.6
 

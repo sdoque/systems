@@ -97,9 +97,15 @@ func initEncoders(fd int) {
 
 // wheelReading is one wheel's own account of itself.
 type wheelReading struct {
-	revolutions float64 // since this system started and preset the counter
+	// revolutions is continuous: the encoder's 24-bit counter wraps every
+	// 204.8 revolutions, and the listener unwraps it, so a consumer can simply
+	// difference two readings. It counts from when this system started and
+	// preset the counter; a restart of this system starts it again at zero.
+	revolutions float64
 	rpm         float64 // of the output shaft, after the gearbox
 	at          time.Time
+
+	count uint32 // the frame's own 24-bit counter, before unwrapping
 }
 
 // feedback is everything the machine reports back, shared by the assets that
@@ -108,6 +114,11 @@ type feedback struct {
 	mu sync.RWMutex
 
 	wheels [encoderCount]wheelReading
+
+	// The unwrapping: each wheel's last counter value and its running total.
+	lastCount [encoderCount]uint32
+	total     [encoderCount]int64
+	started   [encoderCount]bool
 
 	waistRaw   int // the 10-bit sensor value, before any scaling
 	waistAt    time.Time
@@ -140,6 +151,7 @@ func decodeWheel(f canFrame) (index int, r wheelReading, ok bool) {
 	raw := uint32(f.Data[2])<<16 | uint32(f.Data[1])<<8 | uint32(f.Data[0])
 	rawSpeed := int16(uint16(f.Data[4]) | uint16(f.Data[5])<<8)
 
+	r.count = raw
 	r.revolutions = float64(raw) / countsPerOutputRev
 	r.rpm = float64(rawSpeed) * 1000 * 60 / (speedWindowMs * countsPerOutputRev)
 
@@ -152,27 +164,6 @@ func decodeWheel(f canFrame) (index int, r wheelReading, ok bool) {
 	}
 	r.at = time.Now()
 	return index, r, true
-}
-
-// waistAngle converts the raw 10-bit reading to an angle.
-//
-// UNVERIFIED SCALE. The reference implementation computes (raw-450)/150 and
-// its README calls the result degrees, but the two cannot both be right: over
-// the sensor's full 0-1023 range that expression spans about -3 to +3.8, and a
-// wheel loader articulates some tens of degrees. It is much more nearly
-// radians, and even that is a guess.
-//
-// Worse, the reference computes it in integer arithmetic — the member is an
-// int and so is 150 — so it returns only -3, -2, -1, 0, 1, 2 or 3, throwing
-// away every bit of a 10-bit sensor. Whatever the unit turns out to be, that
-// is a bug and is not reproduced here.
-//
-// The scale is therefore configuration rather than a constant, and it must be
-// calibrated: set the waist to a known angle, read waistRaw, and solve. Until
-// that is done this system publishes the RAW value and nothing else, because a
-// number with an unknown unit is worse than no number.
-func waistAngle(raw int, zero float64, perUnit float64) float64 {
-	return (float64(raw) - zero) * perUnit
 }
 
 //-------------------------------------The listeners
@@ -199,6 +190,7 @@ func (fb *feedback) listenEncoders(ctx context.Context, fd int) {
 		}
 		if i, r, ok := decodeWheel(f); ok {
 			fb.mu.Lock()
+			r = fb.unwrapLocked(i, r)
 			fb.wheels[i] = r
 			fb.mu.Unlock()
 			if fb.onWheel != nil {
@@ -206,6 +198,33 @@ func (fb *feedback) listenEncoders(ctx context.Context, fd int) {
 			}
 		}
 	}
+}
+
+// unwrapLocked replaces a frame's wrapping count with the wheel's continuous
+// total. Frames arrive every 50 ms, far more often than a wheel could turn half
+// the counter's range, so the shortest way round is always the right one.
+// Caller holds the lock.
+func (fb *feedback) unwrapLocked(i int, r wheelReading) wheelReading {
+	const span = int64(1) << 24
+	if !fb.started[i] {
+		fb.total[i], fb.started[i] = int64(r.count), true
+	} else {
+		d := int64(r.count) - int64(fb.lastCount[i])
+		switch {
+		case d > span/2:
+			d -= span
+		case d < -span/2:
+			d += span
+		}
+		fb.total[i] += d
+	}
+	fb.lastCount[i] = r.count
+	r.revolutions = float64(fb.total[i]) / countsPerOutputRev
+	// The left-hand encoders count backwards; see decodeWheel.
+	if i%2 == 0 {
+		r.revolutions = -r.revolutions
+	}
+	return r
 }
 
 // pollWaist asks the articulation sensor for its angle and records the answer.
@@ -259,6 +278,14 @@ func (fb *feedback) wheel(index int) (wheelReading, bool) {
 		return r, false
 	}
 	return r, true
+}
+
+// waistLatest returns the newest reading and when it arrived, whatever its age;
+// the steering guard judges freshness by its own, much shorter, standard.
+func (fb *feedback) waistLatest() (raw int, at time.Time, have bool) {
+	fb.mu.RLock()
+	defer fb.mu.RUnlock()
+	return fb.waistRaw, fb.waistAt, fb.waistFresh
 }
 
 // waist returns the raw sensor value and whether it is recent enough to use.

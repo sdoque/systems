@@ -19,6 +19,7 @@ package main
 import (
 	"errors"
 	"log"
+	"math"
 	"net/http"
 	"time"
 
@@ -51,6 +52,12 @@ func (t *Traits) controlService(w http.ResponseWriter, r *http.Request) {
 			changed, err = d.helm.take(c, time.Now())
 			if changed {
 				d.clearSetpointsLocked()
+				// A steering fault stopped the vehicle; whoever takes it again
+				// has decided the chain and the motor are fit to drive.
+				if d.waist.fault != "" {
+					log.Printf("loader: %s takes control, clearing the steering fault: %s", c, d.waist.fault)
+					d.waist.fault = ""
+				}
 				if wasHeld {
 					log.Printf("loader: %s takes control from %s", c, previous)
 				} else {
@@ -170,6 +177,158 @@ func copyDetails(in map[string][]string) map[string][]string {
 	return out
 }
 
+//-------------------------------------Driving the vehicle
+
+// velocityService takes the front axle's speed, in m/s, negative in reverse.
+// The loader turns it into four wheel speeds through the kinematics, using the
+// articulation the waist actually has.
+func (t *Traits) velocityService(w http.ResponseWriter, r *http.Request) {
+	d := t.dt
+	switch r.Method {
+	case http.MethodGet:
+		d.mu.Lock()
+		v := d.velocity
+		d.mu.Unlock()
+		respond(w, signal(v, unitMPerS))
+	case http.MethodPut:
+		sig, err := usecases.HTTPProcessSetRequest(w, r)
+		if err != nil {
+			http.Error(w, "malformed request", http.StatusBadRequest)
+			return
+		}
+		c := d.callerOf(r)
+		v := math.Max(-d.cfg.MaxSpeed, math.Min(d.cfg.MaxSpeed, sig.Value))
+		d.mu.Lock()
+		if err := d.helm.command(c, time.Now()); err != nil {
+			d.mu.Unlock()
+			refuse(w, err)
+			return
+		}
+		d.velocity, d.byVelocity = v, true
+		d.mu.Unlock()
+		respond(w, signal(v, unitMPerS))
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+	}
+}
+
+// curvatureService takes the curvature of the front axle's path, in 1/m,
+// positive to the left. It needs a calibrated waist and a known effort
+// direction: an angle loop on an uncalibrated sensor is a guess driving a
+// motor with nothing to stop it.
+//
+// Refused with 503, not 409, when the waist cannot do it: the caller still has
+// control, and a pilot that read 409 as losing it would stop driving for a
+// reason that has nothing to do with who is driving.
+func (t *Traits) curvatureService(w http.ResponseWriter, r *http.Request) {
+	d := t.dt
+	switch r.Method {
+	case http.MethodGet:
+		d.mu.Lock()
+		k := d.curvature
+		d.mu.Unlock()
+		respond(w, signal(k, unitPerM))
+	case http.MethodPut:
+		sig, err := usecases.HTTPProcessSetRequest(w, r)
+		if err != nil {
+			http.Error(w, "malformed request", http.StatusBadRequest)
+			return
+		}
+		c := d.callerOf(r)
+		limit := d.curvatureLimit()
+		k := math.Max(-limit, math.Min(limit, sig.Value))
+		d.mu.Lock()
+		if err := d.helm.command(c, time.Now()); err != nil {
+			d.mu.Unlock()
+			refuse(w, err)
+			return
+		}
+		_, fresh := d.waistNowLocked(time.Now())
+		switch {
+		case !d.cfg.Waist.calibrated():
+			d.mu.Unlock()
+			http.Error(w, "the waist sensor is not calibrated, so there is no angle to steer to; steer by effort on Steering/setpoint", http.StatusServiceUnavailable)
+			return
+		case d.cfg.Waist.EffortTurnsLeft == 0:
+			d.mu.Unlock()
+			http.Error(w, "effortTurnsLeft is not set, so the loader does not know which way the steering motor turns the waist", http.StatusServiceUnavailable)
+			return
+		case !fresh:
+			d.mu.Unlock()
+			http.Error(w, "no fresh reading from the waist sensor", http.StatusServiceUnavailable)
+			return
+		}
+		d.curvature, d.byAngle = k, true
+		d.mu.Unlock()
+		respond(w, signal(k, unitPerM))
+	default:
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+	}
+}
+
+// articulationService is the waist's measured angle in degrees, positive to
+// the left.
+func (t *Traits) articulationService(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+		return
+	}
+	d := t.dt
+	d.mu.Lock()
+	raw, fresh := d.waistNowLocked(time.Now())
+	deg, ok := d.articulationLocked(raw, fresh)
+	calibrated := d.cfg.Waist.calibrated()
+	d.mu.Unlock()
+	if !ok {
+		msg := "no fresh reading from the waist sensor"
+		if !calibrated {
+			msg = "the waist sensor is not calibrated; waist, on the Steering motor, gives its raw count"
+		}
+		http.Error(w, msg, http.StatusServiceUnavailable)
+		return
+	}
+	usecases.HTTPProcessGetRequest(w, r, signal(deg, unitDeg))
+}
+
+func (t *Traits) speedLimitService(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+		return
+	}
+	usecases.HTTPProcessGetRequest(w, r, signal(t.dt.cfg.MaxSpeed, unitMPerS))
+}
+
+func (t *Traits) curvatureLimitService(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+		return
+	}
+	usecases.HTTPProcessGetRequest(w, r, signal(t.dt.curvatureLimit(), unitPerM))
+}
+
+// distanceService is how far the wheel has rolled, in meters.
+func (t *Traits) distanceService(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method is not supported.", http.StatusNotFound)
+		return
+	}
+	reading, fresh := t.dt.fb.wheel(t.encoderIndex)
+	if !fresh {
+		http.Error(w, "no recent encoder frame for this wheel", http.StatusServiceUnavailable)
+		return
+	}
+	usecases.HTTPProcessGetRequest(w, r, distanceForm(reading, t.dt.cfg.Geometry.WheelCircumference))
+}
+
+func signal(v float64, unit string) *forms.SignalA_v1a {
+	f := &forms.SignalA_v1a{}
+	f.NewForm()
+	f.Value = v
+	f.Unit = unit
+	f.Timestamp = time.Now()
+	return f
+}
+
 //-------------------------------------Following the measurements
 
 // publishFeedback makes the measured services followable in fact as well as in
@@ -181,7 +340,7 @@ func copyDetails(in map[string][]string) map[string][]string {
 // now a sample.
 func (d *drivetrain) publishFeedback(assets []*components.UnitAsset) {
 	wheels := make(map[int]*components.UnitAsset)
-	var steering *components.UnitAsset
+	var steering, vehicle *components.UnitAsset
 	for _, ua := range assets {
 		t, ok := ua.Traits.(*Traits)
 		if !ok {
@@ -190,10 +349,15 @@ func (d *drivetrain) publishFeedback(assets []*components.UnitAsset) {
 		if t.encoderIndex >= 0 {
 			wheels[t.encoderIndex] = ua
 		}
-		if t.Kind == "steering" {
+		switch t.Kind {
+		case "steering":
 			steering = ua
+		case "vehicle":
+			vehicle = ua
 		}
 	}
+	circumference := d.cfg.Geometry.WheelCircumference
+	waist := d.cfg.Waist
 	d.fb.onWheel = func(i int, r wheelReading) {
 		ua := wheels[i]
 		if ua == nil {
@@ -201,10 +365,16 @@ func (d *drivetrain) publishFeedback(assets []*components.UnitAsset) {
 		}
 		usecases.Publish(ua, "speed", speedForm(r))
 		usecases.Publish(ua, "travel", travelForm(r))
+		usecases.Publish(ua, "distance", distanceForm(r, circumference))
 	}
 	d.fb.onWaist = func(raw int, at time.Time) {
 		if steering != nil {
 			usecases.Publish(steering, "waist", waistForm(raw, at))
+		}
+		if vehicle != nil && waist.calibrated() {
+			f := signal(waist.degrees(raw), unitDeg)
+			f.Timestamp = at
+			usecases.Publish(vehicle, "articulation", f)
 		}
 	}
 }
@@ -231,6 +401,17 @@ func travelForm(r wheelReading) *forms.SignalA_v1a {
 	return f
 }
 
+// distanceForm is the wheel's travel in meters. Like travelForm it carries the
+// time the frame arrived.
+func distanceForm(r wheelReading, circumference float64) *forms.SignalA_v1a {
+	f := &forms.SignalA_v1a{}
+	f.NewForm()
+	f.Value = r.revolutions * circumference
+	f.Unit = unitMetre
+	f.Timestamp = r.at
+	return f
+}
+
 func waistForm(raw int, at time.Time) *forms.SignalA_v1a {
 	f := &forms.SignalA_v1a{}
 	f.NewForm()
@@ -240,6 +421,10 @@ func waistForm(raw int, at time.Time) *forms.SignalA_v1a {
 }
 
 const (
-	unitRPM = "<http://qudt.org/vocab/unit/REV-PER-MIN>"
-	unitRev = "<http://qudt.org/vocab/unit/REV>"
+	unitRPM   = "<http://qudt.org/vocab/unit/REV-PER-MIN>"
+	unitRev   = "<http://qudt.org/vocab/unit/REV>"
+	unitMetre = "<http://qudt.org/vocab/unit/M>"
+	unitMPerS = "<http://qudt.org/vocab/unit/M-PER-SEC>"
+	unitPerM  = "<http://qudt.org/vocab/unit/PER-M>"
+	unitDeg   = "<http://qudt.org/vocab/unit/DEG>"
 )

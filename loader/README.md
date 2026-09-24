@@ -1,280 +1,304 @@
 # loader
 
-Drives the five motors of an articulated mini wheel loader over CAN and exposes
-each one as an Arrowhead service.
+The vehicle. Drives the motors of an articulated mini wheel loader over CAN,
+reads its encoders and its articulation sensor, and turns a pilot's two numbers
+— a velocity and a curvature — into four wheel speeds and a steering angle.
 
-This system is the hardware and nothing more. It knows node IDs, the motor
-controller's integer scale, and how often the drives must be spoken to. It does
-**not** know the wheel radius, the wheelbase, or the shape of the vehicle —
-those belong to the *driver* system. That separation is the point: change the
-driver's parameters and the same loader binary runs a different vehicle.
+It owns everything about the machine: node IDs, the motor controller's scale,
+how often the drives must be spoken to, **the geometry, the kinematics, the
+sensor calibration and the steering limits**. A pilot (the gamer, a chauffeur)
+knows none of it. That is the point: move the loader to another machine by
+changing its configuration, and the pilots above it do not change.
 
-## The unit assets
+> **There is no hard stop and no limit switch on the waist.** The waist motor
+> turns the joint through a bicycle chain, and past about 40° either way it
+> drives the joint into itself until something breaks. The only limit is the
+> one in this system — read [the steering guard](#the-steering-guard) before
+> the first run, and calibrate before steering far.
 
-One per motor, expanded from a single configured asset the way `busdriver`
-expands signals, and one for the vehicle as a whole.
+## Conventions
 
-| asset | node | commanded in |
-|---|---|---|
-| `FrontLeft` | 1 | RPM at the wheel |
-| `FrontRight` | 2 | RPM at the wheel |
-| `BackLeft` | 3 | RPM at the wheel |
-| `BackRight` | 4 | RPM at the wheel |
-| `Steering` | 5 | percent of full effort |
-| `Vehicle` | — | who drives, and whether anyone may |
+**ISO 8855** (the same as ROS REP-103): x forward, y to the left, z up. A
+positive curvature, a positive articulation and a positive steering effort all
+mean **to the left**. The articulation sensor's own sense — its count falls to
+the left — is a calibration fact and stops at the calibration.
+
+The **reference point** is the center of the front axle: the velocity is that
+point's speed, the curvature is the curvature of that point's path. The
+cartographer's pose is the scanner's, which with the scanner mounted over the
+front axle is the same point.
+
+## Assets and services
+
+| asset | what it is |
+|---|---|
+| `Vehicle` | who drives, and what the vehicle as a whole is told and measured to do |
+| `FrontLeft` `FrontRight` `BackLeft` `BackRight` | the wheel motors, nodes 1–4 |
+| `Steering` | the waist motor, node 5 |
 
 | service | on | what it is |
 |---|---|---|
-| `setpoint` | every motor | **GET** what the motor is being *commanded* to; **PUT** commands it |
-| `speed` | the four wheels | the RPM the wheel is *measured* to be turning, from its encoder |
-| `travel` | the four wheels | revolutions turned since the loader started |
-| `waist` | `Steering` | the articulation sensor's raw ten-bit reading |
 | `control` | `Vehicle` | **PUT** `1` to take control, `0` to release it; **GET** `1` if you have it |
 | `stop` | `Vehicle` | **PUT** `1` to stop the vehicle, whoever is driving; **GET** `1` while stopped |
+| `velocity` | `Vehicle` | m/s of the front axle, negative in reverse — **PUT** needs control |
+| `curvature` | `Vehicle` | 1/m, positive left — **PUT** needs control and a calibrated waist |
+| `articulation` | `Vehicle` | the waist's measured angle in degrees, positive left; `503` until calibrated |
+| `speedLimit` | `Vehicle` | the largest velocity accepted |
+| `curvatureLimit` | `Vehicle` | the tightest curvature the steering limit allows |
+| `setpoint` | each motor | **GET** what the motor is commanded to; **PUT** commands it directly: RPM for a wheel, percent of effort (positive left) for the steering |
+| `speed` | the wheels | RPM measured by the wheel's encoder |
+| `travel` | the wheels | revolutions rolled since the loader started |
+| `distance` | the wheels | meters rolled since the loader started |
+| `waist` | `Steering` | the articulation sensor's raw count, for calibrating it |
 
-`speed`, `travel` and `waist` can be followed rather than polled: every encoder
-frame (20 per second per wheel) and every waist reply is published to
-subscribers. Their timestamps are when the reading arrived, so a follower can
-tell a wheel that is standing still from an encoder that has gone quiet.
+`speed`, `travel`, `distance`, `waist` and `articulation` can be followed rather
+than polled; every reading is published, with a one-second heartbeat when
+nothing changes, and stamped with when it arrived — so a follower can tell a
+wheel at rest from an encoder that has gone quiet. `travel` and `distance` never
+wrap: the encoders' 24-bit counters are unwrapped here.
 
-`setpoint` and `speed` are different numbers and the difference is the point: a
-stalled motor, a slipping wheel and a working one all report the same
-*setpoint*. Only `speed` says what happened.
+`setpoint` and `speed` are different numbers, and the difference is the point:
+a stalled motor, a slipping wheel and a working one all report the same
+setpoint. Only `speed` says what happened.
 
-**Steering is an effort, not an angle.** The reference bridge commands the
-steering motor exactly as it commands a wheel, and closes the loop to an angle
-in software against the sensor on `can1`. That loop is not here yet, so a PUT of
-`50` means "push half as hard as you can to the right", not "turn 50 degrees".
+## The steering guard
+
+Every cycle, before any effort reaches the waist motor:
+
+- **No fresh reading from the waist sensor, no steering.** "Fresh" is
+  `staleMs`, 200 ms by default — much shorter than for anything else, because
+  it is what the limit stands on.
+- **Past the limit, only effort back towards straight is allowed.** The limit is
+  `limitDegrees` (35°) once calibrated; before that, `uncalibratedWindowCounts`
+  (40 counts) either side of `straightCount` — a few degrees, or up to about
+  15°, depending on the scale nobody has measured yet.
+- **Until `effortTurnsLeft` is set, nothing is allowed past the limit at all**,
+  because which way is back is not known.
+- A refused effort stops the motor **at once**, skipping the ramp: the ramp's
+  worth of travel is what the limit is there to prevent.
+- **A watchdog** compares effort and movement. Effort of `stallEffortPercent`
+  or more for `stallMs` with the joint not moving is a jumped or broken chain or
+  a stalled motor; effort one way with the joint moving the other means
+  `effortTurnsLeft` or the calibration is wrong — and with it the limit. Either
+  **stops the vehicle** and says which in the log. The fault stands until
+  someone takes control again, which is their decision that the machine is fit
+  to drive. Steering hard with the vehicle standing still may trip it, because
+  the tires resist; that is the safe way to be wrong.
 
 ## Who drives
 
-**Only one system drives at a time, and it has to take control first.** The
-rules are those of two pilots sharing an aircraft:
+**One system drives at a time, and it has to take control first** — the rules of
+two pilots sharing an aircraft:
 
-- A system takes control with `PUT control 1` and gives it up with
-  `PUT control 0`. Setpoints from anyone else are refused with `409`, and the
-  body says who has control.
+- `PUT control 1` takes control; `PUT control 0` gives it up. Commands from
+  anyone else are refused with `409`, and the body says who has control.
 - **The vehicle starts stopped.** After power-up only a system with priority —
-  by default `gamepad`, a person — can take control. Handing the vehicle to
+  by default `gamer`, a person — can take control. Handing the vehicle to
   software is done by taking control and then releasing it.
 - A system with priority can take control from anyone, at any time.
 - **Anyone can stop the vehicle**, whoever is driving: `PUT stop 1`. The motors
-  go to zero at once, skipping the braking ramp, as `can_dds` does on an
-  emergency. A stop takes control away from everyone, and **only a system with
-  priority can take it back**, so a stop is never undone by the software it
-  stopped. Writing `0` to `stop` is refused; a stop is cleared by taking control.
+  go to zero at once. A stop takes control away from everyone, and **only a
+  system with priority can take it back**, so a stop is never undone by the
+  software it stopped. Writing `0` to `stop` is refused.
 - **If the system in control says nothing for `safetyStopMs` (500 ms), that is a
   stop**, not a handover.
-- Taking or releasing control clears the setpoints. The new pilot starts from
-  rest, and the vehicle brakes at the normal rate.
+- Taking or releasing control clears every command. The new pilot starts from
+  rest, and the steering stays where it is — with nobody in control, nothing
+  moves.
 
-Refusals are `409 Conflict`, not `403`: the caller's credentials are fine, it is
-the vehicle's state that says no, and a consumer built on this framework reads
-`403` as a reason to go and fetch a new token.
+Refusals of this kind are `409`, not `403`: the caller's credentials are fine,
+it is the vehicle's state that says no, and this framework reads `403` as a
+reason to fetch a new token. A curvature the waist cannot yet follow is `503`,
+because it is not about who is driving.
 
 **Who is who comes from the caller's certificate.** In a cloud with an
 authorizer every request carries one. On a bench with no certificates at all,
-callers cannot be told apart, so every caller counts as the same pilot with
+nobody can be told apart, so every caller counts as the same pilot with
 priority — `curl` can take control, and control protects nothing; the loader
-says so in its log. A loader that *does* hold a certificate lets a caller
-without one stop the vehicle and do nothing else.
+says so. A loader that *does* hold a certificate lets a caller without one stop
+the vehicle and do nothing else.
 
-## Driving a motor
+## Calibrating
 
-**Take control first**, then **a single PUT will not drive the vehicle**. The command has to be repeated,
-at least every `safetyStopMs`, for as long as you want to move — see the next
-section for why, and for the arithmetic that says a lone command can never
-exceed about 4.7 RPM however large a number you put in it.
+In this order. The loader logs what it believes about its waist at start-up —
+counts per degree, where the limits fall, the tightest turn — so read that
+after every change.
+
+1. **Straight.** With the joint straight, read `Steering/waist`. Put the count in
+   `waist.straightCount` (about 450).
+2. **Which way the motor turns.** Take control with the gamer and steer gently
+   to the left. Before calibration the guard stops the waist 40 counts either
+   side of straight, so this is safe. If the vehicle bent to the left, set
+   `waist.effortTurnsLeft` to `1`; to the right, `-1`. The loader also logs
+   which way the count moved and suggests the value. Restart.
+3. **A first angle, at the edge of the window.** Steer left until the guard holds
+   the waist. Measure the angle between the two halves' center lines, read the
+   count, and set `calibrationCount` and `calibrationDegrees` (positive: it is
+   to the left). **Set `limitDegrees` to 20 for now**: a small angle measured to
+   a degree is a scale known to a few tens of percent, and 35° could really be
+   near 40°. Restart. The limit is now in degrees.
+4. **A second angle, further out.** Steer to near the 20° limit, measure, read,
+   and replace the first point with this one: the wider the angle, the smaller
+   the error of the protractor. Put `limitDegrees` back to 35. Check that the
+   right-hand side gives the same counts per degree. Expect **at most about 11
+   counts per degree** — with straight at 450, 40° cannot be more than 450
+   counts away; the loader warns if it is.
+5. **The wheels.** Off the blocks, drive straight along a measured 40 m and read
+   `travel` on the front wheels before and after. The circumference is 40 ÷ the
+   revolutions; put it in `geometry.wheelCircumferenceMetres`. The 1.335 m in
+   the configuration was measured unloaded; the loaded figure will be smaller.
+   This is the only place the wheel size lives.
+
+## Driving
+
+**By velocity and curvature**, which is how a pilot drives:
 
 ```bash
-WHEEL=FrontLeft
-RPM=25
+H=http://<host>:20197/loader/Vehicle
+put() { curl -s -X PUT "$H/$1" -H "Content-Type: application/json" \
+             -d "{\"value\": $2, \"version\": \"SignalA_v1.0\"}"; }
 
-curl -s -X PUT http://<host>:20197/loader/Vehicle/control \
-     -H "Content-Type: application/json" \
-     -d '{"value": 1, "version": "SignalA_v1.0"}'
+put control 1
 
-# drive for ten seconds, re-commanding at 5 Hz
+# half a meter a second on a 3 m radius to the left, for ten seconds
 end=$((SECONDS+10))
 while [ $SECONDS -lt $end ]; do
-  curl -s -X PUT http://<host>:20197/loader/$WHEEL/setpoint \
-       -H "Content-Type: application/json" \
-       -d "{\"value\": $RPM, \"unit\": \"RPM\", \"version\": \"SignalA_v1.0\"}" >/dev/null
+  put velocity 0.5 >/dev/null
+  put curvature 0.333 >/dev/null
   sleep 0.2
 done
 
-# then stop commanding, and it stops itself within safetyStopMs;
-# or stop it outright:
-curl -s -X PUT http://<host>:20197/loader/Vehicle/stop \
-     -H "Content-Type: application/json" \
-     -d '{"value": 1, "version": "SignalA_v1.0"}' 
+put stop 1
 ```
 
-Read back what it was told, and what it actually did:
+The wheel speeds come from the kinematics and the articulation the joint
+**actually has**, not the one it was asked for, so the wheels agree with the
+machine while the joint is still swinging. At full lock the inner wheels run at
+0.69 of the outer. If a curve would need a wheel faster than `maxWheelRPM`, all
+four slow down together and the curve is kept.
 
-```bash
-curl http://<host>:20197/loader/FrontLeft/setpoint   # commanded
-curl http://<host>:20197/loader/FrontLeft/speed      # measured, from the encoder
-```
+**A motor directly**, for the bench: `PUT FrontLeft/setpoint` in RPM, or
+`PUT Steering/setpoint` in percent of effort. A direct setpoint takes that motor
+out of the vehicle-level command until the next one.
+
+**Keep commanding.** One command lasts `safetyStopMs`; after half a second of
+silence the vehicle stops. That is also what makes a maneuver abortable.
 
 ### `"version"` is the wire version, not the Go type name
 
-It must be **`SignalA_v1.0`**. Not `SignalA_v1a`.
+It must be **`SignalA_v1.0`**, not `SignalA_v1a`. The service advertises
+`"Forms": ["SignalA_v1a"]` — the *type* name; the payload carries the *form
+version*. Get it wrong and the request is refused with `400`, and the loader's
+log says `unsupported form version: SignalA_v1a`. When a command does nothing,
+read the loader's log first.
 
-This trips everyone once, because the service advertises `"Forms":
-["SignalA_v1a"]` in its details — that is the *type* name. The string inside the
-payload is the *form version*, which is `SignalA_v1.0`, and it is what the
-receiving system looks up to decide how to read the body.
+## The ramp
 
-Get it wrong and the request is refused with `400 malformed request` — but the
-loader's own log names the fault exactly:
+Commands are rate limited towards the request, `accelStep` per cycle speeding up
+and `brakeStep` slowing down: 150 and 500 counts at 50 Hz, as `can_dds` runs.
+One RPM is 256 counts.
 
-    loader: FrontLeft: bad set request: unsupported form version: SignalA_v1a
+| target | time to reach it |
+|---|---|
+| 10 RPM | 0.3 s |
+| 20 RPM | 0.7 s |
+| 120 RPM | 4.1 s |
+| brake to zero from 120 RPM | 1.2 s (a `stop` is immediate) |
 
-so when a command does nothing, read the loader's log before anything else.
-Omitting `"version"` altogether gives `'version' key not found in data`.
+Before 16 September 2026 the defaults were 30 / 100 at 20 Hz — the
+`MotorController` constructor's defaults rather than what `can_dds` passes it —
+which took **15 s to stop** from full speed.
 
-At 1 km/h a 12 inch wheel turns **17.4 RPM**, so `17.4` is a walking pace and
-`120` is the configured maximum.
+At the measured circumference, 1 km/h is 12.5 RPM and 1 m/s is 45 RPM.
 
-## Two behaviours worth knowing before it moves
+## The lowest speed that turns a wheel
 
-**It stops itself.** If the system in control says nothing for
-`safetyStopMs` (500 ms by default) the vehicle stops, as described above. Every other actuator in this cloud
-holds its last state when its controller goes quiet — right for a heater, wrong
-for something with wheels. A driver system must therefore keep commanding, which
-is also what makes a maneuver abortable.
-
-**It ramps.** Commands are rate limited towards the request, `accelStep` per
-cycle when speeding up and `brakeStep` when slowing or reversing. Braking gets
-the larger step: stopping should never be slower than starting.
-
-With the defaults that is 150 counts per cycle at 50 Hz — 7 500 counts per
-second. One RPM is 256 counts, so the vehicle gains about **29 RPM per second**
-and sheds about **98 RPM per second**:
-
-| target | counts | time to reach it |
-|---|---|---|
-| 10 RPM | 2 560 | 0.3 s |
-| 20 RPM | 5 120 | 0.7 s |
-| 120 RPM | 30 720 | 4.1 s |
-| brake to zero from 120 RPM | 30 720 | 1.2 s (a `stop` is immediate) |
-
-These are the values `can_dds` runs with. Before 16 September 2026 the defaults
-were 30 / 100 at 20 Hz — the `MotorController` constructor's defaults rather
-than what `can_dds` actually passes it — which took 51 s to reach full speed
-and **15 s to stop** from it. A configuration file generated before then still
-carries `"commandHz": 20, "accelStep": 30, "brakeStep": 100`; delete those three
-lines, or the file, to pick up the new defaults.
-
-**A single PUT still only lasts `safetyStopMs`.** One command is followed by
-silence, and after half a second the watchdog stops the vehicle. The command has
-to be held for as long as the vehicle should move.
-
-## The lowest speed that actually turns a wheel
-
-Reported from the bench, 8 September 2026: **20 RPM turns the wheels, 10 RPM
-does not**, with the command held. The threshold between the two has not been
-found.
-
-That was measured under the old, slow ramp, where 10 RPM took 4.3 s of held
-commands to reach and 20 RPM took 8.5 s. It is worth repeating with the current
-defaults before reading anything into it.
-
-Ten RPM is 2 560 counts, or 8.3% of full scale, which is a plausible place for a
-geared drive under load to sit still — static friction has to be broken before
-anything moves, and the controller is commanding velocity rather than torque.
-The figure will not be a constant: expect it to change with load, with
-temperature, and between the four wheels.
-
-Now that the encoders are read, it can be measured rather than watched for:
-
-```bash
-# hold a command and see whether the wheel is actually turning
-curl http://<host>:20197/loader/FrontLeft/speed
-```
-
-`speed` answers `503` when the encoder has gone quiet, and reports a value near
-zero when the wheel is commanded but stationary — which is exactly the
-distinction being looked for. Walk the setpoint down from 20 in steps of 1,
-holding each for five seconds (longer than the ramp), and record the lowest
-value where `speed` stays away from zero.
-
-Worth doing per wheel, and worth doing under load rather than on blocks.
+Reported from the bench, 8 September 2026: 20 RPM turns the wheels, 10 RPM does
+not — measured under the old slow ramp, so worth repeating. It matters more now:
+at full lock and 0.5 m/s the inner wheels are asked for about 18 RPM, near that
+threshold, and a stalled inner wheel makes the machine push rather than steer.
+Measure it with `speed`, which reports near zero for a wheel commanded but not
+turning: walk a setpoint down from 20 in steps of 1, five seconds each.
 
 ## Configuration
 
-Generated on the first run; the defaults drive the vehicle as built.
+Generated on the first run.
 
-| field | default | why |
+| field | default | |
 |---|---|---|
-| `canInterface` | `can0` | motors and wheel encoders, 500 kbit/s |
-| `canSensorInterface` | `can1` | the articulation sensor alone, 250 kbit/s; empty means not fitted |
-| `waistPollHz` | 10 | the articulation sensor answers only when polled |
-| `feedbackStaleMs` | 500 | how old a measurement may be and still count as one |
-| `commandHz` | 50 | the reference's cycle; the drives treat a command older than 100 ms as stale, so this must stay above 10 |
-| `safetyStopMs` | 500 | how long the system in control may be silent before the vehicle stops |
-| `maxWheelRPM` | 120 | full scale, `0x7800` in the controller's units |
-| `accelStep` / `brakeStep` | 150 / 500 | ramp rates per cycle, as `can_dds` sets them |
-| `priority` | `["gamepad"]` | systems that may take control from anyone, and after a stop |
+| `canInterface` / `canSensorInterface` | `can0` / `can1` | motors and encoders at 500 kbit/s; the waist sensor alone at 250 |
+| `waistPollHz` | 20 | the sensor answers only when polled |
+| `feedbackStaleMs` | 500 | how old an encoder reading may be and still count |
+| `commandHz` | 50 | the drives treat a command older than 100 ms as stale |
+| `safetyStopMs` | 500 | how long the pilot may be silent |
+| `maxWheelRPM` | 120 | full scale, `0x7800` |
+| `accelStep` / `brakeStep` | 150 / 500 | ramp, per cycle |
+| `priority` | `["gamer"]` | who may take control from anyone, and after a stop |
+| `maxSpeedMetresPerSecond` | 1.5 | the velocity command's ceiling |
+| `geometry.jointToFrontAxleMetres` / `jointToRearAxleMetres` | 0.6175 / 0.6175 | L1 and L2 |
+| `geometry.trackMetres` | 0.6275 | |
+| `geometry.wheelCircumferenceMetres` | 1.335 | calibrate: step 5 |
+| `waist.straightCount` | 450 | calibrate: step 1 |
+| `waist.effortTurnsLeft` | 0 | calibrate: step 2; `1`, `-1`, or `0` for not known |
+| `waist.calibrationCount` / `calibrationDegrees` | 0 / 0 | calibrate: steps 3–4; degrees positive left |
+| `waist.limitDegrees` | 35 | the software limit; the joint's travel is about ±40° |
+| `waist.uncalibratedWindowCounts` | 40 | the limit before calibration, while a count's worth is unknown |
+| `waist.staleMs` | 200 | how old a reading may be and still steer |
+| `waist.gainPercentPerDegree` / `maxEffortPercent` / `deadbandDegrees` | 4 / 50 / 0.5 | the angle loop; not yet tuned on the vehicle |
+| `waist.stallEffortPercent` / `stallMs` / `stallCounts` | 30 / 1500 / 3 | the watchdog |
+| `motors` | the five | each wheel with its `axle` and `side` |
 
-A configuration file written before 16 September 2026 lists no `control` or
-`stop` service. The loader refuses to start from it and says so: delete
-`systemconfig.json` and start again.
+A configuration written before 18 September 2026 lacks the vehicle services, the
+geometry and the waist, and the loader refuses to start from it and says so:
+delete `systemconfig.json` and start again. Keep a copy of your calibration
+values first.
 
-The bus has to be up before the system starts:
+The buses must be up before the system starts:
 
 ```bash
 sudo ip link set can0 up type can bitrate 500000
 sudo ip link set can1 up type can bitrate 250000
 ```
 
-Note the different bitrates. All five motors *and* the wheel encoders are on
-`can0`; `can1` carries only the articulation angle sensor.
+**Do not run `can_dds` at the same time.** Two writers on `can0` is how a
+vehicle ends up somewhere it was not sent.
 
-**Do not run `can_dds` at the same time.** Two writers commanding the same
-motors on `can0` is how a vehicle ends up somewhere it was not sent.
+## Moving it to another machine
+
+The geometry and the waist calibration are configuration, and the kinematics
+handle unequal half-lengths. What would not carry over as it is:
+
+- **Front-wheel steering.** The pilot's interface would not change — velocity
+  and curvature — but the kinematics would: Ackermann in place of the
+  articulated model.
+- **One traction drive.** A real wheel loader is usually hydrostatic, with one
+  traction command and a differential per axle, not four motors. The wheel-speed
+  arithmetic would collapse to one number.
 
 ## Not here yet
 
-- **A unit for the waist angle.** `waist` publishes the sensor's raw ten-bit
-  count with no unit attached, because its scale is not established. The
-  reference implementation computes `(raw - 450) / 150` and calls the result
-  degrees, but over the sensor's 0–1023 range that spans only about −3 to +3.8,
-  which is not degrees for a machine that articulates tens of them. (That
-  reference also performs the division in integer arithmetic, so it can only
-  ever return −3 … +3, discarding every bit of a ten-bit sensor.)
-
-  Calibrating it is a five-minute job: set the waist to a measured angle, read
-  `waist`, repeat at a second angle, solve for zero and scale. Until then a
-  number with an unknown unit is worse than no number.
-- **Steering to an angle**, which needs that calibration and a loop.
-- **Kinematics** — "drive 4 m at 1 km/h" — which is the driver system's job,
-  because it needs the wheel size, the two joint-to-axle lengths and the
-  articulated model. The measurements are known: L1 = L2 with L1 + L2 =
-  1235 mm, track 627.5 mm, and a rolling **circumference** of 1335 mm
-  (a diameter of about 425 mm).
+- **The joint's own rate.** While the joint is swinging, the two halves turn
+  relative to each other; the kinematics use the steady-state model and ignore
+  that. At the rates this machine steers it is small.
+- **A tuned angle loop.** Gain, ceiling and deadband are first guesses.
 
 ## Protocol notes
 
-Motors are Magellan motion-control ICs at `0x600 + node`. Each is brought up
-with reset `{00 39}`, a current foldback setting `{00 41 00 00 98 8F}` and
-operating mode 3 `{00 65 00 03}`, with the delays the reference implementation
-uses. A speed is `{00 77 hi lo}` followed by `{00 1A}` to act on it, where the
-16-bit value is RPM x 256.
+Motors are Magellan motion-control ICs at `0x600 + node`: reset `{00 39}`,
+current foldback `{00 41 00 00 98 8F}`, operating mode 3 `{00 65 00 03}`, with
+the reference's delays. A speed is `{00 77 hi lo}` then `{00 1A}`, the value
+being RPM × 256 — and, for the steering, effort as a share of the same full
+scale.
 
 Wheel encoders are CANopen nodes `0x0B`–`0x0F` and say nothing until started.
-At start-up the loader configures each one as `can_dds` does — PDO type 2
+At start-up the loader configures each as `can_dds` does — PDO type 2
 (`0x2005 = 2`), a 50 ms cycle (`0x6200 = 50`), position preset to zero
-(`0x6003 = 0`) — and sends NMT start (`0x000 {01 node}`). The students found this
-step missing (branch `fix-encoder-init`). They then report on `0x18B`–`0x18E`,
-one per wheel in node order: position as a free-running 24-bit little-endian counter in bytes 0–2, and
-speed as a signed 16-bit count of edges per 5 ms window in bytes 4–5. There are
-4096 counts to an encoder revolution through a 20:1 gearbox, so 81 920 to one
-revolution of the wheel. **The two left-hand encoders count backwards** and are
-negated on the way in; drop that sign and a vehicle driving straight reads as
-one spinning on the spot. The position counter wraps after about 205
-revolutions.
+(`0x6003 = 0`) — and sends NMT start (`0x000 {01 node}`); the students found this
+step missing (branch `fix-encoder-init`). They report on `0x18B`–`0x18E`:
+position as a 24-bit little-endian counter in bytes 0–2, speed as a signed
+16-bit count per 5 ms window in bytes 4–5. 4096 counts per encoder revolution
+through a 20:1 gearbox is 81 920 per wheel revolution. **The two left-hand
+encoders count backwards** and are negated on the way in.
 
-The articulation sensor is polled: send `0x700` with no data, and it answers on
-`0x701` with a ten-bit value, `((data[0] & 0x03) << 8) | data[1]`.
+The articulation sensor is polled: `0x700` with no data, answered on `0x701`
+with `((data[0] & 0x03) << 8) | data[1]`.

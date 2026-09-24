@@ -32,14 +32,14 @@ import (
 )
 
 var (
-	pad    = caller{name: "gamepad", known: true}
+	pad    = caller{name: "gamer", known: true}
 	auto   = caller{name: "driver", known: true}
 	other  = caller{name: "painter", known: true}
 	nobody = caller{}
 )
 
 func TestTheVehicleStartsStopped(t *testing.T) {
-	h := newHelm([]string{"gamepad"})
+	h := newHelm([]string{"gamer"})
 	if err := h.command(pad, time.Now()); err == nil {
 		t.Error("a freshly started vehicle accepted a command")
 	}
@@ -47,23 +47,23 @@ func TestTheVehicleStartsStopped(t *testing.T) {
 		t.Error("a system without priority took control of a vehicle that had never been handed over")
 	}
 	if _, err := h.take(pad, time.Now()); err != nil {
-		t.Errorf("the gamepad could not take control at start: %v", err)
+		t.Errorf("the gamer could not take control at start: %v", err)
 	}
 }
 
 // The handover: the person takes control, then gives it to the software.
 func TestHandover(t *testing.T) {
-	h := newHelm([]string{"gamepad"})
+	h := newHelm([]string{"gamer"})
 	now := time.Now()
 	h.take(pad, now)
 	if err := h.command(auto, now); err == nil {
 		t.Error("a system without control was obeyed")
 	}
 	if _, err := h.take(auto, now); err == nil {
-		t.Error("a system without priority took control from the gamepad")
+		t.Error("a system without priority took control from the gamer")
 	}
 	if changed, err := h.release(pad); err != nil || !changed {
-		t.Fatalf("the gamepad could not release control: %v", err)
+		t.Fatalf("the gamer could not release control: %v", err)
 	}
 	if h.stopped {
 		t.Fatal("releasing control stopped the vehicle; it should be free to be taken")
@@ -75,38 +75,38 @@ func TestHandover(t *testing.T) {
 		t.Errorf("the driver in control was refused: %v", err)
 	}
 	if err := h.command(pad, now); err == nil {
-		t.Error("the gamepad was obeyed without taking control back")
+		t.Error("the gamer was obeyed without taking control back")
 	}
 }
 
 func TestPriorityTakesOver(t *testing.T) {
-	h := newHelm([]string{"gamepad"})
+	h := newHelm([]string{"gamer"})
 	h.take(pad, time.Now())
 	h.release(pad)
 	h.take(auto, time.Now())
 	if changed, err := h.take(pad, time.Now()); err != nil || !changed {
-		t.Fatalf("the gamepad could not take control from the driver: %v", err)
+		t.Fatalf("the gamer could not take control from the driver: %v", err)
 	}
 	if err := h.command(auto, time.Now()); err == nil {
-		t.Error("the driver was still obeyed after the gamepad took over")
+		t.Error("the driver was still obeyed after the gamer took over")
 	}
 }
 
 func TestOnlyThePilotReleases(t *testing.T) {
-	h := newHelm([]string{"gamepad"})
+	h := newHelm([]string{"gamer"})
 	h.take(pad, time.Now())
 	if _, err := h.release(auto); err == nil {
 		t.Error("a system without control released it")
 	}
 	if !h.holds(pad) {
-		t.Error("the gamepad lost control to someone else's release")
+		t.Error("the gamer lost control to someone else's release")
 	}
 }
 
 // Anyone may stop, a stop takes control from everyone, and the software it
 // stopped cannot undo it.
 func TestAStopIsNotUndoneByTheSoftwareItStopped(t *testing.T) {
-	h := newHelm([]string{"gamepad"})
+	h := newHelm([]string{"gamer"})
 	h.take(pad, time.Now())
 	h.release(pad)
 	h.take(auto, time.Now())
@@ -123,24 +123,24 @@ func TestAStopIsNotUndoneByTheSoftwareItStopped(t *testing.T) {
 		t.Errorf("the refusal does not say who stopped it: %v", err)
 	}
 	if _, err := h.take(pad, time.Now()); err != nil {
-		t.Errorf("the gamepad could not take control after a stop: %v", err)
+		t.Errorf("the gamer could not take control after a stop: %v", err)
 	}
 }
 
 // A stop from a system that is not driving still stops: the supervisor case.
 func TestASupervisorStopsAVehicleItIsNotDriving(t *testing.T) {
-	h := newHelm([]string{"gamepad"})
+	h := newHelm([]string{"gamer"})
 	h.take(pad, time.Now())
 	h.release(pad)
 	h.take(auto, time.Now())
 	h.stop(pad, "stopped")
 	if !h.stopped || h.held {
-		t.Error("a stop from the gamepad did not stop a vehicle the driver had")
+		t.Error("a stop from the gamer did not stop a vehicle the driver had")
 	}
 }
 
 func TestSilenceIsAStopNotAHandover(t *testing.T) {
-	h := newHelm([]string{"gamepad"})
+	h := newHelm([]string{"gamer"})
 	start := time.Now()
 	h.take(pad, start)
 	if h.silent(start.Add(400*time.Millisecond), 500*time.Millisecond) {
@@ -156,7 +156,7 @@ func TestSilenceIsAStopNotAHandover(t *testing.T) {
 	if !h.stopped || h.held {
 		t.Error("silence left someone in control")
 	}
-	if !strings.Contains(h.why, "gamepad") {
+	if !strings.Contains(h.why, "gamer") {
 		t.Errorf("the reason does not name who went silent: %q", h.why)
 	}
 	if _, err := h.take(auto, time.Now()); err == nil {
@@ -166,7 +166,7 @@ func TestSilenceIsAStopNotAHandover(t *testing.T) {
 
 func TestUnidentifiedCallers(t *testing.T) {
 	// A loader with a certificate: a caller without one may only stop.
-	h := newHelm([]string{"gamepad"})
+	h := newHelm([]string{"gamer"})
 	if _, err := h.take(nobody, time.Now()); err == nil {
 		t.Error("an unidentified caller took control of a certified loader")
 	}
@@ -178,7 +178,7 @@ func TestUnidentifiedCallers(t *testing.T) {
 
 	// A bench with no certificates at all: nobody can be told apart, so an
 	// unidentified caller drives.
-	bench := newHelm([]string{"gamepad"})
+	bench := newHelm([]string{"gamer"})
 	bench.anonymousPilot = true
 	if _, err := bench.take(nobody, time.Now()); err != nil {
 		t.Fatalf("an unidentified caller could not take control on a bench with no certificates: %v", err)
@@ -202,10 +202,14 @@ func testDrivetrain(t *testing.T, certified bool) *drivetrain {
 			Motors: []MotorSpec{{Name: "FrontLeft", NodeID: 1, Kind: "wheel"}}},
 		sys:      &sys,
 		fb:       newFeedback(time.Second),
-		helm:     newHelm([]string{"gamepad"}),
+		helm:     newHelm([]string{"gamer"}),
 		setpoint: map[int]float64{},
 		last:     map[int]int16{},
+		waist:    newWaistState(defaultWaist()),
 	}
+	d.cfg.Waist = defaultWaist()
+	d.cfg.Geometry = Geometry{JointToFront: 0.6175, JointToRear: 0.6175, Track: 0.6275, WheelCircumference: 1.335}
+	d.cfg.MaxSpeed = 1.5
 	return d
 }
 
@@ -232,20 +236,20 @@ func TestServicesArbitrate(t *testing.T) {
 	vehicle := &Traits{Name: "Vehicle", Kind: "vehicle", dt: d, encoderIndex: -1}
 	wheel := &Traits{Name: "FrontLeft", NodeID: 1, Kind: "wheel", dt: d, encoderIndex: 0}
 
-	if w := put(t, wheel.setpointService, "gamepad", "30"); w.Code != http.StatusConflict {
+	if w := put(t, wheel.setpointService, "gamer", "30"); w.Code != http.StatusConflict {
 		t.Fatalf("a setpoint before anyone took control got %d", w.Code)
 	}
-	if w := put(t, vehicle.controlService, "gamepad", "1"); w.Code != http.StatusOK {
-		t.Fatalf("the gamepad taking control got %d: %s", w.Code, w.Body)
+	if w := put(t, vehicle.controlService, "gamer", "1"); w.Code != http.StatusOK {
+		t.Fatalf("the gamer taking control got %d: %s", w.Code, w.Body)
 	}
-	if w := put(t, wheel.setpointService, "gamepad", "30"); w.Code != http.StatusOK {
-		t.Fatalf("the gamepad's setpoint got %d: %s", w.Code, w.Body)
+	if w := put(t, wheel.setpointService, "gamer", "30"); w.Code != http.StatusOK {
+		t.Fatalf("the gamer's setpoint got %d: %s", w.Code, w.Body)
 	}
 	if w := put(t, wheel.setpointService, "driver", "60"); w.Code != http.StatusConflict {
-		t.Errorf("the driver's setpoint while the gamepad had control got %d", w.Code)
+		t.Errorf("the driver's setpoint while the gamer had control got %d", w.Code)
 	}
 	if d.setpoint[1] != 30 {
-		t.Errorf("setpoint = %v, want the gamepad's 30", d.setpoint[1])
+		t.Errorf("setpoint = %v, want the gamer's 30", d.setpoint[1])
 	}
 
 	// Ramp up a little, then stop from a system that is not driving.
@@ -263,7 +267,7 @@ func TestServicesArbitrate(t *testing.T) {
 	if d.last[1] != 0 {
 		t.Errorf("the motor moved after a stop: %d", d.last[1])
 	}
-	if w := put(t, wheel.setpointService, "gamepad", "30"); w.Code != http.StatusConflict {
+	if w := put(t, wheel.setpointService, "gamer", "30"); w.Code != http.StatusConflict {
 		t.Errorf("a setpoint after a stop got %d", w.Code)
 	}
 	if w := put(t, vehicle.stopService, "painter", "0"); w.Code != http.StatusConflict {
@@ -272,8 +276,8 @@ func TestServicesArbitrate(t *testing.T) {
 	if w := put(t, vehicle.controlService, "driver", "1"); w.Code != http.StatusConflict {
 		t.Errorf("the driver taking control after a stop got %d", w.Code)
 	}
-	if w := put(t, vehicle.controlService, "gamepad", "1"); w.Code != http.StatusOK {
-		t.Errorf("the gamepad taking control after a stop got %d", w.Code)
+	if w := put(t, vehicle.controlService, "gamer", "1"); w.Code != http.StatusOK {
+		t.Errorf("the gamer taking control after a stop got %d", w.Code)
 	}
 }
 
@@ -285,7 +289,7 @@ func TestAnUnidentifiedCallerOnlyStopsACertifiedLoader(t *testing.T) {
 	if w := put(t, vehicle.controlService, "", "1"); w.Code != http.StatusConflict {
 		t.Errorf("an unidentified caller taking control got %d", w.Code)
 	}
-	put(t, vehicle.controlService, "gamepad", "1")
+	put(t, vehicle.controlService, "gamer", "1")
 	if w := put(t, vehicle.stopService, "", "1"); w.Code != http.StatusOK || !d.helm.stopped {
 		t.Errorf("an unidentified stop got %d, stopped=%v", w.Code, d.helm.stopped)
 	}

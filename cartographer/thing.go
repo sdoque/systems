@@ -31,7 +31,6 @@ const (
 	unitMetre  = "<http://qudt.org/vocab/unit/M>"
 	unitDegree = "<http://qudt.org/vocab/unit/DEG>"
 	unitPct    = "<http://qudt.org/vocab/unit/PERCENT>"
-	unitRev    = "<http://qudt.org/vocab/unit/REV>"
 )
 
 // CartographerConfig is what the operator may set.
@@ -192,9 +191,8 @@ func newResource(uac usecases.ConfigurableAsset, sys *components.System) (*compo
 		odo:          newOdometer(cfg.Odometry),
 	}
 	if cfg.Odometry.on() {
-		log.Printf("cartographer: odometry from the loader's wheels %d and %d (%s), %.4f m around, %.4f m apart",
-			cfg.Odometry.LeftNodeID, cfg.Odometry.RightNodeID, axleName(cfg.Odometry),
-			cfg.Odometry.WheelCircumference, cfg.Odometry.Track)
+		log.Printf("cartographer: odometry from the loader's wheels %d and %d (%s), %.4f m apart",
+			cfg.Odometry.LeftNodeID, cfg.Odometry.RightNodeID, axleName(cfg.Odometry), cfg.Odometry.Track)
 	} else {
 		log.Println("cartographer: odometry is switched off; each sweep starts from constant velocity")
 	}
@@ -270,7 +268,7 @@ func wheelCervice(o OdometryConfig, ref string, nodeID int, sys *components.Syst
 	}
 	return &components.Cervice{
 		IReferentce: ref,
-		Definition:  "travel",
+		Definition:  "distance",
 		Protos:      components.SProtocols(sys.Husk.ProtoPort),
 		Mode:        "get",
 		Nodes:       make(map[string][]components.NodeInfo),
@@ -407,12 +405,12 @@ func (t *Traits) readWheel(cer *components.Cervice) (wheelSample, error) {
 	if !ok {
 		return wheelSample{}, errUnexpectedForm
 	}
-	// The loader's travel is in revolutions. Anything else would be read as
-	// revolutions and scaled by the circumference into nonsense.
-	if sig.Unit != "" && sig.Unit != unitRev {
-		return wheelSample{}, fmt.Errorf("%s: travel came in %s, not revolutions", cer.IReferentce, sig.Unit)
+	// The loader's distance is in meters. Anything else would be integrated
+	// as meters into a map of the wrong size.
+	if sig.Unit != "" && sig.Unit != unitMetre {
+		return wheelSample{}, fmt.Errorf("%s: distance came in %s, not meters", cer.IReferentce, sig.Unit)
 	}
-	return wheelSample{revolutions: sig.Value, at: sig.Timestamp}, nil
+	return wheelSample{metres: sig.Value, at: sig.Timestamp}, nil
 }
 
 // noteOdometry reports why a sweep had no odometry: the first time, and then

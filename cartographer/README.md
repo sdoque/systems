@@ -57,10 +57,12 @@ whether the score actually falls. A flat peak is reported as flat, and then:
 
 ## Odometry
 
-**The consumed services are the loader's wheel `travel`** — the scanner's own
-axle, found by definition `travel`, the wheel's `NodeID` and the vehicle's
-`Model`. Between two sweeps the change in each wheel's revolutions, times the
-wheel circumference, says how far each side moved.
+**The consumed services are the loader's wheel `distance`** — meters rolled by
+the two wheels of the scanner's own axle, found by definition `distance`, the
+wheel's `NodeID` and the vehicle's `Model`. Between two sweeps the change in
+each says how far each side moved. The wheel's size is the loader's business:
+it converts revolutions to meters with the circumference in its own
+configuration, so calibrating the wheel size means changing one number, there.
 
 **One axle is enough, and the articulation angle is not needed.** An
 articulated loader bends in the middle, so its two halves point in different
@@ -68,7 +70,7 @@ directions; but each half is a rigid body on two wheels that do not slide
 sideways, which is exactly a differential-drive robot. Its axle moves at the
 mean of the two wheel speeds and turns at their difference over the track. So
 the cartographer tracks the half the scanner is mounted on, from that half's
-wheels, and never needs the waist sensor — whose scale nobody has calibrated.
+wheels, and does not need the waist sensor.
 The motion is integrated as an arc, and moved from the axle's center to where
 the scanner sits (`scannerMount`).
 
@@ -86,14 +88,15 @@ follows the vehicle to the centimeter; without them every sweep is refused.
 
 **What the wheels get wrong, and what guards against it:**
 
-- *Slip.* In a turn the tires scrub — the loader commands the same speed to all
-  four wheels — so heading from the encoders drifts. That is why the matcher
-  still corrects wherever the view allows.
-- *Counter wrap.* The loader's count wraps at 204.8 revolutions; the change is
-  unwrapped.
-- *A loader restart* presets the counters to zero. A jump larger than
-  `maxWheelRPM` allows in the time between readings is taken as a restart, not
-  motion, and logged.
+- *Slip.* The loader drives each wheel at the speed the geometry asks for, but
+  tires still creep and scrub, most in tight turns, so the heading from the
+  encoders drifts. That is why the matcher still corrects wherever the view
+  allows.
+- *Counter wrap.* The encoder's own counter wraps every 204.8 revolutions; the
+  loader unwraps it, so `distance` does not.
+- *A loader restart* starts the distances again from zero. A jump larger than
+  `maxWheelSpeedMetresPerSecond` allows in the time between readings is taken
+  as a restart, not motion, and logged.
 - *A dead encoder.* The loader re-sends its latest reading once a second even
   when nothing changes, stamped with when it arrived. A reading older than
   `maxAgeMs` (1.5 s) is not used. The loader and the cartographer must
@@ -108,11 +111,10 @@ follows the vehicle to the centimeter; without them every sweep is refused.
 | `enabled` | true | absent means true |
 | `vehicle` | `{"Model": ["artitrax"]}` | picks the loader |
 | `leftNodeID` / `rightNodeID` | 1 / 2 | the **front** axle; 3 / 4 for the back |
-| `wheelCircumferenceMetres` | 1.335 | measured, rolling |
 | `trackMetres` | 0.6275 | measured |
 | `scannerMount` | 0, 0, 0° | forward, left, and yaw of the scanner from that axle's center |
 | `maxAgeMs` | 1500 | longer than the loader's one-second heartbeat |
-| `maxWheelRPM` | 120 | bounds plausible motion between readings |
+| `maxWheelSpeedMetresPerSecond` | 3 | bounds plausible motion between readings |
 
 **Check the defaults against the vehicle:** they assume the SF45/B is on the
 **front** half, over the axle, facing forward. If it is mounted elsewhere, say

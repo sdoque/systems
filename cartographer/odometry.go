@@ -36,12 +36,10 @@ import (
 // loader publishes it raw. Odometry from the scanner's own axle avoids it
 // entirely.
 //
-// What it cannot avoid is slip. An articulated vehicle in a turn scrubs its
-// tires, and the loader commands the same speed to all four wheels, so the
-// wheels are forced to disagree with the geometry. The encoders report what
-// the wheels did, which is better than what they were told, but the heading
-// from them will drift in turns. It is a prior for the scan matcher, not a
-// substitute for it.
+// What it cannot avoid is slip. The loader drives each wheel at the speed the
+// geometry asks for, but tires still creep and scrub, most in tight turns and
+// on a smooth floor, and the heading from the encoders will drift. It is a
+// prior for the scan matcher, not a substitute for it.
 
 // OdometryConfig is the vehicle's geometry, and which wheels to read.
 type OdometryConfig struct {
@@ -57,8 +55,11 @@ type OdometryConfig struct {
 	LeftNodeID  int                 `json:"leftNodeID"`
 	RightNodeID int                 `json:"rightNodeID"`
 
-	WheelCircumference float64 `json:"wheelCircumferenceMetres"`
-	Track              float64 `json:"trackMetres"`
+	// Track is the distance between the two wheels. The wheels' size is not
+	// here: the loader reports how far each wheel has rolled in meters, from
+	// the circumference in its own configuration, so a calibration of the
+	// wheel size is made once, there.
+	Track float64 `json:"trackMetres"`
 
 	// Mount is where the scanner sits relative to the centre of that axle:
 	// metres forward and to the left, and which way it faces.
@@ -75,10 +76,10 @@ type OdometryConfig struct {
 	// keeps getting older.
 	MaxAgeMs int `json:"maxAgeMs"`
 
-	// MaxWheelRPM bounds what a wheel can plausibly have turned between two
-	// readings. More than that is not motion: it is the loader restarting and
-	// presetting its counters to zero.
-	MaxWheelRPM float64 `json:"maxWheelRPM"`
+	// MaxWheelSpeed bounds how far a wheel can plausibly have rolled between
+	// two readings, in m/s. More than that is not motion: it is the loader
+	// restarting and counting from zero again.
+	MaxWheelSpeed float64 `json:"maxWheelSpeedMetresPerSecond"`
 }
 
 // Mount places the scanner on its axle.
@@ -94,14 +95,13 @@ func (m Mount) pose() pose {
 
 func defaultOdometry() OdometryConfig {
 	return OdometryConfig{
-		Enabled:            &on,
-		Vehicle:            map[string][]string{"Model": {"artitrax"}},
-		LeftNodeID:         1,
-		RightNodeID:        2,
-		WheelCircumference: 1.335,
-		Track:              0.6275,
-		MaxAgeMs:           1500,
-		MaxWheelRPM:        120,
+		Enabled:       &on,
+		Vehicle:       map[string][]string{"Model": {"artitrax"}},
+		LeftNodeID:    1,
+		RightNodeID:   2,
+		Track:         0.6275,
+		MaxAgeMs:      1500,
+		MaxWheelSpeed: 3,
 	}
 }
 
@@ -117,29 +117,23 @@ func applyOdometryDefaults(c *OdometryConfig) {
 	if c.LeftNodeID == 0 && c.RightNodeID == 0 {
 		c.LeftNodeID, c.RightNodeID = d.LeftNodeID, d.RightNodeID
 	}
-	if c.WheelCircumference <= 0 {
-		c.WheelCircumference = d.WheelCircumference
-	}
 	if c.Track <= 0 {
 		c.Track = d.Track
 	}
 	if c.MaxAgeMs <= 0 {
 		c.MaxAgeMs = d.MaxAgeMs
 	}
-	if c.MaxWheelRPM <= 0 {
-		c.MaxWheelRPM = d.MaxWheelRPM
+	if c.MaxWheelSpeed <= 0 {
+		c.MaxWheelSpeed = d.MaxWheelSpeed
 	}
 }
 
-// counterPeriod is where the loader's travel count wraps: a 24-bit counter at
-// 81 920 counts per wheel revolution. The left wheels are negated by the
-// loader, which changes the sign of the range but not its length.
-const counterPeriod = float64(1<<24) / 81920 // 204.8 revolutions
-
-// wheelSample is one wheel's travel, as the loader reported it.
+// wheelSample is how far one wheel has rolled, in meters, as the loader
+// reported it. The loader unwraps the encoder's counter itself, so this only
+// ever jumps when the loader restarts.
 type wheelSample struct {
-	revolutions float64
-	at          time.Time
+	metres float64
+	at     time.Time
 }
 
 // odometer turns successive pairs of wheel readings into motion.
@@ -180,19 +174,19 @@ func (o *odometer) advance(l, r wheelSample, now time.Time) (delta pose, ok bool
 	}
 
 	dt := later(l.at, r.at).Sub(later(o.left.at, o.right.at)).Seconds()
-	dl := unwrap(l.revolutions - o.left.revolutions)
-	dr := unwrap(r.revolutions - o.right.revolutions)
+	dl := l.metres - o.left.metres
+	dr := r.metres - o.right.metres
 
 	// A little slack for readings that are not quite simultaneous.
-	plausible := o.cfg.MaxWheelRPM/60*math.Max(dt, 0)*1.5 + 0.05
+	plausible := o.cfg.MaxWheelSpeed*math.Max(dt, 0)*1.5 + 0.05
 	if math.Abs(dl) > plausible || math.Abs(dr) > plausible {
 		o.left, o.right = l, r
 		return pose{}, false, &discontinuity{fmt.Sprintf(
-			"the wheels jumped %.2f and %.2f revolutions in %.2f s — taken as the loader restarting, not as motion", dl, dr, dt)}
+			"the wheels jumped %.2f and %.2f m in %.2f s — taken as the loader restarting, not as motion", dl, dr, dt)}
 	}
 	o.left, o.right = l, r
 
-	axle := arc(dl*o.cfg.WheelCircumference, dr*o.cfg.WheelCircumference, o.cfg.Track)
+	axle := arc(dl, dr, o.cfg.Track)
 	// The scanner's motion is the axle's, seen from where the scanner sits.
 	return compose(compose(inverse(o.mount), axle), o.mount), true, nil
 }
@@ -208,12 +202,6 @@ func arc(sl, sr, track float64) pose {
 	}
 	radius := ds / dth
 	return pose{x: radius * math.Sin(dth), y: radius * (1 - math.Cos(dth)), theta: dth}
-}
-
-// unwrap takes the change in a wrapping counter to the smallest equivalent
-// change.
-func unwrap(d float64) float64 {
-	return d - counterPeriod*math.Round(d/counterPeriod)
 }
 
 func later(a, b time.Time) time.Time {

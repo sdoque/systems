@@ -55,7 +55,6 @@ func drive(o *odometer, steps int, perStepL, perStepR float64) pose {
 
 func testOdometer() *odometer {
 	c := defaultOdometry()
-	c.WheelCircumference = 1.0 // one metre a revolution keeps the arithmetic visible
 	c.Track = 0.5
 	return newOdometer(c)
 }
@@ -106,31 +105,6 @@ func TestHalfCircle(t *testing.T) {
 	}
 }
 
-// The loader's counter wraps at 204.8 revolutions. Crossing it is motion.
-func TestCounterWrap(t *testing.T) {
-	o := testOdometer()
-	t1 := clock
-	t2 := clock.Add(200 * time.Millisecond)
-	o.advance(wheelSample{204.7, t1}, wheelSample{204.7, t1}, t1)
-	d, ok, err := o.advance(wheelSample{0.1, t2}, wheelSample{0.1, t2}, t2)
-	if !ok || err != nil {
-		t.Fatalf("crossing the wrap: ok=%v err=%v", ok, err)
-	}
-	if !near(d.x, 0.2) {
-		t.Errorf("0.2 revolutions across the wrap gave %v m", d.x)
-	}
-
-	// The left wheels are negated by the loader, so they live in the negative
-	// half and forward still counts up: from -0.1, 0.2 of a revolution forward
-	// wraps round to -204.7.
-	o.have = false
-	o.advance(wheelSample{-0.1, t1}, wheelSample{0.1, t1}, t1)
-	d, ok, _ = o.advance(wheelSample{-204.7, t2}, wheelSample{0.3, t2}, t2)
-	if !ok || !near(d.x, 0.2) {
-		t.Errorf("left wheel across its wrap: ok=%v x=%v, want 0.2", ok, d.x)
-	}
-}
-
 // A loader restart presets the counters to zero. That is a jump of however far
 // the wheels had turned, and it is not motion.
 func TestALoaderRestartIsNotMotion(t *testing.T) {
@@ -141,7 +115,7 @@ func TestALoaderRestartIsNotMotion(t *testing.T) {
 	_, ok, err := o.advance(wheelSample{0, t2}, wheelSample{0, t2}, t2)
 	var jump *discontinuity
 	if ok || !errors.As(err, &jump) {
-		t.Fatalf("a jump of 57 revolutions in 0.2 s: ok=%v err=%v, want a discontinuity", ok, err)
+		t.Fatalf("a jump of 57 m in 0.2 s: ok=%v err=%v, want a discontinuity", ok, err)
 	}
 	// And the next pair carries on from the new counters.
 	t3 := t2.Add(200 * time.Millisecond)
@@ -157,8 +131,8 @@ func TestFullSpeedIsNotADiscontinuity(t *testing.T) {
 	t1 := clock
 	t2 := clock.Add(200 * time.Millisecond)
 	o.advance(wheelSample{0, t1}, wheelSample{0, t1}, t1)
-	revs := 120.0 / 60 * 0.2 // 120 RPM for 200 ms
-	if _, ok, err := o.advance(wheelSample{revs, t2}, wheelSample{revs, t2}, t2); !ok || err != nil {
+	metres := 120.0 / 60 * 1.335 * 0.2 // the Artitrax's full 120 RPM for 200 ms
+	if _, ok, err := o.advance(wheelSample{metres, t2}, wheelSample{metres, t2}, t2); !ok || err != nil {
 		t.Errorf("full speed: ok=%v err=%v", ok, err)
 	}
 }
@@ -183,7 +157,6 @@ func TestStaleReadingsAreNotOdometry(t *testing.T) {
 // that entirely.
 func TestMountOffset(t *testing.T) {
 	c := defaultOdometry()
-	c.WheelCircumference = 1
 	c.Track = 0.5
 	c.Mount = Mount{Forward: 1}
 	o := newOdometer(c)
@@ -227,8 +200,8 @@ func TestDefaultsArePhysical(t *testing.T) {
 	if !c.on() {
 		t.Error("a configuration written before odometry existed has it off")
 	}
-	if c.WheelCircumference != 1.335 || c.Track != 0.6275 {
-		t.Errorf("geometry %v m around, %v m apart; want the measured 1.335 and 0.6275", c.WheelCircumference, c.Track)
+	if c.Track != 0.6275 {
+		t.Errorf("track %v m, want the measured 0.6275", c.Track)
 	}
 	if c.LeftNodeID != 1 || c.RightNodeID != 2 {
 		t.Errorf("wheels %d and %d, want the front axle 1 and 2", c.LeftNodeID, c.RightNodeID)
@@ -269,8 +242,8 @@ func scanAt(p pose, at time.Time) *forms.ScanA_v1a {
 // map rather than guess. The wheel counters start at an arbitrary value, as
 // they would on a loader that has been running: only their change may matter.
 func TestTheWheelsCarryTheMapDownACorridor(t *testing.T) {
-	const step = 0.07 // metres per sweep
-	var left, right float64 = 57.3, 57.3
+	const step = 0.07                    // metres per sweep
+	var left, right float64 = 57.3, 57.3 // meters, from wherever the loader started
 	wheels := func() (wheelSample, wheelSample, error) {
 		now := time.Now()
 		return wheelSample{left, now}, wheelSample{right, now}, nil
@@ -288,8 +261,8 @@ func TestTheWheelsCarryTheMapDownACorridor(t *testing.T) {
 		blind.consume(scanAt(truth, at))
 
 		truth.x += step
-		left += step / withWheels.cfg.Odometry.WheelCircumference
-		right += step / withWheels.cfg.Odometry.WheelCircumference
+		left += step
+		right += step
 	}
 	driven := 30 * step
 

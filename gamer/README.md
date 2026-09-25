@@ -78,6 +78,51 @@ has to say is in the log. The PlayStation pad's light bar is reachable through
 `/sys/class/leds` on Linux and would be the natural place to show "in control";
 that is not done yet.
 
+## A cycle, and a handover
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Person
+    participant J as /dev/input/js0
+    participant G as Gamer, the pilot state
+    participant L as Loader
+
+    J-->>G: button and axis events, as they happen
+
+    Note over Person,G: the pad drives nothing until it has control
+
+    Person->>J: hold L1 + R1, sticks centered
+    loop every cycle, 50 ms
+        G->>G: read the pad, and ask if five seconds have passed
+    end
+    G->>L: PUT Vehicle/control 1
+    L-->>G: 200, in control
+
+    loop every cycle while in control
+        G->>L: PUT Vehicle/velocity stick up or down, times maxSpeed
+        G->>L: PUT Vehicle/curvature, or Steering/setpoint before calibration
+        L-->>G: 200
+    end
+
+    alt a face button, or all four shoulders
+        Person->>J: stop
+        G->>L: PUT Vehicle/stop 1 (this cycle, and five more)
+        L-->>G: 200
+        G->>G: no longer in control, and must take it again to drive
+    else somebody else stopped it, or took over
+        L-->>G: 409, the vehicle is stopped or someone else has control
+        G->>G: control lost, with the loader's reason in the log
+    else the pad is lost while driving
+        J-->>G: the device is gone
+        G->>L: PUT Vehicle/stop 1
+    end
+
+    Person->>J: hold L2 + R2 for five seconds
+    G->>L: PUT Vehicle/control 0
+    L-->>G: 200, the vehicle is free for software to take
+```
+
 ## Steering
 
 Left is positive, as everywhere in the vehicle (ISO 8855): stick left, vehicle

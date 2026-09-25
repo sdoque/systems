@@ -17,6 +17,42 @@ vehicle carrying it. Mounting pose belongs to a driver, mapping belongs to the
 | `scansector` | `SignalA_v1a` | the width of the scanned arc in degrees (GET/PUT) |
 | `quality` | `SignalA_v1a` | the share of the last sweep that came back |
 
+## From the sensor to a sweep
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant S as SF45/B on serial
+    participant R as Reader in lwnx.go
+    participant T as Guetteur, holding the latest sweep
+    participant C as Consumer, cartographer or chauffeur
+
+    Note over R,S: at start-up, in this order
+    R->>S: 30 Stream 0, to stop whatever is streaming
+    R->>S: 27 Distance output = first return + yaw
+    R->>S: 66 update rate, 85 scan speed
+    R->>S: 98 / 99 sector limits, 96 scan enable
+    R->>S: 30 Stream 5, to start streaming command 44
+
+    loop one frame per measurement
+        S-->>R: 0xAA, flags, id 44, distance cm + yaw, CRC
+        R->>R: check the CRC, and count a bad frame rather than use it
+        R->>R: a distance of 0 or less, or beyond maxRange, is a point<br/>that did not come back, never a distance
+        alt the scan reversed direction
+            R->>T: the sweep just finished
+        end
+    end
+
+    C->>T: GET scan
+    T-->>C: every angle, distance and whether it was a return
+    C->>T: GET clearance
+    alt it can see ahead, and the sweep is fresh
+        T-->>C: the nearest return in the forward sector, in metres
+    else blind, or the newest sweep is stale
+        T-->>C: 503 with no body, to be treated as stop, not as missing data
+    end
+```
+
 ## The one idea worth understanding
 
 **A rangefinder that sees nothing reports either its maximum range or an

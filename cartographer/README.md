@@ -19,6 +19,43 @@ velocity instead, and refuses to map where the view alone cannot place it.
 A `map.pgm` is also written to disk every ten seconds. That is the artefact a
 person looks at; the `map` service is what a system consumes.
 
+## One sweep, start to finish
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant G as Guetteur
+    participant L as Loader, front axle wheels
+    participant C as Cartographer
+    participant D as map.pgm
+
+    loop every pollMs, 200 ms
+        C->>G: GET scan
+        alt the guetteur is blind or stale
+            G-->>C: 503, nothing to map this time
+        else
+            G-->>C: the sweep: angles, distances, valid
+            C->>C: too few returns to be evidence? skip it
+            C->>L: GET distance (left wheel)
+            C->>L: GET distance (right wheel)
+            L-->>C: meters rolled, stamped when the frame arrived
+            C->>C: the two wheels give the axle's motion,<br/>moved to where the scanner sits
+            C->>C: prior = the last map pose, moved by that
+            C->>C: match the sweep against the map from the prior,<br/>then probe the answer
+            alt the peak is sharp
+                C->>C: take the match
+            else the view cannot say (a plain corridor)
+                C->>C: with the wheels, keep the prior.<br/>Without them, refuse to map and say so
+            end
+            C->>C: integrate, if the vehicle has moved far enough
+        end
+    end
+
+    loop every ten seconds
+        C->>D: write the picture a person looks at
+    end
+```
+
 ## What it is, and what it is not
 
 This is a SLAM **front end**. There is no pose graph and no loop closure, so a

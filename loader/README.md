@@ -61,6 +61,45 @@ wrap: the encoders' 24-bit counters are unwrapped here.
 a stalled motor, a slipping wheel and a working one all report the same
 setpoint. Only `speed` says what happened.
 
+## How a command reaches a motor
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant P as Pilot, gamer or chauffeur
+    participant L as Loader services
+    participant D as Drivetrain loop, 50 Hz
+    participant W as Waist sensor on can1
+    participant M as Motors on can0
+
+    P->>L: PUT Vehicle/control 1
+    L-->>P: 200, the pilot has control
+
+    loop while driving, at least every safetyStopMs
+        P->>L: PUT Vehicle/velocity (m/s)
+        P->>L: PUT Vehicle/curvature (1/m)
+        L-->>P: 200
+    end
+    Note over P,L: anyone else commanding gets 409,<br/>naming who has control
+
+    loop every cycle, 20 ms
+        W-->>D: raw count (polled at 20 Hz)
+        D->>D: watchdog: what last cycle's effort did to the joint
+        D->>D: wheels from velocity and the articulation<br/>the joint actually has
+        D->>D: steering: curvature to target angle, then the angle loop
+        D->>D: guard: fresh reading? past the limit?<br/>which way is back?
+        D->>M: set velocity, then update, per motor
+    end
+
+    alt someone stops it
+        P->>L: PUT Vehicle/stop 1
+        L->>D: clear every setpoint and the ramp
+        D->>M: zero to every motor, at once
+    else the pilot goes quiet
+        D->>D: nothing heard for safetyStopMs, so stop
+    end
+```
+
 ## The steering guard
 
 Every cycle, before any effort reaches the waist motor:

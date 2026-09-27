@@ -2,4 +2,4 @@ module github.com/sdoque/systems/authorizer
 
 go 1.26.6
 
-require github.com/sdoque/mbaigo v0.4.1
+require github.com/sdoque/mbaigo v0.4.2

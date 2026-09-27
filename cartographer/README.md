@@ -16,6 +16,12 @@ velocity instead, and refuses to map where the view alone cannot place it.
 | `pose` | `PoseA_v1a` | where in the map the sensor is believed to be |
 | `coverage` | `SignalA_v1a` | the share of the grid that has been observed at all |
 
+**Each run is its own map.** The origin is wherever the first sweep was taken,
+so after a restart the same coordinates name another place. The `map` and `pose`
+forms carry the run in their frame — `map@2026-09-27T06:13:50Z`, the start time —
+and anything planned in one run, like a [navigator](../navigator/) route, must be
+refused in another.
+
 A `map.pgm` is also written to disk every ten seconds. That is the artefact a
 person looks at; the `map` service is what a system consumes.
 

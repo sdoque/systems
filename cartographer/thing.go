@@ -73,6 +73,12 @@ type Traits struct {
 	cfg   CartographerConfig
 	owner *components.System
 
+	// frame names this map. Each run starts a new map with its origin at the
+	// first sweep, so the same coordinates name another place after a
+	// restart; the frame carries the start time so that a path or goal from
+	// the previous map can be recognized as such rather than followed.
+	frame string
+
 	scanCervice  *components.Cervice
 	leftCervice  *components.Cervice
 	rightCervice *components.Cervice
@@ -175,6 +181,7 @@ func newResource(uac usecases.ConfigurableAsset, sys *components.System) (*compo
 	t := &Traits{
 		cfg:   cfg,
 		owner: sys,
+		frame: forms.PolarMap + "@" + time.Now().UTC().Format(time.RFC3339),
 		g:     newGrid(cfg.WidthMetres, cfg.HeightMetres, cfg.Resolution),
 		scanCervice: &components.Cervice{
 			Definition: "scan",
@@ -196,6 +203,7 @@ func newResource(uac usecases.ConfigurableAsset, sys *components.System) (*compo
 	} else {
 		log.Println("cartographer: odometry is switched off; each sweep starts from constant velocity")
 	}
+	log.Printf("cartographer: this map is %s", t.frame)
 
 	t.readWheels = t.readLoaderWheels
 	t.g.matchRange = cfg.MatchRangeMetres
@@ -561,6 +569,7 @@ func (t *Traits) mapService(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "nothing has been mapped yet", http.StatusServiceUnavailable)
 		return
 	}
+	f.Frame = t.frame
 	f.Timestamp = time.Now()
 	usecases.HTTPProcessGetRequest(w, r, &f)
 }
@@ -586,7 +595,7 @@ func (t *Traits) poseService(w http.ResponseWriter, r *http.Request) {
 	f.NewForm()
 	f.X, f.Y = at.x, at.y
 	f.Heading = at.theta * 180 / math.Pi
-	f.Frame = "map"
+	f.Frame = t.frame
 	f.DistanceUnit = unitMetre
 	f.AngleUnit = unitDegree
 	f.Timestamp = last

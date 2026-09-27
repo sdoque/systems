@@ -459,3 +459,105 @@ func TestShutdownEndsTheWait(t *testing.T) {
 		t.Fatal("the retry loop ignored shutdown")
 	}
 }
+
+// ── resuming the session after a power cut ────────────────────────────────────
+
+// netatmoToken stands in for Netatmo's token endpoint. Each call takes the next
+// answer; the last is repeated.
+func netatmoToken(t *testing.T, answers ...int) (calls func() int) {
+	t.Helper()
+	var n int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		status := answers[min(n, len(answers)-1)]
+		n++
+		w.WriteHeader(status)
+		if status == http.StatusOK {
+			json.NewEncoder(w).Encode(map[string]string{"access_token": "a2", "refresh_token": "r2"})
+		} else {
+			w.Write([]byte(`{"error":"invalid_grant"}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	old := tokenURL
+	tokenURL = srv.URL
+	t.Cleanup(func() { tokenURL = old })
+	return func() int { return n }
+}
+
+func savedSession(t *testing.T) usecases.ConfigurableAsset {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	if err := saveTokenFile(savedTokens{AccessToken: "a1", RefreshToken: "r1"}); err != nil {
+		t.Fatal(err)
+	}
+	creds, _ := json.Marshal(Credentials{ClientID: "id", ClientSecret: "secret"})
+	return usecases.ConfigurableAsset{Traits: []json.RawMessage{creds}}
+}
+
+// The Pi is up before the router has the internet back. Not reaching Netatmo
+// must be waited out with the saved session, not handed to a browser flow that
+// times out and exits the system.
+func TestTheSessionIsResumedOnceNetatmoAnswers(t *testing.T) {
+	firstWait, maxWait = time.Millisecond, 2*time.Millisecond
+	defer func() { firstWait, maxWait = 15*time.Second, 5*time.Minute }()
+	uac := savedSession(t)
+	calls := netatmoToken(t, http.StatusBadGateway, http.StatusBadGateway, http.StatusOK)
+
+	tm, err := newTokenManager(context.Background(), uac)
+	if err != nil {
+		t.Fatalf("gave up on the saved session: %v", err)
+	}
+	if calls() != 3 || tm.getToken() != "a2" {
+		t.Errorf("%d calls, token %q: want the session resumed on the third", calls(), tm.getToken())
+	}
+}
+
+// With no network at all the refresh is not a refusal.
+func TestNoNetworkIsNotARefusal(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	srv.Close()
+	old := tokenURL
+	tokenURL = srv.URL
+	defer func() { tokenURL = old }()
+
+	tm := &TokenManager{refreshToken: "r1"}
+	err := tm.refresh()
+	var rejected *tokenRejected
+	if err == nil || errors.As(err, &rejected) {
+		t.Errorf("a refused connection gave %v; want an error that is not a refusal", err)
+	}
+}
+
+// Netatmo refusing the token is the one thing a person must fix.
+func TestARefusedTokenIsARefusal(t *testing.T) {
+	t.Chdir(t.TempDir())
+	netatmoToken(t, http.StatusBadRequest)
+
+	tm := &TokenManager{refreshToken: "r1"}
+	var rejected *tokenRejected
+	if err := tm.refresh(); !errors.As(err, &rejected) {
+		t.Errorf("Netatmo answering 400 invalid_grant gave %v; want a refusal", err)
+	}
+}
+
+// Shutting down while waiting for the network ends the wait.
+func TestWaitingForNetatmoEndsOnShutdown(t *testing.T) {
+	firstWait, maxWait = time.Hour, time.Hour
+	defer func() { firstWait, maxWait = 15*time.Second, 5*time.Minute }()
+	uac := savedSession(t)
+	netatmoToken(t, http.StatusBadGateway)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { _, err := newTokenManager(ctx, uac); done <- err }()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("returned a session that was never resumed")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("still waiting after shutdown")
+	}
+}

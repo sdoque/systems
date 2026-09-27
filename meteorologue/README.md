@@ -21,8 +21,8 @@ The user-defined module name (e.g., `"Kälkholmen Outdoor"`) is carried as `Deta
 Netatmo removed password-based API access in 2022. The météorologue uses the **OAuth2 Authorization Code** flow:
 
 1. **First run** — the system starts a local callback server on port 9999, prints an authorization URL, and waits for you to open it in a browser and log in. The resulting tokens are saved to `tokens.json`.
-2. **Every subsequent run** — the system loads `tokens.json` and silently refreshes the access token. No browser interaction required.
-3. **If the refresh token expires** (after 60 days of non-use) — the browser flow repeats automatically.
+2. **Every subsequent run** — the system loads `tokens.json` and silently refreshes the access token. No browser interaction required. If Netatmo cannot be reached — after a power cut the Pi is usually up before the internet is — it keeps retrying with the saved session, backing off to every five minutes, and never falls back to the browser for want of a network.
+3. **If Netatmo refuses the refresh token** (after 60 days of non-use, say) — the browser flow repeats automatically. It waits five minutes for someone to log in and then exits.
 
 You need a free Netatmo developer app to obtain a `clientID` and `clientSecret`: [dev.netatmo.com](https://dev.netatmo.com). These go into `systemconfig.json` and never change.
 

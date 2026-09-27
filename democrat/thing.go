@@ -171,6 +171,20 @@ func newResource(uac usecases.ConfigurableAsset, sys *components.System) (*compo
 
 	go t.syncLoop(sys.Ctx)
 
+	// Declared once, at startup: what this system reaches outside the cloud,
+	// and whether anything protects it. The cloud's attestation and tokens stop
+	// at this boundary, so the posture says so rather than leaving a reader of
+	// the graph to assume otherwise.
+	sys.Husk.Attach(components.ExternalAttachment{
+		Name: "triple store", Protocol: "http",
+		Encrypted: false, Authenticated: t.GraphDBUser != "",
+	})
+	if t.GraphDBUser == "" {
+		log.Println("democrat: connecting to the triple store without credentials; if it has security enabled, set graphdbUser and graphdbPassword")
+	} else {
+		log.Printf("democrat: authenticating to the triple store as %q\n", t.GraphDBUser)
+	}
+
 	ua := &components.UnitAsset{
 		Name:        uac.Name,
 		Mission:     uac.Mission,
@@ -284,11 +298,6 @@ func (t *Traits) runSync() SyncResult {
 
 	client := &http.Client{Timeout: 15 * time.Second}
 	client = withStoreAuth(client, t.GraphDBUser, t.GraphDBPassword)
-	if t.GraphDBUser == "" {
-		log.Println("democrat: connecting to the triple store without credentials; if it has security enabled, set graphdbUser and graphdbPassword")
-	} else {
-		log.Printf("democrat: authenticating to the triple store as %q\n", t.GraphDBUser)
-	}
 
 	systems, err := loadSystems(client, t.GraphDBURL)
 	if err != nil {

@@ -189,6 +189,20 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	t.ontologyFiles = resolveLocalOntologies(t.LOntologies, dir, ontologyURL)
 	t.ontologyMtime = make(map[string]time.Time)
 
+	// Declared once, at startup: what this system reaches outside the cloud,
+	// and whether anything protects it. The cloud's attestation and tokens stop
+	// at this boundary, so the posture says so rather than leaving a reader of
+	// the graph to assume otherwise.
+	sys.Husk.Attach(components.ExternalAttachment{
+		Name: "triple store", Protocol: "http",
+		Encrypted: false, Authenticated: t.StoreUser != "",
+	})
+	if t.StoreUser == "" {
+		log.Println("kgrapher: connecting to the triple store without credentials; if it has security enabled, set graphDBuser and graphDBpassword")
+	} else {
+		log.Printf("kgrapher: authenticating to the triple store as %q\n", t.StoreUser)
+	}
+
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
 		Mission:     configuredAsset.Mission,
@@ -518,11 +532,6 @@ func (t *Traits) publishToStore(graph string) {
 	repoBase := strings.TrimSuffix(t.TripleStoreURL, "/statements")
 	client := &http.Client{Transport: http.DefaultClient.Transport, Timeout: 60 * time.Second}
 	client = withStoreAuth(client, t.StoreUser, t.StorePassword)
-	if t.StoreUser == "" {
-		log.Println("kgrapher: connecting to the triple store without credentials; if it has security enabled, set graphDBuser and graphDBpassword")
-	} else {
-		log.Printf("kgrapher: authenticating to the triple store as %q\n", t.StoreUser)
-	}
 
 	t.loadOntologies(client, repoBase)
 

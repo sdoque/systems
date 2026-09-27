@@ -511,7 +511,7 @@ func TestAGoodAnswerIsNotARefusal(t *testing.T) {
 
 // A non-2xx with a body this system cannot parse is still a failure, and must
 // not fall through to a type-mismatch error.
-func TestAnUnparseableFailureStillFails(t *testing.T) {
+func TestAnUnparsableFailureStillFails(t *testing.T) {
 	if err := gatewayRefusal(http.StatusBadGateway, []byte("<html>proxy error</html>")); err == nil {
 		t.Error("a 502 with an HTML body was treated as success")
 	}

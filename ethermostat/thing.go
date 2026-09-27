@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -185,6 +186,19 @@ type traitDefaults struct {
 	// Not defaulted back to 30 below when it reads zero, unlike Period and Kp:
 	// zero is a real answer here and means the operator turned the guard off.
 	FrostGuard int `json:"frostGuardMinutes"`
+
+	// TemperatureFrom names, per location, the sensor a heater may use when
+	// there is none in its own room: {"Kitchen": "IndoorModule"}. Without an
+	// entry a heater whose room has no thermometer is not controlled at all,
+	// and the system says so.
+	//
+	// This replaces a fallback that took whatever sensor came to hand. It chose
+	// by Go map order, so which one it took could differ at every start, and at
+	// the cottage all three heaters ended up driven by the bathroom's
+	// thermometer — one room's temperature deciding the heat in three. Its last
+	// resort was "any node at all", which could have been the outdoor module: in
+	// a Norrbotten winter that is a heater that never switches off.
+	TemperatureFrom map[string]string `json:"temperatureFrom"`
 }
 
 // parseTraitDefaults extracts and validates the trait defaults from the configurable asset.
@@ -258,9 +272,23 @@ func discoverHeaters(sys *components.System, sProtocols []string, defaults trait
 				Mode: "set",
 			}
 
-			tempSysNode, tempNI, ok := selectTempNode(tempCer.Nodes, location)
+			// The URL has to name the device this node claimed to be. Discovery
+			// hands over a name and an address together, and if they disagree
+			// the controller would drive something it cannot name — which is how
+			// a thermostat came to switch a bathroom light at the cottage for
+			// days without anything failing. Refusing costs one uncontrolled
+			// heater and a loud line; not refusing costs the wrong device.
+			if !urlNames(ni.URL, displayName) {
+				log.Printf("ethermostat: REFUSING %s: discovery offered it at %s, which is not that device — "+
+					"not driving anything until the two agree\n", displayName, ni.URL)
+				continue
+			}
+
+			tempSysNode, tempNI, why, ok := selectTempNode(tempCer.Nodes, location, defaults.TemperatureFrom[location])
 			if !ok {
-				log.Printf("ethermostat: no temperature service found for %s — skipping\n", displayName)
+				log.Printf("ethermostat: %s is NOT being controlled: %s. Name a sensor for it with "+
+					`"temperatureFrom": {%q: "<module>"} if it should use another room's thermometer`+"\n",
+					displayName, why, location)
 				continue
 			}
 			heaterTemp := &components.Cervice{
@@ -293,8 +321,11 @@ func discoverHeaters(sys *components.System, sProtocols []string, defaults trait
 			ua := buildHeaterAsset(displayName, location, t, sys, uac)
 			assets = append(assets, ua)
 			go t.feedbackLoop(sys.Ctx)
-			log.Printf("ethermostat: created thermostat %q (location=%q, temp from %q)\n",
-				displayName, location, tempSysNode)
+			// The addresses, not just the names: a controller's name is what it
+			// believes and the URL is what it will actually switch, and when
+			// those two part company the log is the only place it shows.
+			log.Printf("ethermostat: created thermostat %q (location=%q)\n    switching %s\n    reading   %s (%s)\n",
+				displayName, location, ni.URL, tempNI.URL, why)
 		}
 	}
 
@@ -384,75 +415,96 @@ func extractLocation(heaterName string) string {
 //  2. A node whose ModuleName detail contains the location string.
 //  3. Fallback: any node that is not an outdoor module (avoids using outdoor
 //     temperature for indoor heating control); last resort is any node at all.
-func selectTempNode(nodes map[string][]components.NodeInfo, location string) (string, components.NodeInfo, bool) {
-	// Tier 1: FunctionalLocation match.
+func selectTempNode(nodes map[string][]components.NodeInfo, location, named string) (string, components.NodeInfo, string, bool) {
+	// Sorted, so the same cloud gives the same answer twice. Ranging over the
+	// map put the choice in the hands of Go's map ordering, which is randomized:
+	// the heater that got the right sensor on one run got another room's on the
+	// next, and nothing in the log marked the difference.
+	type candidate struct {
+		sysNode string
+		ni      components.NodeInfo
+	}
+	var all []candidate
 	for sysNode, nodeList := range nodes {
 		for _, ni := range nodeList {
-			for _, fl := range ni.Details["FunctionalLocation"] {
-				if strings.Contains(strings.ToLower(fl), strings.ToLower(location)) {
-					return sysNode, ni, true
-				}
+			all = append(all, candidate{sysNode, ni})
+		}
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].sysNode != all[j].sysNode {
+			return all[i].sysNode < all[j].sysNode
+		}
+		return all[i].ni.URL < all[j].ni.URL
+	})
+
+	// Tier 1: a sensor that says it is in this room.
+	for _, c := range all {
+		for _, fl := range c.ni.Details["FunctionalLocation"] {
+			if strings.Contains(strings.ToLower(fl), strings.ToLower(location)) {
+				return c.sysNode, c.ni, "its functional location", true
 			}
 		}
 	}
 
-	// Tier 2: ModuleName match (e.g. "Bathroom" heater → ModuleName "Bathroom").
-	for sysNode, nodeList := range nodes {
-		for _, ni := range nodeList {
-			for _, mn := range ni.Details["ModuleName"] {
-				if strings.Contains(strings.ToLower(mn), strings.ToLower(location)) {
-					return sysNode, ni, true
-				}
+	// Tier 2: a sensor named after this room.
+	for _, c := range all {
+		for _, mn := range c.ni.Details["ModuleName"] {
+			if strings.Contains(strings.ToLower(mn), strings.ToLower(location)) {
+				return c.sysNode, c.ni, "its module name", true
 			}
 		}
 	}
 
-	// Tier 3a: Prefer the main indoor module — the one whose ModuleName contains
-	// "indoor" (case-insensitive).  This picks the primary base-station sensor
-	// over a room-specific secondary module (e.g. "Bathroom") when no exact
-	// location match exists.
-	for sysNode, nodeList := range nodes {
-		for _, ni := range nodeList {
-			for _, mn := range ni.Details["ModuleName"] {
-				if strings.Contains(strings.ToLower(mn), "indoor") {
-					return sysNode, ni, true
-				}
+	// Tier 3: the sensor the operator named for this room, and only that one.
+	if named != "" {
+		for _, c := range all {
+			if nodeIsCalled(c.ni, named) {
+				return c.sysNode, c.ni, fmt.Sprintf("configured as %q for %s", named, location), true
 			}
 		}
+		return "", components.NodeInfo{}, fmt.Sprintf(
+			"no thermometer in %s, and the configured %q is not among the %d temperature services offered",
+			location, named, len(all)), false
 	}
 
-	// Tier 3b: Any indoor module (not outdoor).
-	for sysNode, nodeList := range nodes {
-		for _, ni := range nodeList {
-			if isIndoorNode(ni) {
-				return sysNode, ni, true
-			}
-		}
-	}
-
-	// Tier 3c: Last resort — any node available.
-	for sysNode, nodeList := range nodes {
-		if len(nodeList) > 0 {
-			return sysNode, nodeList[0], true
-		}
-	}
-	return "", components.NodeInfo{}, false
+	return "", components.NodeInfo{}, fmt.Sprintf("no thermometer reports being in %s, and none is configured for it", location), false
 }
 
-// isIndoorNode returns true when no ModuleName or FunctionalLocation detail
-// contains the word "outdoor" (case-insensitive).
-func isIndoorNode(ni components.NodeInfo) bool {
-	for _, mn := range ni.Details["ModuleName"] {
-		if strings.Contains(strings.ToLower(mn), "outdoor") {
-			return false
+// nodeIsCalled reports whether a temperature node answers to a name: its module
+// name, its display name, or the asset in its URL.
+func nodeIsCalled(ni components.NodeInfo, name string) bool {
+	want := strings.ToLower(name)
+	for _, key := range []string{"ModuleName", "DisplayName"} {
+		for _, v := range ni.Details[key] {
+			if strings.Contains(strings.ToLower(v), want) {
+				return true
+			}
 		}
 	}
-	for _, fl := range ni.Details["FunctionalLocation"] {
-		if strings.Contains(strings.ToLower(fl), "outdoor") {
-			return false
+	return strings.Contains(strings.ToLower(ni.URL), "/"+want+"/")
+}
+
+// urlNames reports whether a service URL belongs to the asset a discovery said
+// it was. The comparison ignores case and anything but letters and digits,
+// because a provider normalizes an asset name into its path: "lumi.remote.b28"
+// is served at "lumi_remote_b28".
+func urlNames(url, displayName string) bool {
+	parts := strings.Split(strings.Trim(url, "/"), "/")
+	if len(parts) < 2 {
+		return false
+	}
+	asset := parts[len(parts)-2] // .../<system>/<asset>/<service>
+	return plainName(asset) == plainName(displayName)
+}
+
+func plainName(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
 		}
 	}
-	return true
+	return b.String()
 }
 
 //-------------------------------------Service handlers

@@ -142,93 +142,108 @@ func TestExtractLocation(t *testing.T) {
 	}
 }
 
-// TestSelectTempNode_ExactMatch verifies that a node with a matching FunctionalLocation is preferred.
+// A sensor that says it is in the room wins.
 func TestSelectTempNode_ExactMatch(t *testing.T) {
 	nodes := map[string][]components.NodeInfo{
 		"meteorologue": {
-			{URL: "http://host/meteorologue/IndoorModule/temperature", Details: map[string][]string{"FunctionalLocation": {"Källkälchen (Indoor)"}}},
+			{URL: "http://host/meteorologue/IndoorModule/temperature", Details: map[string][]string{"FunctionalLocation": {"Kälkholmen (Indoor)"}}},
 			{URL: "http://host/meteorologue/KitchenModule/temperature", Details: map[string][]string{"FunctionalLocation": {"Kitchen (Indoor)"}}},
 		},
 	}
-	sysNode, ni, ok := selectTempNode(nodes, "Kitchen")
+	sysNode, ni, why, ok := selectTempNode(nodes, "Kitchen", "")
 	if !ok {
-		t.Fatal("expected a match, got none")
+		t.Fatalf("expected a match, got none (%s)", why)
 	}
-	if sysNode != "meteorologue" {
-		t.Errorf("expected sysNode 'meteorologue', got %q", sysNode)
-	}
-	if ni.URL != "http://host/meteorologue/KitchenModule/temperature" {
-		t.Errorf("unexpected URL: %s", ni.URL)
+	if sysNode != "meteorologue" || ni.URL != "http://host/meteorologue/KitchenModule/temperature" {
+		t.Errorf("chose %s at %s", sysNode, ni.URL)
 	}
 }
 
-// TestSelectTempNode_ModuleNameMatch verifies that ModuleName is used when FunctionalLocation has no match.
+// Failing that, a sensor named after the room.
 func TestSelectTempNode_ModuleNameMatch(t *testing.T) {
 	nodes := map[string][]components.NodeInfo{
 		"meteorologue": {
 			{URL: "http://host/meteorologue/IndoorModule/temperature", Details: map[string][]string{
-				"FunctionalLocation": {"Kälkholmen (Indoor)"},
-				"ModuleName":         {"Indoor"},
-			}},
+				"FunctionalLocation": {"Kälkholmen (Indoor)"}, "ModuleName": {"Indoor"}}},
 			{URL: "http://host/meteorologue/IndoorModule2/temperature", Details: map[string][]string{
-				"FunctionalLocation": {"Kälkholmen (Indoor)"},
-				"ModuleName":         {"Bathroom"},
-			}},
-			{URL: "http://host/meteorologue/OutdoorModule/temperature", Details: map[string][]string{
-				"FunctionalLocation": {"Kälkholmen (Indoor)"},
-				"ModuleName":         {"Outdoor"},
-			}},
+				"FunctionalLocation": {"Kälkholmen (Indoor)"}, "ModuleName": {"Bathroom"}}},
 		},
 	}
-	_, ni, ok := selectTempNode(nodes, "Bathroom")
-	if !ok {
-		t.Fatal("expected ModuleName match, got none")
-	}
-	if ni.URL != "http://host/meteorologue/IndoorModule2/temperature" {
-		t.Errorf("expected Bathroom module URL, got %s", ni.URL)
+	_, ni, _, ok := selectTempNode(nodes, "Bathroom", "")
+	if !ok || ni.URL != "http://host/meteorologue/IndoorModule2/temperature" {
+		t.Errorf("Bathroom got %s (ok=%v)", ni.URL, ok)
 	}
 }
 
-// TestSelectTempNode_IndoorPreferredOverOutdoor verifies that the fallback prefers indoor nodes.
-func TestSelectTempNode_IndoorPreferredOverOutdoor(t *testing.T) {
+// A room with no thermometer of its own is refused, not given somebody else's.
+// This is what drove three of the cottage's heaters from the bathroom.
+func TestSelectTempNode_NoSensorIsRefused(t *testing.T) {
 	nodes := map[string][]components.NodeInfo{
 		"meteorologue": {
-			{URL: "http://host/meteorologue/OutdoorModule/temperature", Details: map[string][]string{
-				"ModuleName": {"Outdoor"},
-			}},
 			{URL: "http://host/meteorologue/IndoorModule/temperature", Details: map[string][]string{
-				"ModuleName": {"Indoor"},
-			}},
+				"FunctionalLocation": {"Kälkholmen (Indoor)"}, "ModuleName": {"Indoor"}}},
+			{URL: "http://host/meteorologue/OutdoorModule/temperature", Details: map[string][]string{
+				"ModuleName": {"Outdoor"}}},
 		},
 	}
-	_, ni, ok := selectTempNode(nodes, "Kitchen")
-	if !ok {
-		t.Fatal("expected fallback match, got none")
+	_, _, why, ok := selectTempNode(nodes, "Kitchen", "")
+	if ok {
+		t.Fatal("a kitchen with no thermometer was given one anyway")
 	}
-	if strings.Contains(ni.URL, "Outdoor") {
-		t.Errorf("expected indoor fallback, got outdoor URL: %s", ni.URL)
+	if !strings.Contains(why, "Kitchen") {
+		t.Errorf("the refusal does not say which room: %q", why)
 	}
 }
 
-// TestSelectTempNode_Fallback verifies that the first available node is used when no location matches.
-func TestSelectTempNode_Fallback(t *testing.T) {
+// The operator may name the sensor a room should use.
+func TestSelectTempNode_Configured(t *testing.T) {
 	nodes := map[string][]components.NodeInfo{
 		"meteorologue": {
-			{URL: "http://host/meteorologue/IndoorModule/temperature", Details: map[string][]string{"FunctionalLocation": {"Källkälchen (Indoor)"}}},
+			{URL: "http://host/meteorologue/IndoorModule/temperature", Details: map[string][]string{"ModuleName": {"Indoor"}}},
+			{URL: "http://host/meteorologue/OutdoorModule/temperature", Details: map[string][]string{"ModuleName": {"Outdoor"}}},
 		},
 	}
-	_, ni, ok := selectTempNode(nodes, "DiningRoom")
-	if !ok {
-		t.Fatal("expected fallback match, got none")
+	_, ni, why, ok := selectTempNode(nodes, "Kitchen", "IndoorModule")
+	if !ok || !strings.Contains(ni.URL, "IndoorModule") {
+		t.Fatalf("configured sensor gave %s (ok=%v, %s)", ni.URL, ok, why)
 	}
-	if ni.URL != "http://host/meteorologue/IndoorModule/temperature" {
-		t.Errorf("unexpected fallback URL: %s", ni.URL)
+	if !strings.Contains(why, "configured") {
+		t.Errorf("the reason does not say it was configured: %q", why)
+	}
+	// A name that is not on offer is refused rather than approximated.
+	if _, _, why, ok := selectTempNode(nodes, "Kitchen", "HallwayModule"); ok {
+		t.Error("a configured sensor that does not exist was substituted")
+	} else if !strings.Contains(why, "HallwayModule") {
+		t.Errorf("the refusal does not name what was configured: %q", why)
+	}
+}
+
+// The same cloud must give the same answer twice. Ranging over the map made
+// this a coin toss, and the coin was tossed again at every restart.
+func TestSelectTempNode_IsDeterministic(t *testing.T) {
+	nodes := map[string][]components.NodeInfo{
+		"meteorologue": {
+			{URL: "http://host/meteorologue/A/temperature", Details: map[string][]string{"ModuleName": {"Kitchen north"}}},
+			{URL: "http://host/meteorologue/B/temperature", Details: map[string][]string{"ModuleName": {"Kitchen south"}}},
+		},
+		"weatherman": {
+			{URL: "http://host/weatherman/C/temperature", Details: map[string][]string{"ModuleName": {"Kitchen west"}}},
+		},
+	}
+	_, first, _, ok := selectTempNode(nodes, "Kitchen", "")
+	if !ok {
+		t.Fatal("no match")
+	}
+	for i := 0; i < 200; i++ {
+		if _, again, _, _ := selectTempNode(nodes, "Kitchen", ""); again.URL != first.URL {
+			t.Fatalf("run %d chose %s, the first run chose %s", i, again.URL, first.URL)
+		}
 	}
 }
 
 // TestSelectTempNode_Empty verifies that an empty nodes map returns not-found.
 func TestSelectTempNode_Empty(t *testing.T) {
-	_, _, ok := selectTempNode(map[string][]components.NodeInfo{}, "Kitchen")
+	_, _, _, ok := selectTempNode(map[string][]components.NodeInfo{}, "Kitchen", "")
 	if ok {
 		t.Error("expected not-found for empty nodes map")
 	}
@@ -612,5 +627,30 @@ func TestAReadingReleasesTheGuard(t *testing.T) {
 	}
 	if got[len(got)-1] {
 		t.Error("after a reading of 24 °C against a setpoint of 20 °C the heat is still on — control did not resume")
+	}
+}
+
+// A controller must not drive a device it cannot name. Discovery hands over a
+// name and an address together; when they disagree, something has gone wrong
+// between the registry and here, and the wrong device is about to be switched.
+func TestURLNames(t *testing.T) {
+	cases := []struct {
+		url, name string
+		want      bool
+	}{
+		{"https://h:30185/beekeeper/BathroomHeater/on_off", "BathroomHeater", true},
+		{"https://h:30185/beekeeper/BathroomLight/on_off", "BathroomHeater", false},
+		{"https://h:30185/beekeeper/DiningroomHeater/on_off", "BathroomHeater", false},
+		// A provider normalizes a name into its path.
+		{"https://h:30185/beekeeper/lumi_remote_b28ac1/on_off", "lumi.remote.b28ac1", true},
+		{"https://h:30185/beekeeper/Bathroom_Heater/on_off", "Bathroom Heater", true},
+		// Case is not what tells two devices apart.
+		{"https://h:30185/beekeeper/bathroomheater/on_off", "BathroomHeater", true},
+		{"nonsense", "BathroomHeater", false},
+	}
+	for _, c := range cases {
+		if got := urlNames(c.url, c.name); got != c.want {
+			t.Errorf("urlNames(%q, %q) = %v, want %v", c.url, c.name, got, c.want)
+		}
 	}
 }

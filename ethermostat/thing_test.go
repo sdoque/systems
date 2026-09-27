@@ -476,9 +476,7 @@ func heaterWatchingItsPlug(t *testing.T, blindFor time.Duration, graceMinutes in
 			}
 		}
 		// Answer like a real provider. An empty 200 cannot be unpacked, so
-		// SetState reports an error and updatePlugState clears the discovered
-		// nodes — after which the controller has nowhere to write and every
-		// later command silently goes nowhere.
+		// SetState would report an error for every command.
 		var echo forms.SignalB_v1a
 		echo.NewForm()
 		echo.Timestamp = time.Now()
@@ -503,7 +501,7 @@ func heaterWatchingItsPlug(t *testing.T, blindFor time.Duration, graceMinutes in
 				// An entry with an empty token means "discovered, and this cloud
 				// issued none" — an unauthorized cloud, which is what a test is.
 				Nodes: map[string][]components.NodeInfo{
-					"plug": {{URL: srv.URL, Tokens: map[string]string{"write": ""}}},
+					"plug": {{URL: srv.URL + "/beekeeper/KitchenHeater/on_off", Tokens: map[string]string{"write": ""}}},
 				},
 			},
 		},
@@ -652,5 +650,179 @@ func TestURLNames(t *testing.T) {
 		if got := urlNames(c.url, c.name); got != c.want {
 			t.Errorf("urlNames(%q, %q) = %v, want %v", c.url, c.name, got, c.want)
 		}
+	}
+}
+
+// ── bindings by name ──────────────────────────────────────────────────────────
+
+// cottage is a beekeeper and a meteorologue on one test server. It records
+// which paths were switched, and offers what a discovery would.
+type cottage struct {
+	srv      *httptest.Server
+	mu       sync.Mutex
+	switched []string
+}
+
+func newCottage(t *testing.T) *cottage {
+	t.Helper()
+	c := &cottage{}
+	c.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var out []byte
+		if r.Method == http.MethodPut {
+			c.mu.Lock()
+			c.switched = append(c.switched, r.URL.Path)
+			c.mu.Unlock()
+			var echo forms.SignalB_v1a
+			echo.NewForm()
+			echo.Timestamp = time.Now()
+			out, _ = usecases.Pack(&echo, "application/json")
+		} else {
+			var sig forms.SignalA_v1a
+			sig.NewForm()
+			sig.Value = 15 // cold: the control law wants the heat on
+			sig.Unit = "<http://qudt.org/vocab/unit/DEG_C>"
+			sig.Timestamp = time.Now()
+			out, _ = usecases.Pack(&sig, "application/json")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(out)
+	}))
+	t.Cleanup(c.srv.Close)
+	return c
+}
+
+func (c *cottage) paths() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.switched...)
+}
+
+// plug is a beekeeper OnOff node as discovery returns it.
+func (c *cottage) plug(name string) components.NodeInfo {
+	return components.NodeInfo{
+		URL:     c.srv.URL + "/beekeeper/" + name + "/on_off",
+		Details: map[string][]string{"DisplayName": {name}},
+		Tokens:  map[string]string{"write": ""},
+	}
+}
+
+func (c *cottage) thermometer(module, location string) components.NodeInfo {
+	return components.NodeInfo{
+		URL:     c.srv.URL + "/meteorologue/" + module + "/temperature",
+		Details: map[string][]string{"ModuleName": {module}, "FunctionalLocation": {location}},
+		Tokens:  map[string]string{"read": ""},
+	}
+}
+
+// offering answers every discovery with the given nodes of that definition.
+func offering(nodes map[string][]components.NodeInfo) func(*components.Cervice, string) error {
+	return func(cer *components.Cervice, _ string) error {
+		for _, ni := range nodes[cer.Definition] {
+			cer.Nodes["node"] = append(cer.Nodes["node"], ni)
+		}
+		return nil
+	}
+}
+
+func bathroomHeater(c *cottage, plugs, thermometers []components.NodeInfo) *Traits {
+	sys := components.NewSystem("ethermostat", context.Background())
+	return &Traits{
+		SetPt: 20, Period: 10, Kp: 5, FrostGuard: 30,
+		lastGood: time.Now(),
+		name:     "BathroomHeater",
+		location: "Bathroom",
+		owner:    &sys,
+		discover: offering(map[string][]components.NodeInfo{"OnOff": plugs, "temperature": thermometers}),
+		cervices: components.Cervices{
+			"on_off":      {Definition: "OnOff", Protos: []string{"http"}, Mode: "set", Nodes: map[string][]components.NodeInfo{}},
+			"temperature": {Definition: "temperature", Protos: []string{"http"}, Mode: "get", Nodes: map[string][]components.NodeInfo{}},
+		},
+	}
+}
+
+// The cottage, 27 September: one refused call emptied the binding, and the next
+// call asked for "an OnOff" and was given the bathroom light. A lost binding is
+// found again by name, whatever else is offered — and offered first.
+func TestALostPlugIsFoundAgainByName(t *testing.T) {
+	c := newCottage(t)
+	tr := bathroomHeater(c, []components.NodeInfo{c.plug("BathroomLight"), c.plug("BathroomHeater"), c.plug("KitchenHeater")}, nil)
+
+	tr.updatePlugState(true)
+
+	if got := c.paths(); len(got) != 1 || got[0] != "/beekeeper/BathroomHeater/on_off" {
+		t.Errorf("switched %v, want only the bathroom heater", got)
+	}
+}
+
+// A binding that is somebody else's device is dropped before it is used.
+func TestACrossedPlugIsNotSwitched(t *testing.T) {
+	c := newCottage(t)
+	tr := bathroomHeater(c, []components.NodeInfo{c.plug("BathroomHeater")}, nil)
+	pin(tr.cervices["on_off"], "node", c.plug("BathroomLight"))
+
+	tr.updatePlugState(true)
+
+	if got := c.paths(); len(got) != 1 || got[0] != "/beekeeper/BathroomHeater/on_off" {
+		t.Errorf("switched %v, want only the bathroom heater", got)
+	}
+}
+
+// When its own plug is not offered, a controller switches nothing at all.
+func TestAMissingPlugSwitchesNothing(t *testing.T) {
+	c := newCottage(t)
+	tr := bathroomHeater(c, []components.NodeInfo{c.plug("BathroomLight"), c.plug("KitchenHeater")}, nil)
+
+	tr.updatePlugState(true)
+
+	if got := c.paths(); len(got) != 0 {
+		t.Errorf("switched %v while the bathroom heater's plug was not offered", got)
+	}
+	if bound(tr.cervices["on_off"]) {
+		t.Error("bound to a plug that is not the bathroom heater's")
+	}
+}
+
+// A lost thermometer is chosen again by the same rule, not by whichever the
+// orchestrator likes: the outdoor module, offered first, would keep a heater
+// on all winter.
+func TestALostThermometerIsChosenAgainByTheRule(t *testing.T) {
+	c := newCottage(t)
+	tr := bathroomHeater(c,
+		[]components.NodeInfo{c.plug("BathroomHeater")},
+		[]components.NodeInfo{c.thermometer("Outdoor", "Outdoor"), c.thermometer("BathroomModule", "Bathroom")})
+
+	if err := tr.bindThermometer(); err != nil {
+		t.Fatal(err)
+	}
+	for _, nodes := range tr.cervices["temperature"].Nodes {
+		if len(nodes) != 1 || !strings.Contains(nodes[0].URL, "/BathroomModule/") {
+			t.Errorf("reading %v, want the bathroom module", nodes)
+		}
+	}
+}
+
+// After a power cut the thermometers come from the Netatmo cloud and are the
+// last thing back. A controller built without one heats once the grace period
+// has passed, and starts controlling when one appears.
+func TestAControllerWithoutAThermometerHeatsThenControls(t *testing.T) {
+	c := newCottage(t)
+	tr := bathroomHeater(c, []components.NodeInfo{c.plug("BathroomHeater")}, nil)
+	tr.lastGood = time.Now().Add(-31 * time.Minute)
+
+	tr.processFeedbackLoop()
+	if !tr.guarding {
+		t.Fatal("no thermometer for 31 minutes and the frost guard did not engage")
+	}
+	if got := c.paths(); len(got) != 1 {
+		t.Fatalf("switched %v, want the heater once", got)
+	}
+
+	tr.discover = offering(map[string][]components.NodeInfo{
+		"OnOff":       {c.plug("BathroomHeater")},
+		"temperature": {c.thermometer("BathroomModule", "Bathroom")},
+	})
+	tr.processFeedbackLoop()
+	if tr.guarding {
+		t.Error("a thermometer appeared and the guard is still holding")
 	}
 }

@@ -30,6 +30,7 @@ import (
 	"github.com/sdoque/mbaigo/components"
 	"github.com/sdoque/mbaigo/forms"
 	"github.com/sdoque/mbaigo/usecases"
+	"sort"
 )
 
 // Define the types of requests the measurement manager can handle
@@ -111,6 +112,8 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		log.Fatalf("%s cannot report in %s: %v\n", configuredAsset.Name, declared, err)
 	}
 	t.unit = unit
+
+	checkSensorPresent(configuredAsset.Name)
 
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
@@ -375,4 +378,79 @@ func parseDeviceFile(rawData []byte) (float64, error) {
 		return 0, fmt.Errorf("85.000 C is the DS18B20 power-on reset value, not a measurement")
 	}
 	return temp / 1000.0, nil
+}
+
+//-------------------------------------Checking the sensor is really there
+
+// oneWireDir is where the kernel exposes 1-wire devices, each named by its ROM
+// id. A DS18B20's id always begins "28-".
+var oneWireDir = "/sys/bus/w1/devices"
+
+// sensorIDs lists the DS18B20s the kernel can currently see.
+func sensorIDs() []string {
+	entries, err := os.ReadDir(oneWireDir)
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "28-") {
+			ids = append(ids, e.Name())
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// checkSensorPresent refuses to start against an asset name that is not a
+// sensor on this bus.
+//
+// The asset's name is also the device it reads: the path is built from it. So a
+// name that is not a ROM id names a file that cannot exist, and the system used
+// to say so once every two seconds — "no such file or directory" — without
+// saying what the name should have been. A generated configuration ships the
+// placeholder "sensor_Id", so this is the state every fresh deployment starts
+// in, and on the lab bench it went unnoticed for an hour while the sensor sat
+// there working perfectly.
+//
+// The two failures are told apart deliberately. An empty bus is an environment
+// that may still be arriving — the w1-gpio overlay is loaded late, or the probe
+// is unplugged — so it warns and lets the system run; the reading service
+// answers 503 until a sensor appears. A bus with sensors on it that does not
+// have this one is a configuration error that will never fix itself, and it is
+// worth stopping for while somebody is watching.
+func checkSensorPresent(name string) {
+	switch verdict, ids := sensorVerdict(name, sensorIDs()); verdict {
+	case sensorOK:
+		return
+	case busEmpty:
+		log.Printf("warning: no 1-wire sensor is visible in %s — check that dtoverlay=w1-gpio is set and the probe is wired; %q will report no reading until one appears\n",
+			oneWireDir, name)
+	case wrongName:
+		log.Fatalf("the unit asset is named %q, which is not a sensor on this bus.\n"+
+			"The asset's name *is* the device it reads. Set it to one of: %s\n"+
+			"For example, in systemconfig.json:  \"name\": %q\n",
+			name, strings.Join(ids, ", "), ids[0])
+	}
+}
+
+type sensorCheck int
+
+const (
+	sensorOK sensorCheck = iota
+	busEmpty
+	wrongName
+)
+
+// sensorVerdict is the rule on its own, so it can be tested without a bus.
+func sensorVerdict(name string, ids []string) (sensorCheck, []string) {
+	if len(ids) == 0 {
+		return busEmpty, nil
+	}
+	for _, id := range ids {
+		if id == name {
+			return sensorOK, ids
+		}
+	}
+	return wrongName, ids
 }

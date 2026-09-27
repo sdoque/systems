@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -105,15 +106,41 @@ func newTokenManager(ctx context.Context, uac usecases.ConfigurableAsset) (*Toke
 	}
 	tm := &TokenManager{Credentials: creds, ctx: ctx}
 
-	// Try to reuse a saved refresh token first.
+	// Try to reuse a saved refresh token first, for as long as it takes to reach
+	// Netatmo.
+	//
+	// This used to try once, and on any failure fall through to the browser
+	// flow, which waits five minutes for a person and then exits the system.
+	// After a power cut the Pi is usually up before the router has the internet
+	// back, so the refresh fails for want of a network, nobody is at the
+	// browser, and the meteorologue is gone until someone restarts it — with
+	// the thermometers the ethermostat heats by. Only Netatmo saying no is a
+	// reason to ask a person; not reaching Netatmo is a reason to wait.
 	if saved, err := loadTokenFile(); err == nil && saved.RefreshToken != "" {
 		tm.accessToken = saved.AccessToken
 		tm.refreshToken = saved.RefreshToken
-		if err := tm.refresh(); err == nil {
-			log.Println("Netatmo: resumed session from tokens.json")
-			return tm, nil
+		wait := firstWait
+		for {
+			err := tm.refresh()
+			if err == nil {
+				log.Println("Netatmo: resumed session from tokens.json")
+				return tm, nil
+			}
+			var rejected *tokenRejected
+			if errors.As(err, &rejected) {
+				log.Printf("Netatmo: the saved token was refused (%v), re-authorizing...\n", err)
+				break
+			}
+			log.Printf("Netatmo: cannot reach Netatmo to resume the session (%v); retrying in %v\n", err, wait)
+			select {
+			case <-time.After(wait):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			if wait *= 2; wait > maxWait {
+				wait = maxWait
+			}
 		}
-		log.Println("Netatmo: saved token expired, re-authorizing...")
 	}
 
 	// No valid saved token — run the one-time browser flow.
@@ -210,7 +237,7 @@ func (tm *TokenManager) refresh() error {
 
 // postToken posts a token request and stores the resulting tokens in memory and on disk.
 func (tm *TokenManager) postToken(form url.Values) error {
-	resp, err := http.PostForm("https://api.netatmo.com/oauth2/token", form)
+	resp, err := http.PostForm(tokenURL, form)
 	if err != nil {
 		return fmt.Errorf("token request: %w", err)
 	}
@@ -219,6 +246,9 @@ func (tm *TokenManager) postToken(form url.Values) error {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("token read body: %w", err)
+	}
+	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+		return &tokenRejected{fmt.Sprintf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))}
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("token request HTTP %d: %s", resp.StatusCode, string(body))
@@ -233,7 +263,7 @@ func (tm *TokenManager) postToken(form url.Values) error {
 		return fmt.Errorf("token decode: %w", err)
 	}
 	if result.Error != "" {
-		return fmt.Errorf("netatmo token error: %s", result.Error)
+		return &tokenRejected{result.Error}
 	}
 
 	tm.mu.Lock()
@@ -249,6 +279,16 @@ func (tm *TokenManager) postToken(form url.Values) error {
 	}
 	return nil
 }
+
+// tokenURL is Netatmo's token endpoint; a variable so a test can stand in.
+var tokenURL = "https://api.netatmo.com/oauth2/token"
+
+// tokenRejected is Netatmo answering a token request and refusing it — the
+// only failure a person at a browser can fix. Anything else is the network,
+// or Netatmo having a bad moment, and is waited out.
+type tokenRejected struct{ reason string }
+
+func (e *tokenRejected) Error() string { return "Netatmo refused the token request: " + e.reason }
 
 // getToken returns the current access token.
 func (tm *TokenManager) getToken() string {
@@ -289,6 +329,12 @@ func (tm *TokenManager) getWithAutoRefresh(rawURL string) ([]byte, error) {
 	if status == 401 || status == 403 {
 		log.Printf("Netatmo: access token rejected (HTTP %d), refreshing...", status)
 		if rerr := tm.refresh(); rerr != nil {
+			// Not reaching Netatmo is not a reason to wait five minutes for a
+			// person at a browser; the next poll tries again.
+			var rejected *tokenRejected
+			if !errors.As(rerr, &rejected) {
+				return nil, fmt.Errorf("token refresh: %w", rerr)
+			}
 			log.Printf("Netatmo: refresh failed (%v), re-authorizing via browser...", rerr)
 			if aerr := tm.authorizeWithBrowser(); aerr != nil {
 				return nil, fmt.Errorf("re-authorization failed: %w", aerr)
@@ -432,6 +478,9 @@ func stationsWhenAvailable(sys *components.System, fetch func() (*StationsDataRe
 // builds one UnitAsset per module, starts the background poller, and returns the assets.
 func newResources(uac usecases.ConfigurableAsset, sys *components.System) ([]*components.UnitAsset, func()) {
 	tm, err := newTokenManager(sys.Ctx, uac)
+	if err != nil && sys.Ctx.Err() != nil {
+		return nil, func() {}
+	}
 	if err != nil {
 		log.Fatalf("Netatmo authentication failed: %v\n", err)
 	}

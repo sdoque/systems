@@ -142,93 +142,108 @@ func TestExtractLocation(t *testing.T) {
 	}
 }
 
-// TestSelectTempNode_ExactMatch verifies that a node with a matching FunctionalLocation is preferred.
+// A sensor that says it is in the room wins.
 func TestSelectTempNode_ExactMatch(t *testing.T) {
 	nodes := map[string][]components.NodeInfo{
 		"meteorologue": {
-			{URL: "http://host/meteorologue/IndoorModule/temperature", Details: map[string][]string{"FunctionalLocation": {"Källkälchen (Indoor)"}}},
+			{URL: "http://host/meteorologue/IndoorModule/temperature", Details: map[string][]string{"FunctionalLocation": {"Kälkholmen (Indoor)"}}},
 			{URL: "http://host/meteorologue/KitchenModule/temperature", Details: map[string][]string{"FunctionalLocation": {"Kitchen (Indoor)"}}},
 		},
 	}
-	sysNode, ni, ok := selectTempNode(nodes, "Kitchen")
+	sysNode, ni, why, ok := selectTempNode(nodes, "Kitchen", "")
 	if !ok {
-		t.Fatal("expected a match, got none")
+		t.Fatalf("expected a match, got none (%s)", why)
 	}
-	if sysNode != "meteorologue" {
-		t.Errorf("expected sysNode 'meteorologue', got %q", sysNode)
-	}
-	if ni.URL != "http://host/meteorologue/KitchenModule/temperature" {
-		t.Errorf("unexpected URL: %s", ni.URL)
+	if sysNode != "meteorologue" || ni.URL != "http://host/meteorologue/KitchenModule/temperature" {
+		t.Errorf("chose %s at %s", sysNode, ni.URL)
 	}
 }
 
-// TestSelectTempNode_ModuleNameMatch verifies that ModuleName is used when FunctionalLocation has no match.
+// Failing that, a sensor named after the room.
 func TestSelectTempNode_ModuleNameMatch(t *testing.T) {
 	nodes := map[string][]components.NodeInfo{
 		"meteorologue": {
 			{URL: "http://host/meteorologue/IndoorModule/temperature", Details: map[string][]string{
-				"FunctionalLocation": {"Kälkholmen (Indoor)"},
-				"ModuleName":         {"Indoor"},
-			}},
+				"FunctionalLocation": {"Kälkholmen (Indoor)"}, "ModuleName": {"Indoor"}}},
 			{URL: "http://host/meteorologue/IndoorModule2/temperature", Details: map[string][]string{
-				"FunctionalLocation": {"Kälkholmen (Indoor)"},
-				"ModuleName":         {"Bathroom"},
-			}},
-			{URL: "http://host/meteorologue/OutdoorModule/temperature", Details: map[string][]string{
-				"FunctionalLocation": {"Kälkholmen (Indoor)"},
-				"ModuleName":         {"Outdoor"},
-			}},
+				"FunctionalLocation": {"Kälkholmen (Indoor)"}, "ModuleName": {"Bathroom"}}},
 		},
 	}
-	_, ni, ok := selectTempNode(nodes, "Bathroom")
-	if !ok {
-		t.Fatal("expected ModuleName match, got none")
-	}
-	if ni.URL != "http://host/meteorologue/IndoorModule2/temperature" {
-		t.Errorf("expected Bathroom module URL, got %s", ni.URL)
+	_, ni, _, ok := selectTempNode(nodes, "Bathroom", "")
+	if !ok || ni.URL != "http://host/meteorologue/IndoorModule2/temperature" {
+		t.Errorf("Bathroom got %s (ok=%v)", ni.URL, ok)
 	}
 }
 
-// TestSelectTempNode_IndoorPreferredOverOutdoor verifies that the fallback prefers indoor nodes.
-func TestSelectTempNode_IndoorPreferredOverOutdoor(t *testing.T) {
+// A room with no thermometer of its own is refused, not given somebody else's.
+// This is what drove three of the cottage's heaters from the bathroom.
+func TestSelectTempNode_NoSensorIsRefused(t *testing.T) {
 	nodes := map[string][]components.NodeInfo{
 		"meteorologue": {
-			{URL: "http://host/meteorologue/OutdoorModule/temperature", Details: map[string][]string{
-				"ModuleName": {"Outdoor"},
-			}},
 			{URL: "http://host/meteorologue/IndoorModule/temperature", Details: map[string][]string{
-				"ModuleName": {"Indoor"},
-			}},
+				"FunctionalLocation": {"Kälkholmen (Indoor)"}, "ModuleName": {"Indoor"}}},
+			{URL: "http://host/meteorologue/OutdoorModule/temperature", Details: map[string][]string{
+				"ModuleName": {"Outdoor"}}},
 		},
 	}
-	_, ni, ok := selectTempNode(nodes, "Kitchen")
-	if !ok {
-		t.Fatal("expected fallback match, got none")
+	_, _, why, ok := selectTempNode(nodes, "Kitchen", "")
+	if ok {
+		t.Fatal("a kitchen with no thermometer was given one anyway")
 	}
-	if strings.Contains(ni.URL, "Outdoor") {
-		t.Errorf("expected indoor fallback, got outdoor URL: %s", ni.URL)
+	if !strings.Contains(why, "Kitchen") {
+		t.Errorf("the refusal does not say which room: %q", why)
 	}
 }
 
-// TestSelectTempNode_Fallback verifies that the first available node is used when no location matches.
-func TestSelectTempNode_Fallback(t *testing.T) {
+// The operator may name the sensor a room should use.
+func TestSelectTempNode_Configured(t *testing.T) {
 	nodes := map[string][]components.NodeInfo{
 		"meteorologue": {
-			{URL: "http://host/meteorologue/IndoorModule/temperature", Details: map[string][]string{"FunctionalLocation": {"Källkälchen (Indoor)"}}},
+			{URL: "http://host/meteorologue/IndoorModule/temperature", Details: map[string][]string{"ModuleName": {"Indoor"}}},
+			{URL: "http://host/meteorologue/OutdoorModule/temperature", Details: map[string][]string{"ModuleName": {"Outdoor"}}},
 		},
 	}
-	_, ni, ok := selectTempNode(nodes, "DiningRoom")
-	if !ok {
-		t.Fatal("expected fallback match, got none")
+	_, ni, why, ok := selectTempNode(nodes, "Kitchen", "IndoorModule")
+	if !ok || !strings.Contains(ni.URL, "IndoorModule") {
+		t.Fatalf("configured sensor gave %s (ok=%v, %s)", ni.URL, ok, why)
 	}
-	if ni.URL != "http://host/meteorologue/IndoorModule/temperature" {
-		t.Errorf("unexpected fallback URL: %s", ni.URL)
+	if !strings.Contains(why, "configured") {
+		t.Errorf("the reason does not say it was configured: %q", why)
+	}
+	// A name that is not on offer is refused rather than approximated.
+	if _, _, why, ok := selectTempNode(nodes, "Kitchen", "HallwayModule"); ok {
+		t.Error("a configured sensor that does not exist was substituted")
+	} else if !strings.Contains(why, "HallwayModule") {
+		t.Errorf("the refusal does not name what was configured: %q", why)
+	}
+}
+
+// The same cloud must give the same answer twice. Ranging over the map made
+// this a coin toss, and the coin was tossed again at every restart.
+func TestSelectTempNode_IsDeterministic(t *testing.T) {
+	nodes := map[string][]components.NodeInfo{
+		"meteorologue": {
+			{URL: "http://host/meteorologue/A/temperature", Details: map[string][]string{"ModuleName": {"Kitchen north"}}},
+			{URL: "http://host/meteorologue/B/temperature", Details: map[string][]string{"ModuleName": {"Kitchen south"}}},
+		},
+		"weatherman": {
+			{URL: "http://host/weatherman/C/temperature", Details: map[string][]string{"ModuleName": {"Kitchen west"}}},
+		},
+	}
+	_, first, _, ok := selectTempNode(nodes, "Kitchen", "")
+	if !ok {
+		t.Fatal("no match")
+	}
+	for i := 0; i < 200; i++ {
+		if _, again, _, _ := selectTempNode(nodes, "Kitchen", ""); again.URL != first.URL {
+			t.Fatalf("run %d chose %s, the first run chose %s", i, again.URL, first.URL)
+		}
 	}
 }
 
 // TestSelectTempNode_Empty verifies that an empty nodes map returns not-found.
 func TestSelectTempNode_Empty(t *testing.T) {
-	_, _, ok := selectTempNode(map[string][]components.NodeInfo{}, "Kitchen")
+	_, _, _, ok := selectTempNode(map[string][]components.NodeInfo{}, "Kitchen", "")
 	if ok {
 		t.Error("expected not-found for empty nodes map")
 	}
@@ -461,9 +476,7 @@ func heaterWatchingItsPlug(t *testing.T, blindFor time.Duration, graceMinutes in
 			}
 		}
 		// Answer like a real provider. An empty 200 cannot be unpacked, so
-		// SetState reports an error and updatePlugState clears the discovered
-		// nodes — after which the controller has nowhere to write and every
-		// later command silently goes nowhere.
+		// SetState would report an error for every command.
 		var echo forms.SignalB_v1a
 		echo.NewForm()
 		echo.Timestamp = time.Now()
@@ -488,7 +501,7 @@ func heaterWatchingItsPlug(t *testing.T, blindFor time.Duration, graceMinutes in
 				// An entry with an empty token means "discovered, and this cloud
 				// issued none" — an unauthorized cloud, which is what a test is.
 				Nodes: map[string][]components.NodeInfo{
-					"plug": {{URL: srv.URL, Tokens: map[string]string{"write": ""}}},
+					"plug": {{URL: srv.URL + "/beekeeper/KitchenHeater/on_off", Tokens: map[string]string{"write": ""}}},
 				},
 			},
 		},
@@ -612,5 +625,204 @@ func TestAReadingReleasesTheGuard(t *testing.T) {
 	}
 	if got[len(got)-1] {
 		t.Error("after a reading of 24 °C against a setpoint of 20 °C the heat is still on — control did not resume")
+	}
+}
+
+// A controller must not drive a device it cannot name. Discovery hands over a
+// name and an address together; when they disagree, something has gone wrong
+// between the registry and here, and the wrong device is about to be switched.
+func TestURLNames(t *testing.T) {
+	cases := []struct {
+		url, name string
+		want      bool
+	}{
+		{"https://h:30185/beekeeper/BathroomHeater/on_off", "BathroomHeater", true},
+		{"https://h:30185/beekeeper/BathroomLight/on_off", "BathroomHeater", false},
+		{"https://h:30185/beekeeper/DiningroomHeater/on_off", "BathroomHeater", false},
+		// A provider normalizes a name into its path.
+		{"https://h:30185/beekeeper/lumi_remote_b28ac1/on_off", "lumi.remote.b28ac1", true},
+		{"https://h:30185/beekeeper/Bathroom_Heater/on_off", "Bathroom Heater", true},
+		// Case is not what tells two devices apart.
+		{"https://h:30185/beekeeper/bathroomheater/on_off", "BathroomHeater", true},
+		{"nonsense", "BathroomHeater", false},
+	}
+	for _, c := range cases {
+		if got := urlNames(c.url, c.name); got != c.want {
+			t.Errorf("urlNames(%q, %q) = %v, want %v", c.url, c.name, got, c.want)
+		}
+	}
+}
+
+// ── bindings by name ──────────────────────────────────────────────────────────
+
+// cottage is a beekeeper and a meteorologue on one test server. It records
+// which paths were switched, and offers what a discovery would.
+type cottage struct {
+	srv      *httptest.Server
+	mu       sync.Mutex
+	switched []string
+}
+
+func newCottage(t *testing.T) *cottage {
+	t.Helper()
+	c := &cottage{}
+	c.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var out []byte
+		if r.Method == http.MethodPut {
+			c.mu.Lock()
+			c.switched = append(c.switched, r.URL.Path)
+			c.mu.Unlock()
+			var echo forms.SignalB_v1a
+			echo.NewForm()
+			echo.Timestamp = time.Now()
+			out, _ = usecases.Pack(&echo, "application/json")
+		} else {
+			var sig forms.SignalA_v1a
+			sig.NewForm()
+			sig.Value = 15 // cold: the control law wants the heat on
+			sig.Unit = "<http://qudt.org/vocab/unit/DEG_C>"
+			sig.Timestamp = time.Now()
+			out, _ = usecases.Pack(&sig, "application/json")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(out)
+	}))
+	t.Cleanup(c.srv.Close)
+	return c
+}
+
+func (c *cottage) paths() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.switched...)
+}
+
+// plug is a beekeeper OnOff node as discovery returns it.
+func (c *cottage) plug(name string) components.NodeInfo {
+	return components.NodeInfo{
+		URL:     c.srv.URL + "/beekeeper/" + name + "/on_off",
+		Details: map[string][]string{"DisplayName": {name}},
+		Tokens:  map[string]string{"write": ""},
+	}
+}
+
+func (c *cottage) thermometer(module, location string) components.NodeInfo {
+	return components.NodeInfo{
+		URL:     c.srv.URL + "/meteorologue/" + module + "/temperature",
+		Details: map[string][]string{"ModuleName": {module}, "FunctionalLocation": {location}},
+		Tokens:  map[string]string{"read": ""},
+	}
+}
+
+// offering answers every discovery with the given nodes of that definition.
+func offering(nodes map[string][]components.NodeInfo) func(*components.Cervice, string) error {
+	return func(cer *components.Cervice, _ string) error {
+		for _, ni := range nodes[cer.Definition] {
+			cer.Nodes["node"] = append(cer.Nodes["node"], ni)
+		}
+		return nil
+	}
+}
+
+func bathroomHeater(c *cottage, plugs, thermometers []components.NodeInfo) *Traits {
+	sys := components.NewSystem("ethermostat", context.Background())
+	return &Traits{
+		SetPt: 20, Period: 10, Kp: 5, FrostGuard: 30,
+		lastGood: time.Now(),
+		name:     "BathroomHeater",
+		location: "Bathroom",
+		owner:    &sys,
+		discover: offering(map[string][]components.NodeInfo{"OnOff": plugs, "temperature": thermometers}),
+		cervices: components.Cervices{
+			"on_off":      {Definition: "OnOff", Protos: []string{"http"}, Mode: "set", Nodes: map[string][]components.NodeInfo{}},
+			"temperature": {Definition: "temperature", Protos: []string{"http"}, Mode: "get", Nodes: map[string][]components.NodeInfo{}},
+		},
+	}
+}
+
+// The cottage, 27 September: one refused call emptied the binding, and the next
+// call asked for "an OnOff" and was given the bathroom light. A lost binding is
+// found again by name, whatever else is offered — and offered first.
+func TestALostPlugIsFoundAgainByName(t *testing.T) {
+	c := newCottage(t)
+	tr := bathroomHeater(c, []components.NodeInfo{c.plug("BathroomLight"), c.plug("BathroomHeater"), c.plug("KitchenHeater")}, nil)
+
+	tr.updatePlugState(true)
+
+	if got := c.paths(); len(got) != 1 || got[0] != "/beekeeper/BathroomHeater/on_off" {
+		t.Errorf("switched %v, want only the bathroom heater", got)
+	}
+}
+
+// A binding that is somebody else's device is dropped before it is used.
+func TestACrossedPlugIsNotSwitched(t *testing.T) {
+	c := newCottage(t)
+	tr := bathroomHeater(c, []components.NodeInfo{c.plug("BathroomHeater")}, nil)
+	pin(tr.cervices["on_off"], "node", c.plug("BathroomLight"))
+
+	tr.updatePlugState(true)
+
+	if got := c.paths(); len(got) != 1 || got[0] != "/beekeeper/BathroomHeater/on_off" {
+		t.Errorf("switched %v, want only the bathroom heater", got)
+	}
+}
+
+// When its own plug is not offered, a controller switches nothing at all.
+func TestAMissingPlugSwitchesNothing(t *testing.T) {
+	c := newCottage(t)
+	tr := bathroomHeater(c, []components.NodeInfo{c.plug("BathroomLight"), c.plug("KitchenHeater")}, nil)
+
+	tr.updatePlugState(true)
+
+	if got := c.paths(); len(got) != 0 {
+		t.Errorf("switched %v while the bathroom heater's plug was not offered", got)
+	}
+	if bound(tr.cervices["on_off"]) {
+		t.Error("bound to a plug that is not the bathroom heater's")
+	}
+}
+
+// A lost thermometer is chosen again by the same rule, not by whichever the
+// orchestrator likes: the outdoor module, offered first, would keep a heater
+// on all winter.
+func TestALostThermometerIsChosenAgainByTheRule(t *testing.T) {
+	c := newCottage(t)
+	tr := bathroomHeater(c,
+		[]components.NodeInfo{c.plug("BathroomHeater")},
+		[]components.NodeInfo{c.thermometer("Outdoor", "Outdoor"), c.thermometer("BathroomModule", "Bathroom")})
+
+	if err := tr.bindThermometer(); err != nil {
+		t.Fatal(err)
+	}
+	for _, nodes := range tr.cervices["temperature"].Nodes {
+		if len(nodes) != 1 || !strings.Contains(nodes[0].URL, "/BathroomModule/") {
+			t.Errorf("reading %v, want the bathroom module", nodes)
+		}
+	}
+}
+
+// After a power cut the thermometers come from the Netatmo cloud and are the
+// last thing back. A controller built without one heats once the grace period
+// has passed, and starts controlling when one appears.
+func TestAControllerWithoutAThermometerHeatsThenControls(t *testing.T) {
+	c := newCottage(t)
+	tr := bathroomHeater(c, []components.NodeInfo{c.plug("BathroomHeater")}, nil)
+	tr.lastGood = time.Now().Add(-31 * time.Minute)
+
+	tr.processFeedbackLoop()
+	if !tr.guarding {
+		t.Fatal("no thermometer for 31 minutes and the frost guard did not engage")
+	}
+	if got := c.paths(); len(got) != 1 {
+		t.Fatalf("switched %v, want the heater once", got)
+	}
+
+	tr.discover = offering(map[string][]components.NodeInfo{
+		"OnOff":       {c.plug("BathroomHeater")},
+		"temperature": {c.thermometer("BathroomModule", "Bathroom")},
+	})
+	tr.processFeedbackLoop()
+	if tr.guarding {
+		t.Error("a thermometer appeared and the guard is still holding")
 	}
 }

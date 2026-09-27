@@ -66,6 +66,29 @@ func (r *registration) sameRegistration(rec *forms.ServiceRecord_v1) bool {
 	return err1 == nil && err2 == nil && mine.Equal(theirs)
 }
 
+// sameInstance reports whether two records describe the same running system and
+// not merely two systems built from the same code.
+//
+// ServiceNode carries host, system, asset and definition, so it separates the
+// maitreD on one Pi from the maitreD on another. It is compared first and
+// alone when both records have one; the address is the fallback for a record
+// that predates it, and comparing addresses is enough to tell instances apart
+// even when it is all there is.
+func sameInstance(held, rec *forms.ServiceRecord_v1) bool {
+	if held.ServiceNode != "" && rec.ServiceNode != "" {
+		return held.ServiceNode == rec.ServiceNode
+	}
+	if len(held.IPAddresses) > 0 && len(rec.IPAddresses) > 0 {
+		return held.IPAddresses[0] == rec.IPAddresses[0]
+	}
+	// Nothing to tell them apart. The caller has already matched the system
+	// name, the definition and the path, so this is the old behaviour: treat it
+	// as the same record. Merging two records that carry no identity is the
+	// lesser fault — the alternative is a second record for every renewal, and
+	// a registry that answers every quest twice.
+	return true
+}
+
 // errNotOwner is answered to a system removing a registration it did not make.
 var errNotOwner = errors.New("the record belongs to another system")
 
@@ -358,16 +381,28 @@ func (t *Traits) serviceRegistryHandler() {
 				rec.Id = 0
 			}
 
-			// One record per service per system. A fresh registration for a
-			// service this registrar already holds — the same system, the same
-			// definition, the same path — renews that record instead of making a
-			// second: a system that decided the lead had moved (the same lead
-			// under another spelling, or a lead it had already reached by another
-			// route) would otherwise register everything twice, and the registry
-			// would answer every quest with both until the first lapsed.
+			// One record per service per system *instance*. A fresh registration
+			// for a service this registrar already holds renews that record
+			// instead of making a second: a system that decided the lead had
+			// moved (the same lead under another spelling, or a lead it had
+			// already reached by another route) would otherwise register
+			// everything twice, and the registry would answer every quest with
+			// both until the first lapsed.
+			//
+			// The instance is part of the identity, and leaving it out was a bug
+			// that only a multi-host cloud could show. Every host runs a maitreD
+			// named "maitreD" offering "attest", and a registrar named
+			// "serviceregistrar" offering "registry"; matching on name and
+			// definition alone made all four of each the same record. They
+			// overwrote one another in turn, so a four-host cloud showed one or
+			// two of them at a time and they appeared to pop in and out of the
+			// painter's canvas. Nothing was wrong with the systems.
 			if rec.Id == 0 {
 				for id, held := range t.serviceRegistry {
-					if held.SystemName == rec.SystemName && held.ServiceDefinition == rec.ServiceDefinition && held.SubPath == rec.SubPath {
+					if held.SystemName == rec.SystemName &&
+						held.ServiceDefinition == rec.ServiceDefinition &&
+						held.SubPath == rec.SubPath &&
+						sameInstance(&held.ServiceRecord_v1, rec) {
 						rec.Id = id
 						rec.Created = held.Created
 						break

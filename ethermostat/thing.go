@@ -18,9 +18,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -73,6 +75,13 @@ type Traits struct {
 	name      string
 	owner     *components.System
 	cervices  components.Cervices
+	// location and tempFrom are what the thermometer is chosen by, kept so it
+	// can be chosen again by the same rule when a binding is lost.
+	location string
+	tempFrom string
+	// discover asks the cloud for every provider of a definition. Nil means the
+	// orchestrator; a test puts a cloud of its own here.
+	discover func(cer *components.Cervice, action string) error
 	// Units the payloads report in, taken from the configured services so a
 	// reading and the record that describes it cannot disagree. errorUnit is
 	// not configured: it is the setpoint's.
@@ -185,6 +194,19 @@ type traitDefaults struct {
 	// Not defaulted back to 30 below when it reads zero, unlike Period and Kp:
 	// zero is a real answer here and means the operator turned the guard off.
 	FrostGuard int `json:"frostGuardMinutes"`
+
+	// TemperatureFrom names, per location, the sensor a heater may use when
+	// there is none in its own room: {"Kitchen": "IndoorModule"}. Without an
+	// entry a heater whose room has no thermometer is not controlled at all,
+	// and the system says so.
+	//
+	// This replaces a fallback that took whatever sensor came to hand. It chose
+	// by Go map order, so which one it took could differ at every start, and at
+	// the cottage all three heaters ended up driven by the bathroom's
+	// thermometer — one room's temperature deciding the heat in three. Its last
+	// resort was "any node at all", which could have been the outdoor module: in
+	// a Norrbotten winter that is a heater that never switches off.
+	TemperatureFrom map[string]string `json:"temperatureFrom"`
 }
 
 // parseTraitDefaults extracts and validates the trait defaults from the configurable asset.
@@ -205,8 +227,8 @@ func parseTraitDefaults(uac usecases.ConfigurableAsset) traitDefaults {
 }
 
 // discoverHeaters performs one round of service discovery and returns a UnitAsset
-// for every beekeeper OnOff plug whose DisplayName ends in "Heater" and for which
-// a matching meteorologue Temperature service can be found.
+// for every beekeeper OnOff plug whose DisplayName ends in "Heater", whether or
+// not its thermometer can be found yet.
 func discoverHeaters(sys *components.System, sProtocols []string, defaults traitDefaults, uac usecases.ConfigurableAsset) []*components.UnitAsset {
 	onOffCer := &components.Cervice{
 		Definition: "OnOff",
@@ -229,12 +251,17 @@ func discoverHeaters(sys *components.System, sProtocols []string, defaults trait
 		Protos:     sProtocols,
 		Nodes:      make(map[string][]components.NodeInfo),
 	}
+	// Not finding the thermometers is not a reason to build no controllers. The
+	// cottage's temperatures come from the Netatmo cloud, so after a power cut
+	// they are missing until the router and the internet are back, and the
+	// plugs have come back off. A controller without a thermometer still has a
+	// frost guard; no controller has nothing.
 	if err := usecases.Search4MultipleServices(tempCer, sys); err != nil {
-		log.Printf("ethermostat: could not discover temperature services: %v\n", err)
-		return nil
+		log.Printf("ethermostat: could not discover temperature services (%v); building the controllers without them\n", err)
 	}
 
 	var assets []*components.UnitAsset
+	built := make(map[string]bool)
 
 	for sysNode, nodeList := range onOffCer.Nodes {
 		for _, ni := range nodeList {
@@ -246,30 +273,58 @@ func discoverHeaters(sys *components.System, sProtocols []string, defaults trait
 			if !strings.HasSuffix(displayName, "Heater") {
 				continue
 			}
+			// One controller per heater, even if the plug is offered twice —
+			// over http and https by a provider that registered mid-start, say.
+			// Two would fight over it.
+			if built[plainName(displayName)] {
+				continue
+			}
+			built[plainName(displayName)] = true
 
 			location := extractLocation(displayName)
 
 			heaterOnOff := &components.Cervice{
 				Definition: "OnOff",
 				Protos:     sProtocols,
-				Nodes: map[string][]components.NodeInfo{
-					sysNode: {ni},
-				},
-				Mode: "set",
-			}
-
-			tempSysNode, tempNI, ok := selectTempNode(tempCer.Nodes, location)
-			if !ok {
-				log.Printf("ethermostat: no temperature service found for %s — skipping\n", displayName)
-				continue
+				Nodes:      make(map[string][]components.NodeInfo),
+				Mode:       "set",
 			}
 			heaterTemp := &components.Cervice{
 				Definition: "temperature",
 				Protos:     sProtocols,
-				Nodes: map[string][]components.NodeInfo{
-					tempSysNode: {tempNI},
-				},
-				Mode: "get",
+				Nodes:      make(map[string][]components.NodeInfo),
+				Mode:       "get",
+			}
+
+			// The URL has to name the device this node claimed to be. Discovery
+			// hands over a name and an address together, and if they disagree
+			// the controller would drive something it cannot name — which is how
+			// a thermostat came to switch a bathroom light at the cottage for
+			// days without anything failing. A node that disagrees is not
+			// pinned; the controller looks for its plug by name when it first
+			// switches, and switches nothing until it finds it.
+			switching := ni.URL
+			if urlNames(ni.URL, displayName) {
+				pin(heaterOnOff, sysNode, ni)
+			} else {
+				log.Printf("ethermostat: REFUSING %s: discovery offered it at %s, which is not that device\n", displayName, ni.URL)
+				switching = "(not yet found)"
+			}
+
+			// Without a thermometer the controller is built all the same, and
+			// goes on looking for one by the same rule. Until it finds one its
+			// frost guard is what heats the room. That costs electricity when
+			// the cause is a configuration mistake; not building it costs the
+			// pipes when the cause is a dead battery or no internet.
+			tempSysNode, tempNI, why, ok := selectTempNode(tempCer.Nodes, location, defaults.TemperatureFrom[location])
+			reading := tempNI.URL
+			if ok {
+				pin(heaterTemp, tempSysNode, tempNI)
+			} else {
+				reading = "(no thermometer yet)"
+				log.Printf("ethermostat: %s has no temperature yet: %s. It keeps looking, and heats after %d minutes without one. "+
+					`If it should use another room's thermometer, name it with "temperatureFrom": {%q: "<module>"}`+"\n",
+					displayName, why, defaults.FrostGuard, location)
 			}
 
 			t := &Traits{
@@ -283,6 +338,8 @@ func discoverHeaters(sys *components.System, sProtocols []string, defaults trait
 				// first failed poll.
 				lastGood: time.Now(),
 				name:     displayName,
+				location: location,
+				tempFrom: defaults.TemperatureFrom[location],
 				owner:    sys,
 				cervices: components.Cervices{
 					"on_off":      heaterOnOff,
@@ -293,8 +350,11 @@ func discoverHeaters(sys *components.System, sProtocols []string, defaults trait
 			ua := buildHeaterAsset(displayName, location, t, sys, uac)
 			assets = append(assets, ua)
 			go t.feedbackLoop(sys.Ctx)
-			log.Printf("ethermostat: created thermostat %q (location=%q, temp from %q)\n",
-				displayName, location, tempSysNode)
+			// The addresses, not just the names: a controller's name is what it
+			// believes and the URL is what it will actually switch, and when
+			// those two part company the log is the only place it shows.
+			log.Printf("ethermostat: created thermostat %q (location=%q)\n    switching %s\n    reading   %s (%s)\n",
+				displayName, location, switching, reading, why)
 		}
 	}
 
@@ -384,75 +444,96 @@ func extractLocation(heaterName string) string {
 //  2. A node whose ModuleName detail contains the location string.
 //  3. Fallback: any node that is not an outdoor module (avoids using outdoor
 //     temperature for indoor heating control); last resort is any node at all.
-func selectTempNode(nodes map[string][]components.NodeInfo, location string) (string, components.NodeInfo, bool) {
-	// Tier 1: FunctionalLocation match.
+func selectTempNode(nodes map[string][]components.NodeInfo, location, named string) (string, components.NodeInfo, string, bool) {
+	// Sorted, so the same cloud gives the same answer twice. Ranging over the
+	// map put the choice in the hands of Go's map ordering, which is randomized:
+	// the heater that got the right sensor on one run got another room's on the
+	// next, and nothing in the log marked the difference.
+	type candidate struct {
+		sysNode string
+		ni      components.NodeInfo
+	}
+	var all []candidate
 	for sysNode, nodeList := range nodes {
 		for _, ni := range nodeList {
-			for _, fl := range ni.Details["FunctionalLocation"] {
-				if strings.Contains(strings.ToLower(fl), strings.ToLower(location)) {
-					return sysNode, ni, true
-				}
+			all = append(all, candidate{sysNode, ni})
+		}
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].sysNode != all[j].sysNode {
+			return all[i].sysNode < all[j].sysNode
+		}
+		return all[i].ni.URL < all[j].ni.URL
+	})
+
+	// Tier 1: a sensor that says it is in this room.
+	for _, c := range all {
+		for _, fl := range c.ni.Details["FunctionalLocation"] {
+			if strings.Contains(strings.ToLower(fl), strings.ToLower(location)) {
+				return c.sysNode, c.ni, "its functional location", true
 			}
 		}
 	}
 
-	// Tier 2: ModuleName match (e.g. "Bathroom" heater → ModuleName "Bathroom").
-	for sysNode, nodeList := range nodes {
-		for _, ni := range nodeList {
-			for _, mn := range ni.Details["ModuleName"] {
-				if strings.Contains(strings.ToLower(mn), strings.ToLower(location)) {
-					return sysNode, ni, true
-				}
+	// Tier 2: a sensor named after this room.
+	for _, c := range all {
+		for _, mn := range c.ni.Details["ModuleName"] {
+			if strings.Contains(strings.ToLower(mn), strings.ToLower(location)) {
+				return c.sysNode, c.ni, "its module name", true
 			}
 		}
 	}
 
-	// Tier 3a: Prefer the main indoor module — the one whose ModuleName contains
-	// "indoor" (case-insensitive).  This picks the primary base-station sensor
-	// over a room-specific secondary module (e.g. "Bathroom") when no exact
-	// location match exists.
-	for sysNode, nodeList := range nodes {
-		for _, ni := range nodeList {
-			for _, mn := range ni.Details["ModuleName"] {
-				if strings.Contains(strings.ToLower(mn), "indoor") {
-					return sysNode, ni, true
-				}
+	// Tier 3: the sensor the operator named for this room, and only that one.
+	if named != "" {
+		for _, c := range all {
+			if nodeIsCalled(c.ni, named) {
+				return c.sysNode, c.ni, fmt.Sprintf("configured as %q for %s", named, location), true
 			}
 		}
+		return "", components.NodeInfo{}, fmt.Sprintf(
+			"no thermometer in %s, and the configured %q is not among the %d temperature services offered",
+			location, named, len(all)), false
 	}
 
-	// Tier 3b: Any indoor module (not outdoor).
-	for sysNode, nodeList := range nodes {
-		for _, ni := range nodeList {
-			if isIndoorNode(ni) {
-				return sysNode, ni, true
-			}
-		}
-	}
-
-	// Tier 3c: Last resort — any node available.
-	for sysNode, nodeList := range nodes {
-		if len(nodeList) > 0 {
-			return sysNode, nodeList[0], true
-		}
-	}
-	return "", components.NodeInfo{}, false
+	return "", components.NodeInfo{}, fmt.Sprintf("no thermometer reports being in %s, and none is configured for it", location), false
 }
 
-// isIndoorNode returns true when no ModuleName or FunctionalLocation detail
-// contains the word "outdoor" (case-insensitive).
-func isIndoorNode(ni components.NodeInfo) bool {
-	for _, mn := range ni.Details["ModuleName"] {
-		if strings.Contains(strings.ToLower(mn), "outdoor") {
-			return false
+// nodeIsCalled reports whether a temperature node answers to a name: its module
+// name, its display name, or the asset in its URL.
+func nodeIsCalled(ni components.NodeInfo, name string) bool {
+	want := strings.ToLower(name)
+	for _, key := range []string{"ModuleName", "DisplayName"} {
+		for _, v := range ni.Details[key] {
+			if strings.Contains(strings.ToLower(v), want) {
+				return true
+			}
 		}
 	}
-	for _, fl := range ni.Details["FunctionalLocation"] {
-		if strings.Contains(strings.ToLower(fl), "outdoor") {
-			return false
+	return strings.Contains(strings.ToLower(ni.URL), "/"+want+"/")
+}
+
+// urlNames reports whether a service URL belongs to the asset a discovery said
+// it was. The comparison ignores case and anything but letters and digits,
+// because a provider normalizes an asset name into its path: "lumi.remote.b28"
+// is served at "lumi_remote_b28".
+func urlNames(url, displayName string) bool {
+	parts := strings.Split(strings.Trim(url, "/"), "/")
+	if len(parts) < 2 {
+		return false
+	}
+	asset := parts[len(parts)-2] // .../<system>/<asset>/<service>
+	return plainName(asset) == plainName(displayName)
+}
+
+func plainName(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
 		}
 	}
-	return true
+	return b.String()
 }
 
 //-------------------------------------Service handlers
@@ -596,6 +677,11 @@ func (t *Traits) feedbackLoop(ctx context.Context) {
 func (t *Traits) processFeedbackLoop() {
 	jitterStart := time.Now()
 
+	if err := t.bindThermometer(); err != nil {
+		log.Printf("ethermostat %s: unable to get temperature: %v\n", t.name, err)
+		t.frostGuard()
+		return
+	}
 	tf, err := usecases.GetState(t.cervices["temperature"], t.owner)
 	if err != nil {
 		log.Printf("ethermostat %s: unable to get temperature: %v\n", t.name, err)
@@ -710,10 +796,145 @@ func (t *Traits) updatePlugState(on bool) {
 		log.Printf("ethermostat %s: could not pack plug command: %v\n", t.name, err)
 		return
 	}
+	if err := t.bindPlug(); err != nil {
+		log.Printf("ethermostat %s: could not set plug state: %v\n", t.name, err)
+		return
+	}
+	// A failure leaves the binding alone. Clearing it here is what switched the
+	// cottage's bathroom light: the next call found no provider, asked the
+	// orchestrator for "an OnOff", and was given the light. Whatever mbaigo
+	// itself clears — on an unreachable provider, a 404, or a refused
+	// credential it could not renew — bindPlug rebinds by name next time.
 	if _, err := usecases.SetState(t.cervices["on_off"], t.owner, body); err != nil {
 		log.Printf("ethermostat %s: could not set plug state: %v\n", t.name, err)
-		t.cervices["on_off"].Nodes = make(map[string][]components.NodeInfo)
 	}
+}
+
+//-------------------------------------Bindings
+
+// The plug and the thermometer are bound by name and never by definition
+// alone.
+//
+// mbaigo re-discovers a cervice that has lost its provider by asking the
+// orchestrator for any provider of the definition, which is right for a
+// consumer that will take any thermometer and wrong for one that must switch
+// one particular plug. Every OnOff in the cottage is a candidate for "OnOff",
+// the bathroom light included. So a controller never lets a cervice reach that
+// state: before each call it drops anything that is not its own device, and if
+// nothing is left it looks for its device by name among everything offered.
+// Not finding it is an error and switches nothing.
+
+// bindPlug makes sure the on_off cervice holds this heater's plug and nothing
+// else, looking for it by name when the binding has been lost.
+func (t *Traits) bindPlug() error {
+	cer := t.cervices["on_off"]
+	for _, url := range keepNamed(cer, t.name) {
+		log.Printf("ethermostat %s: REFUSING %s, which is not this heater's plug\n", t.name, url)
+	}
+	if bound(cer) {
+		return nil
+	}
+	offered := &components.Cervice{Definition: cer.Definition, Protos: cer.Protos, Mode: cer.Mode,
+		Nodes: make(map[string][]components.NodeInfo)}
+	if err := t.find(offered); err != nil {
+		return fmt.Errorf("looking for its plug: %w", err)
+	}
+	sysNode, ni, ok := plugFor(offered.Nodes, t.name)
+	if !ok {
+		return fmt.Errorf("%s is not among the OnOff services offered; switching nothing", t.name)
+	}
+	pin(cer, sysNode, ni)
+	log.Printf("ethermostat %s: switching %s\n", t.name, ni.URL)
+	return nil
+}
+
+// bindThermometer makes sure the temperature cervice holds a thermometer chosen
+// by selectTempNode, choosing again by the same rule when the binding has been
+// lost — or was never made, because the thermometers were not there yet.
+func (t *Traits) bindThermometer() error {
+	cer := t.cervices["temperature"]
+	if bound(cer) {
+		return nil
+	}
+	offered := &components.Cervice{Definition: cer.Definition, Protos: cer.Protos, Mode: cer.Mode,
+		Details: cer.Details, Nodes: make(map[string][]components.NodeInfo)}
+	if err := t.find(offered); err != nil {
+		return fmt.Errorf("looking for its thermometer: %w", err)
+	}
+	sysNode, ni, why, ok := selectTempNode(offered.Nodes, t.location, t.tempFrom)
+	if !ok {
+		return errors.New(why)
+	}
+	pin(cer, sysNode, ni)
+	log.Printf("ethermostat %s: reading %s (%s)\n", t.name, ni.URL, why)
+	return nil
+}
+
+func (t *Traits) find(cer *components.Cervice) error {
+	action := usecases.ActionForMode(cer.Mode)
+	if t.discover != nil {
+		return t.discover(cer, action)
+	}
+	return usecases.Search4MultipleServicesAs(cer, t.owner, action)
+}
+
+// plugFor picks the node that is the named device: its display name and its
+// URL must both say so. Sorted, so the same offer gives the same answer.
+func plugFor(nodes map[string][]components.NodeInfo, name string) (string, components.NodeInfo, bool) {
+	sysNodes := make([]string, 0, len(nodes))
+	for sysNode := range nodes {
+		sysNodes = append(sysNodes, sysNode)
+	}
+	sort.Strings(sysNodes)
+	for _, sysNode := range sysNodes {
+		for _, ni := range nodes[sysNode] {
+			if plainName(firstDetail(ni.Details, "DisplayName")) == plainName(name) && urlNames(ni.URL, name) {
+				return sysNode, ni, true
+			}
+		}
+	}
+	return "", components.NodeInfo{}, false
+}
+
+// keepNamed drops every node whose URL is not the named device and returns
+// what it dropped.
+func keepNamed(cer *components.Cervice, name string) []string {
+	cer.Mutex.Lock()
+	defer cer.Mutex.Unlock()
+	var dropped []string
+	for sysNode, nodes := range cer.Nodes {
+		kept := nodes[:0]
+		for _, ni := range nodes {
+			if urlNames(ni.URL, name) {
+				kept = append(kept, ni)
+			} else {
+				dropped = append(dropped, ni.URL)
+			}
+		}
+		if len(kept) == 0 {
+			delete(cer.Nodes, sysNode)
+		} else {
+			cer.Nodes[sysNode] = kept
+		}
+	}
+	return dropped
+}
+
+func bound(cer *components.Cervice) bool {
+	cer.Mutex.RLock()
+	defer cer.Mutex.RUnlock()
+	for _, nodes := range cer.Nodes {
+		if len(nodes) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func pin(cer *components.Cervice, sysNode string, ni components.NodeInfo) {
+	cer.Mutex.Lock()
+	defer cer.Mutex.Unlock()
+	cer.Nodes = map[string][]components.NodeInfo{sysNode: {ni}}
 }
 
 // adoptUnits takes the units this controller reports in from its configured

@@ -13,9 +13,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"math"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -59,6 +62,10 @@ type CartographerConfig struct {
 	PGMIntervalS int    `json:"pgmIntervalSeconds"`
 
 	Search SearchConfig `json:"search"`
+
+	// Odometry is the loader's wheel encoders, turned into motion between
+	// sweeps. See odometry.go.
+	Odometry OdometryConfig `json:"odometry"`
 }
 
 // Traits holds the map and everything that changes it.
@@ -66,8 +73,20 @@ type Traits struct {
 	cfg   CartographerConfig
 	owner *components.System
 
-	scanCervice *components.Cervice
-	poseCervice *components.Cervice
+	// frame names this map. Each run starts a new map with its origin at the
+	// first sweep, so the same coordinates name another place after a
+	// restart; the frame carries the start time so that a path or goal from
+	// the previous map can be recognized as such rather than followed.
+	frame string
+
+	scanCervice  *components.Cervice
+	leftCervice  *components.Cervice
+	rightCervice *components.Cervice
+	odo          *odometer
+	odoFailures  int
+	// readWheels fetches the scanner axle's two wheels. A field so that the
+	// whole mapping step can be tested without a loader.
+	readWheels func() (left, right wheelSample, err error)
 
 	mu sync.RWMutex
 	g  *grid
@@ -143,6 +162,7 @@ func initTemplate() *components.UnitAsset {
 			PGMPath:          "map.pgm",
 			PGMIntervalS:     10,
 			Search:           defaultSearch(),
+			Odometry:         defaultOdometry(),
 		},
 	}
 }
@@ -161,6 +181,7 @@ func newResource(uac usecases.ConfigurableAsset, sys *components.System) (*compo
 	t := &Traits{
 		cfg:   cfg,
 		owner: sys,
+		frame: forms.PolarMap + "@" + time.Now().UTC().Format(time.RFC3339),
 		g:     newGrid(cfg.WidthMetres, cfg.HeightMetres, cfg.Resolution),
 		scanCervice: &components.Cervice{
 			Definition: "scan",
@@ -168,18 +189,23 @@ func newResource(uac usecases.ConfigurableAsset, sys *components.System) (*compo
 			Mode:       "get",
 			Nodes:      make(map[string][]components.NodeInfo),
 		},
-		// Optional. A pose provider — a driver system turning wheel encoders and
-		// the articulation angle into odometry — gives the scan matcher a far
-		// better starting guess than constant velocity. None exists yet, so
-		// this stays empty and the matcher works without it.
-		poseCervice: &components.Cervice{
-			Definition: "pose",
-			Protos:     components.SProtocols(sys.Husk.ProtoPort),
-			Mode:       "get",
-			Nodes:      make(map[string][]components.NodeInfo),
-		},
+		// The wheels of the scanner's axle. They replace a generic "pose"
+		// cervice that nothing provided — and that this system's own pose
+		// service would have matched, feeding the map its own estimate back
+		// as if it were odometry.
+		leftCervice:  wheelCervice(cfg.Odometry, "leftWheel", cfg.Odometry.LeftNodeID, sys),
+		rightCervice: wheelCervice(cfg.Odometry, "rightWheel", cfg.Odometry.RightNodeID, sys),
+		odo:          newOdometer(cfg.Odometry),
 	}
+	if cfg.Odometry.on() {
+		log.Printf("cartographer: odometry from the loader's wheels %d and %d (%s), %.4f m apart",
+			cfg.Odometry.LeftNodeID, cfg.Odometry.RightNodeID, axleName(cfg.Odometry), cfg.Odometry.Track)
+	} else {
+		log.Println("cartographer: odometry is switched off; each sweep starts from constant velocity")
+	}
+	log.Printf("cartographer: this map is %s", t.frame)
 
+	t.readWheels = t.readLoaderWheels
 	t.g.matchRange = cfg.MatchRangeMetres
 
 	ua := &components.UnitAsset{
@@ -189,8 +215,9 @@ func newResource(uac usecases.ConfigurableAsset, sys *components.System) (*compo
 		Details:     uac.Details,
 		ServicesMap: usecases.MakeServiceMap(uac.Services),
 		CervicesMap: components.Cervices{
-			t.scanCervice.Definition: t.scanCervice,
-			t.poseCervice.Definition: t.poseCervice,
+			t.scanCervice.Definition:   t.scanCervice,
+			t.leftCervice.IReferentce:  t.leftCervice,
+			t.rightCervice.IReferentce: t.rightCervice,
 		},
 		Traits: t,
 	}
@@ -238,6 +265,33 @@ func applyDefaults(cfg *CartographerConfig) {
 	if cfg.Search.CoarseStep <= 0 {
 		cfg.Search = defaultSearch()
 	}
+	applyOdometryDefaults(&cfg.Odometry)
+}
+
+// wheelCervice is the quest for one wheel's travel on the loader.
+func wheelCervice(o OdometryConfig, ref string, nodeID int, sys *components.System) *components.Cervice {
+	details := map[string][]string{"NodeID": {strconv.Itoa(nodeID)}}
+	for k, v := range o.Vehicle {
+		details[k] = v
+	}
+	return &components.Cervice{
+		IReferentce: ref,
+		Definition:  "distance",
+		Protos:      components.SProtocols(sys.Husk.ProtoPort),
+		Mode:        "get",
+		Nodes:       make(map[string][]components.NodeInfo),
+		Details:     details,
+	}
+}
+
+func axleName(o OdometryConfig) string {
+	switch {
+	case o.LeftNodeID == 1 && o.RightNodeID == 2:
+		return "the front axle"
+	case o.LeftNodeID == 3 && o.RightNodeID == 4:
+		return "the back axle"
+	}
+	return "a custom pair"
 }
 
 //-------------------------------------The mapping loop
@@ -318,27 +372,63 @@ func (t *Traits) fetchScan() (*forms.ScanA_v1a, error) {
 	return sw, nil
 }
 
-// odometryPrior asks a pose provider where the vehicle is, if one exists. The
-// delta since the last reading is what the scan matcher starts from.
-func (t *Traits) odometryPrior() (pose, bool) {
-	if len(t.poseCervice.Nodes) == 0 {
-		if err := usecases.Search4Services(t.poseCervice, t.owner); err != nil {
-			return pose{}, false
-		}
-		if len(t.poseCervice.Nodes) == 0 {
-			return pose{}, false
-		}
+// odometryDelta is how the scanner moved since the previous sweep, according
+// to the wheels, in the scanner's frame at that sweep.
+func (t *Traits) odometryDelta(now time.Time) (pose, bool) {
+	if !t.cfg.Odometry.on() {
+		return pose{}, false
 	}
-	f, err := usecases.GetState(t.poseCervice, t.owner)
+	l, r, err := t.readWheels()
 	if err != nil {
-		t.poseCervice.Nodes = make(map[string][]components.NodeInfo)
+		t.noteOdometry(err)
 		return pose{}, false
 	}
-	p, ok := f.(*forms.PoseA_v1a)
+	delta, ok, err := t.odo.advance(l, r, now)
+	if err != nil {
+		t.noteOdometry(err)
+	}
+	if ok {
+		t.odoFailures = 0
+	}
+	return delta, ok
+}
+
+func (t *Traits) readLoaderWheels() (wheelSample, wheelSample, error) {
+	l, errL := t.readWheel(t.leftCervice)
+	r, errR := t.readWheel(t.rightCervice)
+	return l, r, errors.Join(errL, errR)
+}
+
+func (t *Traits) readWheel(cer *components.Cervice) (wheelSample, error) {
+	if len(cer.Nodes) == 0 {
+		if err := usecases.Search4Services(cer, t.owner); err != nil {
+			return wheelSample{}, err
+		}
+	}
+	f, err := usecases.GetState(cer, t.owner)
+	if err != nil {
+		return wheelSample{}, fmt.Errorf("%s: %w", cer.IReferentce, err)
+	}
+	sig, ok := f.(*forms.SignalA_v1a)
 	if !ok {
-		return pose{}, false
+		return wheelSample{}, errUnexpectedForm
 	}
-	return pose{x: p.X, y: p.Y, theta: p.Heading * math.Pi / 180}, true
+	// The loader's distance is in meters. Anything else would be integrated
+	// as meters into a map of the wrong size.
+	if sig.Unit != "" && sig.Unit != unitMetre {
+		return wheelSample{}, fmt.Errorf("%s: distance came in %s, not meters", cer.IReferentce, sig.Unit)
+	}
+	return wheelSample{metres: sig.Value, at: sig.Timestamp}, nil
+}
+
+// noteOdometry reports why a sweep had no odometry: the first time, and then
+// now and again. Mapping carries on from constant velocity meanwhile.
+func (t *Traits) noteOdometry(err error) {
+	t.odoFailures++
+	var jump *discontinuity
+	if errors.As(err, &jump) || t.odoFailures == 1 || t.odoFailures%100 == 0 {
+		log.Printf("cartographer: no odometry for this sweep: %v", err)
+	}
 }
 
 // consume folds one sweep into the map, first working out where it was taken.
@@ -364,9 +454,13 @@ func (t *Traits) consume(sw *forms.ScanA_v1a) {
 	g := t.g
 	t.mu.Unlock()
 
-	odo, haveOdometry := t.odometryPrior()
+	// The wheels say how far the scanner moved since the last sweep, and that
+	// motion is applied to where the map says the last sweep was taken. The
+	// odometry's own position is never used: it lives in a frame that started
+	// wherever the loader was switched on.
+	odo, haveOdometry := t.odometryDelta(time.Now())
 	if haveOdometry {
-		prior = odo
+		prior = compose(prior, odo)
 		t.mu.Lock()
 		t.usingOdometry = true
 		t.mu.Unlock()
@@ -475,6 +569,7 @@ func (t *Traits) mapService(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "nothing has been mapped yet", http.StatusServiceUnavailable)
 		return
 	}
+	f.Frame = t.frame
 	f.Timestamp = time.Now()
 	usecases.HTTPProcessGetRequest(w, r, &f)
 }
@@ -500,7 +595,7 @@ func (t *Traits) poseService(w http.ResponseWriter, r *http.Request) {
 	f.NewForm()
 	f.X, f.Y = at.x, at.y
 	f.Heading = at.theta * 180 / math.Pi
-	f.Frame = "map"
+	f.Frame = t.frame
 	f.DistanceUnit = unitMetre
 	f.AngleUnit = unitDegree
 	f.Timestamp = last

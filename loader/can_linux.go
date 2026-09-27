@@ -92,6 +92,13 @@ func recvCAN(fd int, timeout time.Duration) (canFrame, error) {
 	var f canFrame
 	buf := unsafe.Slice((*byte)(unsafe.Pointer(&f)), unsafe.Sizeof(f))
 	n, err := syscall.Read(fd, buf)
+	for err == syscall.EINTR {
+		// Go's scheduler preempts goroutines with a signal, and a raw read can
+		// be interrupted by it. Nothing is wrong and nothing was read: ask
+		// again. Found by the students on the vehicle; reporting it as a frame
+		// would hand the caller an empty one as if it had arrived.
+		n, err = syscall.Read(fd, buf)
+	}
 	if err != nil {
 		if err == syscall.EAGAIN || err == syscall.EWOULDBLOCK {
 			return canFrame{}, errCANTimeout
@@ -121,7 +128,11 @@ func sendCAN(fd int, id uint32, data []byte) error {
 	f := canFrame{ID: id, DLC: uint8(len(data))}
 	copy(f.Data[:], data)
 	buf := unsafe.Slice((*byte)(unsafe.Pointer(&f)), unsafe.Sizeof(f))
-	if _, err := syscall.Write(fd, buf); err != nil {
+	_, err := syscall.Write(fd, buf)
+	for err == syscall.EINTR { // as in recvCAN
+		_, err = syscall.Write(fd, buf)
+	}
+	if err != nil {
 		return err
 	}
 	time.Sleep(50 * time.Microsecond)

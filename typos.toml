@@ -92,3 +92,10 @@ Kommunikationsprotokoll = "Kommunikationsprotokoll"
 # "for". The whole point of that step is that the fingerprint check replaced a
 # SHA-256 digest which had gone stale and failed.
 fpr = "fpr"
+
+# "Transfered" is how the PLC spells its own variables, and uaclient reads them
+# by OPC UA node ID — `"HoldingVariables"."TransferedMillingTime"`. A node ID is
+# matched exactly, so the corrected spelling would name a variable the
+# controller does not have. The same misspelling in the WAGO exports is why
+# modboss/plc/ is excluded above.
+Transfered = "Transfered"

@@ -218,3 +218,34 @@ func TestSpeedServiceRefusesStaleFeedback(t *testing.T) {
 		t.Errorf("a one-second-old encoder reading was served as current (%d)", w.Code)
 	}
 }
+
+// The encoder's counter wraps every 204.8 revolutions; travel must not. A
+// wheel driving forward across the wrap keeps counting up, on both sides.
+func TestTravelIsUnwrapped(t *testing.T) {
+	near := uint32(1<<24 - 8192) // 0.1 of a revolution before the wrap
+	fb := newFeedback(time.Second)
+	a := fb.unwrapLocked(1, wheelReading{count: near})
+	b := fb.unwrapLocked(1, wheelReading{count: 8192})
+	if d := b.revolutions - a.revolutions; math.Abs(d-0.2) > 1e-9 {
+		t.Errorf("right wheel across the wrap moved %v revolutions, want 0.2", d)
+	}
+	a = fb.unwrapLocked(0, wheelReading{count: 8192})
+	b = fb.unwrapLocked(0, wheelReading{count: near})
+	if d := b.revolutions - a.revolutions; math.Abs(d-0.2) > 1e-9 {
+		t.Errorf("left wheel across the wrap moved %v revolutions, want 0.2", d)
+	}
+	// And a thousand revolutions later it is still counting.
+	fb = newFeedback(time.Second)
+	count := uint32(0)
+	var last wheelReading
+	for step := 0; step < 1000*10; step++ {
+		count = (count + 8192) & (1<<24 - 1) // 0.1 revolution per frame
+		last = fb.unwrapLocked(1, wheelReading{count: count})
+	}
+	if math.Abs(last.revolutions-1000) > 1e-6 {
+		t.Errorf("after 10 000 frames of 0.1 revolution: %v, want 1000", last.revolutions)
+	}
+	if got := distanceForm(last, 1.335).Value; math.Abs(got-1335) > 1e-6 {
+		t.Errorf("1000 revolutions of a 1.335 m wheel = %v m, want 1335", got)
+	}
+}

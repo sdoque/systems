@@ -9,8 +9,8 @@
 @base            <https://w3id.org/synecdoque/afo#> .
 
 <https://w3id.org/synecdoque/afo> rdf:type owl:Ontology ;
-    owl:versionIRI   <https://w3id.org/synecdoque/afo/2.3.0> ;
-    owl:priorVersion <https://w3id.org/synecdoque/afo/2.2.0> ;
+    owl:versionIRI   <https://w3id.org/synecdoque/afo/2.4.0> ;
+    owl:priorVersion <https://w3id.org/synecdoque/afo/2.3.0> ;
     owl:versionInfo  "2.3.0" ;
     rdfs:label       "Arrowhead Framework Ontology" ;
     rdfs:comment     """Version 2.0.0 moves the ontology to a permanent identifier at w3id.org. Changing an ontology IRI changes its identity, which is why this is a major version and not a patch: every term minted under the previous namespace is a different term. It was done while nothing had adopted the vocabulary, when it costs nothing, and it is not a thing to do again.""" ;
@@ -548,6 +548,38 @@
 :SecurityPosture rdf:type owl:Class ;
     rdfs:label "security posture" ;
     rdfs:comment "The security a system actually presents at run time: whether it is identified, what it will accept, and whom it trusts to say so." .
+
+###  https://w3id.org/synecdoque/afo#ExternalAttachment
+:ExternalAttachment rdf:type owl:Class ;
+    rdfs:label "external attachment" ;
+    rdfs:comment """A service outside the local cloud that a system depends on: a
+database, a broker, a field device. The cloud's own machinery — attestation,
+mutual TLS, tokens — does not reach across this boundary, so what protects the
+connection is whatever the adjacent protocol was configured to do.
+
+Declared by the system, because only the system knows what it attaches to.
+Nothing enforces the declaration: an undeclared attachment is invisible, which
+is what every attachment was before this class existed. A security posture that
+described only the inbound direction let a graph overstate how protected a cloud
+was.""" .
+
+:hasExternalAttachment rdf:type owl:ObjectProperty ;
+    rdfs:label "has external attachment" ;
+    rdfs:domain :SecurityPosture ;
+    rdfs:range :ExternalAttachment ;
+    rdfs:comment "Names one service outside the cloud that this system reaches. One node per attachment rather than a single boolean, because the remedy differs per attachment." .
+
+:isEncrypted rdf:type owl:DatatypeProperty ;
+    rdfs:label "is encrypted" ;
+    rdfs:domain :ExternalAttachment ;
+    rdfs:range xsd:boolean ;
+    rdfs:comment "Whether the transport protects the traffic on this attachment." .
+
+:isAuthenticated rdf:type owl:DatatypeProperty ;
+    rdfs:label "is authenticated" ;
+    rdfs:domain :ExternalAttachment ;
+    rdfs:range xsd:boolean ;
+    rdfs:comment "Whether the system presents a credential on this attachment. A service deployed with no security configured is legitimately unauthenticated; this records the fact rather than judging it." .
 
 :hasSecurityPosture rdf:type owl:ObjectProperty ;
     rdfs:domain :System ;

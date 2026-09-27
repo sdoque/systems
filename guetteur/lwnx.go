@@ -6,31 +6,40 @@
  *
  * Contributors:
  *   Jan A. van Deventer, Luleå - initial implementation
+ *   Gabriel Axheim Gustafsson, Luleå - the command set, checked on the sensor
  ***************************************************************************SDG*/
 
 package main
 
 // The LightWare LWNX serial protocol, as spoken by the SF45/B.
 //
-// ==========================  READ THIS FIRST  ==========================
-// This framing is written from the published description of LWNX and has NOT
-// been checked against SF45B-Product-Guide-v3.pdf, which nobody has read past
-// the cover. Three things in particular are unconfirmed:
+// Checked against SF45B-Product-Guide-v3.pdf (revision 3, 7 July 2025), and run
+// on the sensor by the students (their commit e5d4545, "working guetteur and
+// loader"). The first version of this file was written without the guide and
+// guessed wrong about the units, the stream value and the sector commands; the
+// command set below is theirs.
 //
-//   - the message IDs below, especially the streaming distance-data message;
-//   - the field layout inside that message;
-//   - how a no-return is signalled, which is the load-bearing detail of the
-//     whole guetteur design and the one thing that must not be guessed.
+// Confirmed by the guide:
+//   - framing: 0xAA, a 16-bit flags word whose top ten bits are the payload
+//     length including the ID byte and whose bit 0 is the write flag, the ID,
+//     the data, and a CRC-16 over everything before it;
+//   - 27 Distance output selects the fields of 44 by bit, and they are packed
+//     in bit order: bit 0 first return raw, int16 cm; bit 8 yaw, int16 1/100°;
+//   - 30 Stream = 5 streams 44 at the update rate;
+//   - a lost signal reads -1000 cm, so every non-positive distance is "no
+//     return" and never a distance — the rule the whole guetteur rests on.
 //
-// What makes it safe to ship anyway is the CRC. Every frame is checked, and a
-// frame that does not validate is discarded and counted. If the framing here is
-// wrong, no frame ever validates, and the system says "no valid frames" instead
-// of publishing plausible rubbish. A wrong guess is loud, not silent — which is
-// the opposite of how the file-based integration fails today.
-//
-// Before this drives anything: read the guide, confirm the three points above,
-// and delete this banner.
-// =======================================================================
+// Where the guide is unclear or disagrees with this code, and the sensor has so
+// far accepted what is sent:
+//   - 96 Scan enabled is listed as "1/Uint16"; one byte is sent;
+//   - 98 and 99, the sector limits, are listed as "4/uint32" while taking
+//     values from -170 to -5; float32 is sent, as for the alarm angles beside
+//     them. A sensor that refused them would still scan its previous sector,
+//     so the log line saying the sector could not be set matters;
+//   - 66 Update rate: in revision 3 value 8 is 1250 samples/s, and accuracy is
+//     ±5 cm up to 500/s and ±10 cm above. An older table gave 8 as 388 Hz. The
+//     value is configuration, and which firmware is fitted decides what it
+//     means.
 
 import (
 	"context"
@@ -46,12 +55,26 @@ import (
 const (
 	lwnxStartByte = 0xAA
 
-	// Message IDs. UNCONFIRMED — see the banner.
-	msgDistanceData = 44
-	msgStreamSelect = 30
-	msgScanSpeed    = 85
-	msgSectorLeft   = 98
-	msgSectorRight  = 99
+	// LWNX Command IDs for LightWare SF45/B
+	cmdProductName       = 0
+	cmdDistanceOutput    = 27  // RW uint32: bitmask selecting fields in cmd 44
+	cmdStream            = 30  // RW uint32: 0 = disabled, 5 = stream distance data cm
+	cmdDistanceDataCm    = 44  // R variable length: measurement distance data in cm
+	cmdUpdateRate        = 66  // RW uint8: rev 3 table 1=50 2=100 3=200 4=400 5=500 6=625 7=1000 8=1250 … 12=5000 per second
+	cmdLostSignalCounter = 195 // RW uint8: returns lost before -1000 is reported (the students had 76)
+	cmdBaudRate          = 79  // RW uint8: serial baud rate
+	cmdScanSpeed         = 85  // RW uint16: cycleDelay in ms (5 to 2000, default 5)
+	cmdScanEnable        = 96  // RW, "1/Uint16" in the guide; one byte is sent: 1 = scan, 0 = stop
+	cmdScanPosition      = 97  // RW float32: current scan angle
+	cmdScanLowAngle      = 98  // RW, -170 to -5 deg (counter-clockwise limit); sent as float32
+	cmdScanHighAngle     = 99  // RW, 5 to 170 deg (clockwise limit); sent as float32
+
+	// Command 27 bitmask: bit 0 = raw first return [cm], bit 8 = yaw angle [1/100 deg]
+	distanceOutputFields = (1 << 0) | (1 << 8) // 0x101
+
+	// Lost signal value reported by SF45/B (-1000 cm). parseDistanceData
+	// treats it, and anything else not positive, as no return.
+	lostSignalValue = -1000
 
 	// A payload longer than this is a framing error rather than a big message.
 	lwnxMaxPayload = 1024
@@ -87,28 +110,64 @@ func newSerialSource(cfg GuetteurConfig) (*serialSource, error) {
 
 func (s *serialSource) close() error { return s.port.Close() }
 
-// setSector asks the sensor to narrow its arc. Narrowing raises the revisit
-// rate over the arc that matters, which is what a navigator wants when moving
-// quickly.
+// setSector sets the scanned arc limits on the SF45/B.
+// Command 98 (low angle) must be negative (-170° to -5°),
+// Command 99 (high angle) must be positive (5° to 170°).
 func (s *serialSource) setSector(degrees float64) error {
-	half := int16(math.Round(degrees / 2))
-	if err := s.writeFrame(msgSectorLeft, i16(half)); err != nil {
+	half := degrees / 2
+	if half < 5 {
+		half = 5
+	}
+	if half > 160 {
+		half = 160
+	}
+	if err := s.writeFrame(cmdScanLowAngle, f32(float32(-half))); err != nil {
 		return err
 	}
-	return s.writeFrame(msgSectorRight, i16(-half))
+	time.Sleep(10 * time.Millisecond)
+	return s.writeFrame(cmdScanHighAngle, f32(float32(half)))
 }
 
 func (s *serialSource) sweeps(ctx context.Context) (<-chan sweep, error) {
-	// Ask for streaming distance data rather than polling: a sweep arrives when
-	// the sensor has one, and polling a scanning sensor returns whatever point
-	// it happens to be looking at.
-	if err := s.writeFrame(msgStreamSelect, u32(msgDistanceData)); err != nil {
-		return nil, fmt.Errorf("request distance stream: %w", err)
+	// 1. Halt any ongoing stream first
+	if err := s.writeFrame(cmdStream, u32(0)); err != nil {
+		return nil, fmt.Errorf("stop stream: %w", err)
 	}
-	if s.cfg.SweepHz > 0 {
-		if err := s.writeFrame(msgScanSpeed, u32(uint32(s.cfg.SweepHz))); err != nil {
-			log.Printf("guetteur: could not set scan speed: %v", err)
-		}
+	time.Sleep(100 * time.Millisecond)
+
+	// 2. Configure distance output: raw first return in cm (bit 0) and yaw angle (bit 8)
+	if err := s.writeFrame(cmdDistanceOutput, u32(distanceOutputFields)); err != nil {
+		return nil, fmt.Errorf("configure distance output: %w", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// 3. Set the measurement update rate (an enumeration; see cmdUpdateRate)
+	if err := s.writeFrame(cmdUpdateRate, u8(uint8(s.cfg.UpdateRate))); err != nil {
+		log.Printf("guetteur: could not set update rate: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// 4. Set the scan speed: the delay between scan positions, 5 to 2000
+	if err := s.writeFrame(cmdScanSpeed, u16(uint16(s.cfg.ScanDelay))); err != nil {
+		log.Printf("guetteur: could not set scan speed: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// 5. Configure scan sector limits
+	if err := s.setSector(s.cfg.SectorDegrees); err != nil {
+		log.Printf("guetteur: could not set scan sector: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// 6. Ensure the scanning motor is running
+	if err := s.writeFrame(cmdScanEnable, u8(1)); err != nil {
+		log.Printf("guetteur: could not enable scanning motor: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// 7. Start streaming Command 44 distance data in cm (stream type 5)
+	if err := s.writeFrame(cmdStream, u32(5)); err != nil {
+		return nil, fmt.Errorf("request distance stream: %w", err)
 	}
 
 	go s.read(ctx)
@@ -125,8 +184,14 @@ func (s *serialSource) read(ctx context.Context) {
 		cur       sweep
 		lastAngle = math.NaN()
 		rising    bool
+		dirSet    bool
 		started   = time.Now()
 	)
+
+	// Minimum points required before a direction reversal is confirmed as a new sweep.
+	// At 388 Hz across a 160° sector, each full sweep takes ~50-100 readings.
+	// Requiring at least 15 points prevents jitter or turnaround pause from fragmenting sweeps.
+	const minPointsPerSweep = 15
 
 	for {
 		select {
@@ -143,7 +208,8 @@ func (s *serialSource) read(ctx context.Context) {
 			}
 			continue
 		}
-		if id != msgDistanceData {
+		// Discard non-measurement frames (e.g. command responses from setup)
+		if id != cmdDistanceDataCm {
 			continue
 		}
 		angle, distance, ok := parseDistanceData(payload, s.cfg.MaxRange)
@@ -151,9 +217,13 @@ func (s *serialSource) read(ctx context.Context) {
 			continue
 		}
 
-		if !math.IsNaN(lastAngle) {
+		// Turnaround detection: only evaluate direction change if angle actually changed
+		if !math.IsNaN(lastAngle) && angle != lastAngle {
 			nowRising := angle > lastAngle
-			if len(cur.angles) > 2 && nowRising != rising {
+			if !dirSet {
+				rising = nowRising
+				dirSet = true
+			} else if nowRising != rising && len(cur.angles) >= minPointsPerSweep {
 				cur.taken = time.Now()
 				cur.duration = time.Since(started)
 				select {
@@ -167,8 +237,8 @@ func (s *serialSource) read(ctx context.Context) {
 				}
 				cur = sweep{}
 				started = time.Now()
+				rising = nowRising
 			}
-			rising = nowRising
 		}
 		lastAngle = angle
 
@@ -178,28 +248,27 @@ func (s *serialSource) read(ctx context.Context) {
 	}
 }
 
-// parseDistanceData pulls one (angle, distance) pair out of a distance message.
+// parseDistanceData pulls one (angle, distance) pair out of a Command 44 message.
+// With Distance Output (Command 27) set to 0x101:
 //
-// UNCONFIRMED layout: first return in millimetres as int16, then the scan angle
-// in hundredths of a degree as int16.
-//
-// The no-return rule is the important line here, and it is stated rather than
-// implied: a negative distance, a zero distance, or anything beyond the
-// configured maximum range is NOT a reading. It must never reach a consumer as
-// a distance, because "nothing came back" and "clear to fifty metres" are the
-// same bytes on this wire and opposite facts on a moving vehicle.
+//	Bytes 0-1: First return raw in cm (int16 LE)
+//	Bytes 2-3: Scan yaw angle in hundredths of a degree (int16 LE)
 func parseDistanceData(payload []byte, maxRange float64) (angleDeg, distanceM float64, ok bool) {
 	if len(payload) < 4 {
 		return 0, 0, false
 	}
-	mm := int16(binary.LittleEndian.Uint16(payload[0:2]))
+	cm := int16(binary.LittleEndian.Uint16(payload[0:2]))
 	centideg := int16(binary.LittleEndian.Uint16(payload[2:4]))
 
-	angleDeg = float64(centideg) / 100
-	if mm <= 0 {
-		return angleDeg, 0, true // a point, but not a return
+	angleDeg = float64(centideg) / 100.0
+
+	// SF45/B signals lost signal / no return as -1000 cm.
+	// Any non-positive distance is not a valid return.
+	if cm <= 0 {
+		return angleDeg, 0, true // point taken, but not a return
 	}
-	distanceM = float64(mm) / 1000
+
+	distanceM = float64(cm) / 100.0 // centimeters to metres
 	if distanceM > maxRange {
 		return angleDeg, 0, true // beyond range is also not a return
 	}
@@ -250,10 +319,9 @@ func (s *serialSource) readFrame() (id byte, payload []byte, err error) {
 	if got := crc16(frame); got != want {
 		s.framesBad++
 		if s.framesBad == 50 && s.framesBad == s.framesSeen {
-			// Fifty frames, none of them valid: this is a framing error and not
-			// a noisy cable. Say so once, plainly, rather than letting it look
-			// like an idle sensor.
-			log.Printf("guetteur: %d frames read and none passed CRC — the framing in lwnx.go is wrong for this sensor, check it against the product guide", s.framesBad)
+			log.Printf("guetteur: %d frames read and none passed CRC — "+
+				"the framing in lwnx.go is wrong for this sensor, check it against the product guide",
+				s.framesBad)
 		}
 		return 0, nil, fmt.Errorf("crc mismatch")
 	}
@@ -270,7 +338,8 @@ func (s *serialSource) writeFrame(id byte, payload []byte) error {
 	return err
 }
 
-// crc16 is CCITT-FALSE, which is what LWNX uses.
+// crc16 is CRC-16-CCITT, polynomial 0x1021, starting from zero (the variant
+// sometimes called XMODEM), as in the guide's own example.
 func crc16(data []byte) uint16 {
 	var crc uint16 = 0
 	for _, b := range data {
@@ -308,8 +377,18 @@ func u32(v uint32) []byte {
 	return b
 }
 
-func i16(v int16) []byte {
+func u16(v uint16) []byte {
 	b := make([]byte, 2)
-	binary.LittleEndian.PutUint16(b, uint16(v))
+	binary.LittleEndian.PutUint16(b, v)
+	return b
+}
+
+func u8(v uint8) []byte {
+	return []byte{v}
+}
+
+func f32(v float32) []byte {
+	b := make([]byte, 4)
+	binary.LittleEndian.PutUint32(b, math.Float32bits(v))
 	return b
 }

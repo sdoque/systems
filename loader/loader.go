@@ -100,6 +100,22 @@ func serving(t *Traits, w http.ResponseWriter, r *http.Request, servicePath stri
 		t.travelService(w, r)
 	case "waist":
 		t.waistService(w, r)
+	case "control":
+		t.controlService(w, r)
+	case "stop":
+		t.stopService(w, r)
+	case "velocity":
+		t.velocityService(w, r)
+	case "curvature":
+		t.curvatureService(w, r)
+	case "articulation":
+		t.articulationService(w, r)
+	case "speedLimit":
+		t.speedLimitService(w, r)
+	case "curvatureLimit":
+		t.curvatureLimitService(w, r)
+	case "distance":
+		t.distanceService(w, r)
 	default:
 		http.Error(w, "Invalid service path", http.StatusBadRequest)
 	}

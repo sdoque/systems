@@ -30,9 +30,76 @@ One unit asset (and one feedback loop goroutine) is created per matched heater p
 
 ## Heater and temperature matching
 
-**Heater discovery**: beekeeper OnOff services are filtered to those whose `DisplayName` detail ends in `"Heater"`. The prefix becomes the functional location — e.g. `"KitchenHeater"` → location `"Kitchen"`.
+**Heater discovery**: beekeeper OnOff services are filtered to those whose
+`DisplayName` detail ends in `"Heater"`. The prefix becomes the functional
+location — `"KitchenHeater"` → `"Kitchen"`.
 
-**Temperature matching**: meteorologue Temperature services are searched for a node whose `FunctionalLocation` detail contains the location string. If no exact match is found, the first available temperature node is used as a fallback.
+**A controller will not drive a device it cannot name.** Discovery hands over a
+name and an address together. If the address does not belong to the device the
+name claims — `BathroomHeater` offered at `.../BathroomLight/on_off` — the
+node is refused with a line in the log, and nothing is switched. The
+comparison ignores case and punctuation, because a provider normalizes a name
+into its path (`lumi.remote.b28ac1` is served at `lumi_remote_b28ac1`).
+
+**A lost binding is found again by name, never by definition alone.** Before
+every command the controller drops anything that is not its own plug, and if
+nothing is left it asks for every `OnOff` on offer and takes the one whose
+display name and address are both its heater's. Not finding it switches nothing.
+The thermometer is chosen again by the same rule it was first chosen by (below).
+This matters because mbaigo, having lost a provider, asks the orchestrator for
+*any* provider of the definition — and every plug and light is an `OnOff`.
+
+At the cottage, on 26 September 2026, this was not hypothetical: three
+controllers were bound to the wrong plugs and one of them was switching a
+bathroom light every ten seconds. The next morning it happened again the other
+way: one refused call emptied a correct binding, and the rediscovery that
+followed was handed the light. See
+`~/Documents/Notes/mbaigoNotes/cottage-light-incident.md`.
+
+**Temperature matching**, in order:
+
+1. a temperature service whose `FunctionalLocation` contains the heater's
+   location;
+2. failing that, one whose `ModuleName` contains it;
+3. failing that, **the sensor the operator named for that room** in
+   `temperatureFrom`;
+4. failing that, **no thermometer**: the log says so, naming the room and the
+   configuration key that would fix it, and the controller keeps looking.
+
+There is no silent fallback. There used to be — any indoor module, and as a last
+resort any service at all — which meant a heater could be driven from another
+room's thermometer, or from the outdoor one. Worse, the choice came from Go's map
+ordering, so it could differ at every restart. At the cottage all three heaters
+ended up driven by the bathroom.
+
+If a room genuinely has no thermometer and should follow another one, say so:
+
+```json
+"temperatureFrom": { "Kitchen": "IndoorModule", "Diningroom": "IndoorModule" }
+```
+
+The name is matched against the provider's `ModuleName`, its `DisplayName`, or
+the asset in its URL.
+
+**A heater without a thermometer still gets a controller.** It never borrows
+another room's temperature; it looks again every period, and until it finds one
+its frost guard is what drives the plug — on, after `frostGuardMinutes`. This
+used to leave such a heater alone, which was sound for a configuration mistake
+and wrong after a power cut: the plugs come back off, the Netatmo readings are
+the last thing to return, and at start no heater had a thermometer, so there
+was no controller and no frost guard, and nothing ever switched the heat back
+on. A heater running on its radiator's own dial costs electricity; one left off
+costs the pipes.
+
+**What it logs at startup**, per heater — the addresses, not just the names,
+because a controller's name is what it believes and the URL is what it will
+actually switch:
+
+```
+ethermostat: created thermostat "BathroomHeater" (location="Bathroom")
+    switching https://host:30185/beekeeper/BathroomHeater/on_off
+    reading   https://host:30183/meteorologue/IndoorModule2/temperature (its module name)
+```
 
 ## P-controller
 
@@ -50,6 +117,7 @@ Clamped to [0, 100]. The plug is switched **ON** when `output > 50` (i.e. room t
 | `samplingPeriod` | `10`    | Control loop period (seconds) |
 | `kp`             | `5.0`   | Proportional gain             |
 | `frostGuardMinutes` | `30` | Minutes blind before the heat is forced on; `0` disables |
+| `temperatureFrom` | none | Per location, the sensor a room without its own thermometer may use |
 
 With the defaults, the plug turns on when the room is more than 0 °C below setpoint and off when it is at or above setpoint.
 

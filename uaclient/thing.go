@@ -41,21 +41,29 @@ import (
 type Traits struct {
 	ServerAddress string              `json:"serverAddress"`
 	NodeList      map[string][]string `json:"NodeList"`
-	Server        *opcua.Client
-	NodeID        *ua.NodeID
-	NodeClass     ua.NodeClass
-	NodeName      string
-	BrowseName    string
-	Description   string
-	AccessLevel   ua.AccessLevelType
-	Path          string
-	DataType      string
-	Writable      bool
-	Unit          string
-	Scale         string
-	Min           string
-	Max           string
-	owner         *components.System
+
+	// How to connect. Empty means in the clear, which is what this system did
+	// before and what an unconfigured server offers. "Basic256Sha256" with
+	// "SignAndEncrypt" is the current minimum worth using; the client
+	// certificate it needs is generated on first run.
+	SecurityPolicy string `json:"securityPolicy,omitempty"`
+	SecurityMode   string `json:"securityMode,omitempty"`
+	ApplicationURI string `json:"applicationUri,omitempty"`
+	Server         *opcua.Client
+	NodeID         *ua.NodeID
+	NodeClass      ua.NodeClass
+	NodeName       string
+	BrowseName     string
+	Description    string
+	AccessLevel    ua.AccessLevelType
+	Path           string
+	DataType       string
+	Writable       bool
+	Unit           string
+	Scale          string
+	Min            string
+	Max            string
+	owner          *components.System
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -87,13 +95,29 @@ func initTemplate() *components.UnitAsset {
 		// rather than a running service — but without it there is nothing to
 		// fall back to, and the system refuses to start.
 		Mission: components.MissionMeasurement,
-		Details: map[string][]string{"PLC": {"Prosys_Simulation_Server"}, "FunctionalLocation": {"Line_1"}, "KKS": {"YLLCP001"}},
+		Details: map[string][]string{"PLC": {"SIMATIC_S7-1500"}, "FunctionalLocation": {"IndexLine"}, "KKS": {"YLLCP001"}},
 		ServicesMap: components.Services{
 			browse.SubPath: &browse,
 			access.SubPath: &access,
 		},
 		Traits: &Traits{
-			ServerAddress: "opc.tcp://192.168.1.2:53530/OPCUA/SimulationServer",
+			ServerAddress: "opc.tcp://192.168.1.111:4840",
+			// Encryption by default. It costs nothing where the server accepts
+			// the client certificate, and where it does not the refusal is
+			// worth seeing rather than silently falling back to plaintext.
+			SecurityPolicy: "Basic256Sha256",
+			SecurityMode:   "SignAndEncrypt",
+			// The machining recipe rather than the coils: how long each station
+			// works a part, and the flags that say a piece is done. These carry
+			// meaning a consumer can act on, where a motor bit does not.
+			NodeList: map[string][]string{"Node_Id": {
+				`ns=3;s="HoldingVariables"."MillingTimeS"`,
+				`ns=3;s="HoldingVariables"."DrillingTimeS"`,
+				`ns=3;s="HoldingVariables"."TransferedMillingTime"`,
+				`ns=3;s="HoldingVariables"."TransferedDrillingTime"`,
+				`ns=3;s="HoldingVariables"."Checkgo"`,
+				`ns=3;s="HoldingVariables"."Finish"`,
+			}},
 		},
 	}
 }
@@ -159,7 +183,23 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 	}
 
 	endpoint := plcConfig.ServerAddress
-	opcuaClient, err := opcua.NewClient(endpoint)
+
+	// The endpoints are read first because the security settings name one of
+	// them: asking for a policy the server does not offer should say so, rather
+	// than failing later inside the handshake.
+	endpoints, err := opcua.GetEndpoints(ctx, endpoint)
+	if err != nil {
+		log.Fatalf("uaclient: cannot read the endpoints of %s: %v", endpoint, err)
+	}
+	opts, how, err := clientOptions(plcConfig, endpoints, ".")
+	if err != nil {
+		log.Fatalf("uaclient: %v", err)
+	}
+	log.Printf("uaclient: connecting to %s with %s\n", endpoint, how)
+	if how == "None/None (in the clear)" {
+		log.Println("uaclient: the session is unencrypted; set securityPolicy to Basic256Sha256 and securityMode to SignAndEncrypt if the server offers them")
+	}
+	opcuaClient, err := opcua.NewClient(endpoint, opts...)
 	if err != nil {
 		log.Fatal(err)
 	}

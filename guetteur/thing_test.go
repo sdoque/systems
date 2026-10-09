@@ -174,3 +174,73 @@ func TestSimulatorDrawsTheCorridor(t *testing.T) {
 		t.Fatal("the simulator produced no sweep within two seconds")
 	}
 }
+
+func sweepOf(distances ...float64) sweep {
+	sw := sweep{}
+	for i, d := range distances {
+		sw.angles = append(sw.angles, float64(i))
+		sw.distances = append(sw.distances, d)
+		sw.valid = append(sw.valid, d > 0)
+	}
+	return sw
+}
+
+// A wall survives, a ghost beyond it does not, and one missed return does not
+// isolate a point on a real surface.
+func TestIsolatedReturnsAreDropped(t *testing.T) {
+	//                wall wall wall ghost wall gap  wall wall
+	sw := sweepOf(2.00, 2.02, 2.05, 6.80, 2.08, 0, 2.12, 2.15)
+	if n := dropIsolated(&sw, 2, 0.15, 0.05); n != 1 {
+		t.Errorf("%d dropped, want only the ghost", n)
+	}
+	if sw.valid[3] {
+		t.Error("the ghost at 6.8 m beyond a 2 m wall survived")
+	}
+	for _, i := range []int{0, 1, 2, 4, 6, 7} {
+		if !sw.valid[i] {
+			t.Errorf("the wall return %d was dropped", i)
+		}
+	}
+}
+
+// A wall met at a shallow angle changes range fast from sample to sample, and
+// steadily: it is not a spike, and must survive.
+func TestAShallowWallSurvives(t *testing.T) {
+	// A wall 1.5 m to the side, sampled every degree from 70° to 85° off its
+	// normal: 4.4 m to 17.2 m, up to 1.3 m between samples.
+	var ds []float64
+	for a := 70.0; a <= 85; a++ {
+		ds = append(ds, 1.5/math.Cos(a*math.Pi/180))
+	}
+	sw := sweepOf(ds...)
+	if n := dropIsolated(&sw, 2, 0.15, 0.05); n != 0 {
+		t.Errorf("%d returns of a shallow wall dropped", n)
+	}
+}
+
+// A return nearer than everything around it — dust, a beam clipping the
+// vehicle — is a spike too.
+func TestANearSpikeIsDropped(t *testing.T) {
+	sw := sweepOf(5.0, 5.05, 0.9, 5.1, 5.12)
+	if n := dropIsolated(&sw, 2, 0.15, 0.05); n != 1 || sw.valid[2] {
+		t.Errorf("%d dropped; the 0.9 m spike valid: %v", n, sw.valid[2])
+	}
+}
+
+// Existing configuration files have no filter settings: the filter is on for
+// them, and only an explicit -1 turns it off.
+func TestTheFilterIsOnUnlessTurnedOff(t *testing.T) {
+	cfg := GuetteurConfig{}
+	applyDefaults(&cfg)
+	if cfg.IsolatedWindow != 2 || cfg.IsolatedToleranceMetres != 0.15 || cfg.IsolatedTolerancePercent != 5 {
+		t.Errorf("an old configuration got %+v", cfg)
+	}
+	cfg = GuetteurConfig{IsolatedWindow: -1}
+	applyDefaults(&cfg)
+	if cfg.IsolatedWindow != -1 {
+		t.Error("-1 did not keep the filter off")
+	}
+	if cfg.MinStrengthPercent != 0 {
+		t.Error("the strength gate is on by default")
+	}
+}

@@ -18,6 +18,7 @@ package main
 
 import (
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -118,5 +119,62 @@ func TestRPMLimitKeepsTheCurve(t *testing.T) {
 	// 1.335 m a revolution: 1 m/s straight is 44.94 RPM.
 	if r := artitrax.wheelRPMs(artitrax.wheelSpeeds(1, 0), 120); math.Abs(r[0]-44.944) > 0.001 {
 		t.Errorf("1 m/s is %.3f RPM, want 44.944", r[0])
+	}
+}
+
+// A wheel with its own circumference uses it; one without, or with zero, takes
+// the shared one.
+func TestCircumferenceAtFallsBackToTheSharedOne(t *testing.T) {
+	g := artitrax
+	for pos := frontLeft; pos <= backRight; pos++ {
+		if c := g.circumferenceAt(pos); c != 1.335 {
+			t.Errorf("position %d without per-wheel values: %v, want 1.335", pos, c)
+		}
+	}
+	g.PerWheel = &WheelCircumferences{FrontRight: 1.340, BackLeft: 1.345}
+	want := [4]float64{frontLeft: 1.335, frontRight: 1.340, backLeft: 1.345, backRight: 1.335}
+	for pos, w := range want {
+		if c := g.circumferenceAt(pos); c != w {
+			t.Errorf("position %d: %v, want %v", pos, c, w)
+		}
+	}
+}
+
+// Driving straight, a larger tire must turn more slowly to cover the same
+// ground, or the vehicle pulls to the side of the smaller one.
+func TestALargerTyreTurnsMoreSlowly(t *testing.T) {
+	g := artitrax
+	g.PerWheel = &WheelCircumferences{FrontLeft: 1.335, FrontRight: 1.340}
+	rpm := g.wheelRPMs(g.wheelSpeeds(1, 0), 1000)
+	for pos, c := range [4]float64{1.335, 1.340, 1.335, 1.335} {
+		if want := 60 / c; math.Abs(rpm[pos]-want) > 1e-9 {
+			t.Errorf("position %d: %v rpm, want %v", pos, rpm[pos], want)
+		}
+	}
+	if rpm[frontRight] >= rpm[frontLeft] {
+		t.Errorf("the larger front-right tire turns at %v rpm, the left at %v", rpm[frontRight], rpm[frontLeft])
+	}
+
+	// Scaled down to the motors' maximum, each wheel still covers the same ground.
+	scaled := g.wheelRPMs(g.wheelSpeeds(10, 0), 100)
+	fl := scaled[frontLeft] * g.circumferenceAt(frontLeft)
+	fr := scaled[frontRight] * g.circumferenceAt(frontRight)
+	if math.Abs(fl-fr) > 1e-9 {
+		t.Errorf("scaled, the front wheels cover %v and %v m a minute", fl, fr)
+	}
+}
+
+// Centimeters for meters is a hundredfold error in a wheel's speed, and must
+// stop the loader rather than drive it.
+func TestCheckCircumferences(t *testing.T) {
+	g := artitrax
+	g.PerWheel = &WheelCircumferences{FrontLeft: 1.335, FrontRight: 1.340, BackLeft: 1.345, BackRight: 1.335}
+	if err := g.checkCircumferences(); err != nil {
+		t.Errorf("measured tires refused: %v", err)
+	}
+	g.PerWheel = &WheelCircumferences{FrontRight: 134}
+	err := g.checkCircumferences()
+	if err == nil || !strings.Contains(err.Error(), "frontRight") {
+		t.Errorf("134 for the front right was accepted, or not named: %v", err)
 	}
 }

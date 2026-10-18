@@ -317,7 +317,7 @@ func (t *Traits) distanceService(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no recent encoder frame for this wheel", http.StatusServiceUnavailable)
 		return
 	}
-	usecases.HTTPProcessGetRequest(w, r, distanceForm(reading, t.dt.cfg.Geometry.WheelCircumference))
+	usecases.HTTPProcessGetRequest(w, r, distanceForm(reading, t.dt.cfg.circumferenceOfNode(t.NodeID)))
 }
 
 func signal(v float64, unit string) *forms.SignalA_v1a {
@@ -356,7 +356,11 @@ func (d *drivetrain) publishFeedback(assets []*components.UnitAsset) {
 			vehicle = ua
 		}
 	}
-	circumference := d.cfg.Geometry.WheelCircumference
+	// Encoder i is motor node i+1, and each wheel rolls its own circumference.
+	var circumference [encoderCount]float64
+	for i := range circumference {
+		circumference[i] = d.cfg.circumferenceOfNode(i + 1)
+	}
 	waist := d.cfg.Waist
 	d.fb.onWheel = func(i int, r wheelReading) {
 		ua := wheels[i]
@@ -365,7 +369,7 @@ func (d *drivetrain) publishFeedback(assets []*components.UnitAsset) {
 		}
 		usecases.Publish(ua, "speed", speedForm(r))
 		usecases.Publish(ua, "travel", travelForm(r))
-		usecases.Publish(ua, "distance", distanceForm(r, circumference))
+		usecases.Publish(ua, "distance", distanceForm(r, circumference[i]))
 	}
 	d.fb.onWaist = func(raw int, at time.Time) {
 		if steering != nil {

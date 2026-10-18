@@ -17,6 +17,7 @@
 package main
 
 import (
+	"encoding/json"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +25,7 @@ import (
 	"time"
 
 	"github.com/sdoque/mbaigo/components"
+	"github.com/sdoque/mbaigo/forms"
 )
 
 // The controller's scale is the one fact the reference implementation states
@@ -247,5 +249,53 @@ func TestTravelIsUnwrapped(t *testing.T) {
 	}
 	if got := distanceForm(last, 1.335).Value; math.Abs(got-1335) > 1e-6 {
 		t.Errorf("1000 revolutions of a 1.335 m wheel = %v m, want 1335", got)
+	}
+}
+
+// The encoders are numbered by motor node and the kinematics by axle and side.
+// A wheel's circumference must follow the motor list, not assume they agree.
+func TestCircumferenceOfNodeFollowsTheMotorList(t *testing.T) {
+	cfg := LoaderConfig{
+		Geometry: Geometry{WheelCircumference: 1.335,
+			PerWheel: &WheelCircumferences{FrontLeft: 1.331, FrontRight: 1.332, BackLeft: 1.333, BackRight: 1.334}},
+		Motors: []MotorSpec{
+			{Name: "BackRight", NodeID: 1, Kind: "wheel", Axle: "back", Side: "right"},
+			{Name: "FrontLeft", NodeID: 2, Kind: "wheel", Axle: "front", Side: "left"},
+			{Name: "Steering", NodeID: 5, Kind: "steering"},
+		},
+	}
+	for _, c := range []struct {
+		node int
+		want float64
+	}{{1, 1.334}, {2, 1.331}, {5, 1.335}, {9, 1.335}} {
+		if got := cfg.circumferenceOfNode(c.node); got != c.want {
+			t.Errorf("node %d: %v, want %v", c.node, got, c.want)
+		}
+	}
+}
+
+// The distance the cartographer reads is the wheel's revolutions times its own
+// circumference.
+func TestDistanceServiceUsesTheWheelsOwnCircumference(t *testing.T) {
+	fb := newFeedback(time.Second)
+	fb.wheels[1] = wheelReading{revolutions: 10, at: time.Now()}
+	cfg := LoaderConfig{
+		Geometry: Geometry{WheelCircumference: 1.335, PerWheel: &WheelCircumferences{FrontRight: 1.340}},
+		Motors:   []MotorSpec{{Name: "FrontRight", NodeID: 2, Kind: "wheel", Axle: "front", Side: "right"}},
+	}
+	tr := &Traits{Name: "FrontRight", NodeID: 2, Kind: "wheel", encoderIndex: 1,
+		dt: &drivetrain{fb: fb, cfg: cfg}}
+
+	w := httptest.NewRecorder()
+	tr.distanceService(w, httptest.NewRequest(http.MethodGet, "/distance", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("distance returned %d", w.Code)
+	}
+	var f forms.SignalA_v1a
+	if err := json.Unmarshal(w.Body.Bytes(), &f); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if math.Abs(f.Value-13.40) > 1e-9 {
+		t.Errorf("ten revolutions of the front right came to %v m, want 13.40", f.Value)
 	}
 }

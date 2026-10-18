@@ -119,6 +119,18 @@ func (m MotorSpec) position() int {
 	return -1
 }
 
+// circumferenceOfNode is the rolling circumference of the wheel driven by motor
+// node. The encoders are numbered by node and the kinematics by axle and side,
+// and this goes through the motor list rather than assuming the two agree.
+func (c LoaderConfig) circumferenceOfNode(node int) float64 {
+	for _, m := range c.Motors {
+		if m.Kind == "wheel" && m.NodeID == node {
+			return c.Geometry.circumferenceAt(m.position())
+		}
+	}
+	return c.Geometry.WheelCircumference
+}
+
 // drivetrain is the state the five assets share: one CAN socket, one setpoint
 // per motor, and the loop that keeps writing them.
 type drivetrain struct {
@@ -438,6 +450,12 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 		}
 	}
 	applyDefaults(&cfg)
+	if err := cfg.Geometry.checkCircumferences(); err != nil {
+		log.Fatalf("loader: %v", err)
+	}
+	log.Printf("loader: wheel circumferences %.4f / %.4f m front, %.4f / %.4f m back (left / right)",
+		cfg.Geometry.circumferenceAt(frontLeft), cfg.Geometry.circumferenceAt(frontRight),
+		cfg.Geometry.circumferenceAt(backLeft), cfg.Geometry.circumferenceAt(backRight))
 
 	fd, err := openCAN(cfg.Interface)
 	if err != nil {
@@ -598,7 +616,9 @@ func applyDefaults(cfg *LoaderConfig) {
 	}
 	if cfg.Geometry.WheelCircumference <= 0 || cfg.Geometry.Track <= 0 ||
 		cfg.Geometry.JointToFront <= 0 || cfg.Geometry.JointToRear <= 0 {
+		perWheel := cfg.Geometry.PerWheel
 		cfg.Geometry = Geometry{JointToFront: 0.6175, JointToRear: 0.6175, Track: 0.6275, WheelCircumference: 1.335}
+		cfg.Geometry.PerWheel = perWheel
 	}
 	applyWaistDefaults(&cfg.Waist)
 	if cfg.FeedbackStaleMs <= 0 {

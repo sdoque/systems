@@ -6,6 +6,7 @@
  *
  * Contributors:
  *   Jan A. van Deventer, Luleå - initial implementation
+ *   Simon Pergel, Luleå - keeping near spikes, which may be real obstacles
  ***************************************************************************SDG*/
 
 package main
@@ -465,9 +466,15 @@ func nearestInSector(sw sweep, sectorDegrees float64) (float64, bool) {
 }
 
 // dropIsolated turns every spike into no return, and reports how many it
-// dropped. A spike is a return farther than all its neighbors, or nearer than
-// all of them, by more than the tolerance; the neighbors are the returns up to
-// window samples either side in the same sweep.
+// dropped. A spike is a return farther than all its neighbors by more than the
+// tolerance; the neighbors are the returns up to window samples either side in
+// the same sweep.
+//
+// Only farther. A return nearer than all its neighbors may be dust, but it may
+// as well be a post or a chair leg one sample wide, and a sensor that dropped
+// it would report the way clear through a real obstacle. A ghost from a
+// reflection is never nearer than the wall it glanced off. The first version
+// dropped near spikes too; Simon Pergel pointed out the post.
 //
 // A ghost from a reflection lands beyond the wall the beam glanced off, with
 // the wall's own returns on both sides of it: every neighbor is nearer. A wall
@@ -518,7 +525,7 @@ func dropIsolated(sw *sweep, window int, tolMetres, tolFraction float64) int {
 		// Judged only with neighbors on both sides: the end of a surface, or
 		// of the sweep, has them on one side only and would always look like
 		// a spike.
-		spike[i] = before && after && similar == 0 && (nearer == 0) != (farther == 0)
+		spike[i] = before && after && similar == 0 && farther == 0 && nearer > 0
 	}
 	dropped := 0
 	for i := 0; i < n; i++ {

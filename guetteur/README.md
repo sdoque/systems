@@ -84,15 +84,17 @@ the wall free.
 Two defences, in this system because a sensor should report only what it
 believes came back:
 
-- **Spikes are dropped**, by default. A return farther than every neighbor, or
-  nearer than every neighbor, up to `isolatedWindow` samples either side, by
+- **Spikes are dropped**, by default. A return farther than every neighbor,
+  up to `isolatedWindow` samples either side, by
   more than `isolatedToleranceMetres` or `isolatedTolerancePercent` of its
   range, becomes no return. A ghost beyond a wall has the wall's returns on
   both sides and is dropped. A wall met at a shallow angle is kept: its range
   changes fast, nearly a meter per degree eight meters down a corridor, but
   steadily, with nearer neighbors on one side and farther on the other. A point
-  with neighbors on one side only is never judged. The first version of this
-  filter dropped a sixth of a clean simulated corridor; this one drops none.
+  with neighbors on one side only is never judged. A return *nearer* than every
+  neighbor is kept: it may be a post or a chair leg one sample wide, and a
+  ghost is never nearer than its wall. The first version of this filter
+  dropped a sixth of a clean simulated corridor; this one drops none.
 - **Weak returns are refused**, when `minStrengthPercent` is above zero. The
   guetteur then asks the sensor for each return's strength (bit 2 of command
   27, packed between the distance and the yaw) and logs every 30 seconds how

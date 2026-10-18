@@ -218,12 +218,12 @@ func TestAShallowWallSurvives(t *testing.T) {
 	}
 }
 
-// A return nearer than everything around it — dust, a beam clipping the
-// vehicle — is a spike too.
-func TestANearSpikeIsDropped(t *testing.T) {
+// A return nearer than everything around it may be a post one sample wide.
+// Dropping it would report the way clear through a real obstacle.
+func TestANearSpikeIsKept(t *testing.T) {
 	sw := sweepOf(5.0, 5.05, 0.9, 5.1, 5.12)
-	if n := dropIsolated(&sw, 2, 0.15, 0.05); n != 1 || sw.valid[2] {
-		t.Errorf("%d dropped; the 0.9 m spike valid: %v", n, sw.valid[2])
+	if n := dropIsolated(&sw, 2, 0.15, 0.05); n != 0 || !sw.valid[2] {
+		t.Errorf("%d dropped; the 0.9 m post valid: %v", n, sw.valid[2])
 	}
 }
 

@@ -41,20 +41,25 @@ sequenceDiagram
             G-->>C: 503, nothing to map this time
         else
             G-->>C: the sweep: angles, distances, valid
-            C->>C: too few returns to be evidence? skip it
-            C->>L: GET distance (left wheel)
-            C->>L: GET distance (right wheel)
+            C->>C: too few returns to be evidence, or the same sweep again? skip it
+            C->>L: GET distance (left and right wheel), once more
             L-->>C: meters rolled, stamped when the frame arrived
+            C->>C: each wheel's travel at the moment the sweep was taken,<br/>between the readings either side of it
             C->>C: the two wheels give the axle's motion,<br/>moved to where the scanner sits
             C->>C: prior = the last map pose, moved by that
             C->>C: match the sweep against the map from the prior,<br/>then probe the answer
             alt the peak is sharp
                 C->>C: take the match
-            else the view cannot say (a plain corridor)
-                C->>C: with the wheels, keep the prior.<br/>Without them, refuse to map and say so
+            else the view cannot say how far along (a plain corridor)
+                C->>C: with the wheels, the heading and the cross position from the match,<br/>the position along the corridor from the wheels.<br/>Without them, refuse to map and say so
             end
             C->>C: integrate, if the vehicle has moved far enough
         end
+    end
+
+    loop every odometry pollMs, 50 ms
+        C->>L: GET distance (left and right wheel)
+        C->>C: keep the readings, three seconds of them
     end
 
     loop every ten seconds
@@ -90,10 +95,22 @@ walls look identical from everywhere between them. This is the aperture problem
 and it is a property of the geometry, not a defect to be tuned away.
 
 So the matcher probes its own answer: it nudges the winning pose and asks
-whether the score actually falls. A flat peak is reported as flat, and then:
+whether the score actually falls. It nudges along x, along y, in heading, and
+along the direction in which the score falls slowest, which it reads off the
+curvature of the peak; a corridor at an angle to the map's axes moves the sweep
+off its walls along x and along y alike, and the first version, which probed
+only those, took it for a sharp fix and let the matcher slide along it. A flat
+peak is reported as flat, and then:
 
-- **with odometry**, the odometry is taken as the pose and the matcher is not
-  allowed to slide it along the direction the map is indifferent to;
+- **with odometry**, the view still gives what it can: in a corridor the heading
+  and the position across it come from the match, and only the position *along*
+  it from the wheels. The first version took the wheels' pose whole, heading
+  included, and so threw away the walls exactly where they hold the heading
+  best; down a corridor the map was the wheels alone, and a wheel that slipped
+  or was slightly larger than the other bent it (`corridor_test.go`: 2 % on one
+  wheel turns the map 36° over 20 m that way, and under 1° this way). Where the
+  view fixes neither the heading nor any direction — an open hall, a sweep of
+  few returns — the wheels' pose is taken whole;
 - **without odometry**, the sweep is *not* integrated at all, and the system
   says so. A corridor mapped from a pose that cannot be known comes out the
   wrong length and looks entirely convincing.
@@ -105,7 +122,7 @@ the two wheels of the scanner's own axle, found by definition `distance`, the
 wheel's `NodeID` and the vehicle's `Model`. Between two sweeps the change in
 each says how far each side moved. The wheel's size is the loader's business:
 it converts revolutions to meters with the circumference in its own
-configuration, so calibrating the wheel size means changing one number, there.
+configuration, one circumference per wheel, so the wheel sizes are calibrated there.
 
 **One axle is enough, and the articulation angle is not needed.** An
 articulated loader bends in the middle, so its two halves point in different
@@ -145,9 +162,16 @@ follows the vehicle to the centimeter; without them every sweep is refused.
   `maxAgeMs` (1.5 s) is not used. The loader and the cartographer must
   therefore agree on the time to within that — run NTP if they are on different
   hosts.
-- *Timing.* The wheels are read when a sweep is processed, not when it was
-  taken, and a sweep is not de-skewed for motion during it. At walking pace
-  that is a few centimeters.
+- *Timing.* The wheels are read every `pollMs` and once more for each sweep,
+  each reading kept with the time the loader received it, and the travel used
+  is interpolated at the sweep's own timestamp. The first version read them
+  when it got round to the sweep, a delay that varies from sweep to sweep and
+  over Wi-Fi by hundreds of milliseconds; down a corridor that variation went
+  straight into the distance. This assumes the guetteur and the loader agree on
+  the time, which they do on the same computer. Two things remain: the
+  guetteur stamps a sweep when it ends rather than in its middle, and a sweep
+  is not de-skewed for the motion during it, which bends a sweep taken while
+  turning.
 
 | `odometry` field | default | |
 |---|---|---|
@@ -158,6 +182,7 @@ follows the vehicle to the centimeter; without them every sweep is refused.
 | `scannerMount` | 0, 0, 0° | forward, left, and yaw of the scanner from that axle's center |
 | `maxAgeMs` | 1500 | longer than the loader's one-second heartbeat |
 | `maxWheelSpeedMetresPerSecond` | 3 | bounds plausible motion between readings |
+| `pollMs` | 50 | how often the wheels are read between sweeps |
 
 **Check the defaults against the vehicle:** they assume the SF45/B is on the
 **front** half, over the axle, facing forward. If it is mounted elsewhere, say

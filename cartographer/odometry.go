@@ -76,6 +76,11 @@ type OdometryConfig struct {
 	// keeps getting older.
 	MaxAgeMs int `json:"maxAgeMs"`
 
+	// PollMs is how often the wheels are read between sweeps. The travel at
+	// the moment a sweep was taken is interpolated between the readings either
+	// side of it, so the closer they are the better; see wheels.go.
+	PollMs int `json:"pollMs"`
+
 	// MaxWheelSpeed bounds how far a wheel can plausibly have rolled between
 	// two readings, in m/s. More than that is not motion: it is the loader
 	// restarting and counting from zero again.
@@ -101,11 +106,16 @@ func defaultOdometry() OdometryConfig {
 		RightNodeID:   2,
 		Track:         0.6275,
 		MaxAgeMs:      1500,
+		PollMs:        50,
 		MaxWheelSpeed: 3,
 	}
 }
 
 var on = true
+
+// wheelHistoryKept is how far back wheel readings are kept: longer than any
+// sweep is likely to be by the time it is processed.
+const wheelHistoryKept = 3 * time.Second
 
 func (c OdometryConfig) on() bool { return c.Enabled == nil || *c.Enabled }
 
@@ -122,6 +132,9 @@ func applyOdometryDefaults(c *OdometryConfig) {
 	}
 	if c.MaxAgeMs <= 0 {
 		c.MaxAgeMs = d.MaxAgeMs
+	}
+	if c.PollMs <= 0 {
+		c.PollMs = d.PollMs
 	}
 	if c.MaxWheelSpeed <= 0 {
 		c.MaxWheelSpeed = d.MaxWheelSpeed

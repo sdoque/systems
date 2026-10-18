@@ -359,7 +359,14 @@ func (g *grid) isSharp(best pose, bestScore float64, angles, distances []float64
 	if bestScore <= 0 {
 		return false
 	}
+	// The weakest direction need not be along x or y. A corridor at an angle
+	// to the map's axes moves the sweep off its walls whichever axis it is
+	// nudged along, and once passed as a sharp fix with the matcher free to
+	// slide along it.
+	along := g.acrossTheCorridor(best, bestScore, angles, distances, valid) + math.Pi/2
 	probes := []pose{
+		{best.x + probeDistance*math.Cos(along), best.y + probeDistance*math.Sin(along), best.theta},
+		{best.x - probeDistance*math.Cos(along), best.y - probeDistance*math.Sin(along), best.theta},
 		{best.x + probeDistance, best.y, best.theta},
 		{best.x - probeDistance, best.y, best.theta},
 		{best.x, best.y + probeDistance, best.theta},
@@ -373,6 +380,62 @@ func (g *grid) isSharp(best pose, bestScore float64, angles, distances []float64
 		}
 	}
 	return true
+}
+
+// alongTheCorridor is the answer for a peak that is not sharp in one direction
+// only: the view fixes the heading and the position across the corridor, and
+// says nothing about how far along it the vehicle is. It returns the match's
+// heading and cross-corridor position, and the prior's position along it.
+//
+// The first version took the prior whole whenever the peak was not sharp,
+// heading included. In a corridor that is nearly every sweep, so the walls,
+// which fix the heading better than anything else on the vehicle, were thrown
+// away and the map was the wheels alone: every degree of slip went into it.
+//
+// ok is false when the heading or the cross direction is not fixed either: an
+// open hall, a sweep of few returns. Then the prior is all there is.
+func (g *grid) alongTheCorridor(best, prior pose, angles, distances []float64, valid []bool) (pose, bool) {
+	s0 := g.score(best, angles, distances, valid, 1)
+	if s0 <= 0 || !g.fixed(best, s0, 0, 0, probeAngle, angles, distances, valid) {
+		return prior, false
+	}
+	across := g.acrossTheCorridor(best, s0, angles, distances, valid)
+	if !g.fixed(best, s0, probeDistance*math.Cos(across), probeDistance*math.Sin(across), 0, angles, distances, valid) {
+		return prior, false
+	}
+	ux, uy := -math.Sin(across), math.Cos(across)
+	k := (prior.x-best.x)*ux + (prior.y-best.y)*uy
+	return pose{best.x + k*ux, best.y + k*uy, best.theta}, true
+}
+
+// fixed is whether moving the pose by (dx, dy, dth), either way, makes the
+// sweep fit the map noticeably worse than s0.
+func (g *grid) fixed(best pose, s0, dx, dy, dth float64, angles, distances []float64, valid []bool) bool {
+	for _, sign := range []float64{1, -1} {
+		p := pose{best.x + sign*dx, best.y + sign*dy, best.theta + sign*dth}
+		if g.score(p, angles, distances, valid, 1) >= sharpRatio*s0 {
+			return false
+		}
+	}
+	return true
+}
+
+// acrossTheCorridor is the direction, in the map, in which the score falls
+// fastest away from the peak; the direction at right angles to it is the one
+// it falls slowest in, which is along a corridor. Near the peak the score
+// falls as a quadratic in the displacement, so its curvature is read off four
+// pairs of probes — along x, along y, and the two diagonals — and the answer
+// is the principal axis of that 2×2 matrix. It is how lidar odometry tells
+// which directions a scan cannot observe.
+func (g *grid) acrossTheCorridor(best pose, s0 float64, angles, distances []float64, valid []bool) float64 {
+	h := probeDistance
+	drop := func(dx, dy float64) float64 {
+		return 2*s0 - g.score(pose{best.x + dx, best.y + dy, best.theta}, angles, distances, valid, 1) -
+			g.score(pose{best.x - dx, best.y - dy, best.theta}, angles, distances, valid, 1)
+	}
+	a, c := drop(h, 0), drop(0, h)
+	b := (drop(h, h) - drop(h, -h)) / 4
+	return 0.5 * math.Atan2(2*b, a-c)
 }
 
 // SearchConfig is the scan matcher's window, exposed because the right values

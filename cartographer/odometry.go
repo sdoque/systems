@@ -76,6 +76,10 @@ type OdometryConfig struct {
 	// keeps getting older.
 	MaxAgeMs int `json:"maxAgeMs"`
 
+	// Noise is how uncertain the wheels' account of each step is, which is
+	// what the view is weighed against; see fusion.go.
+	Noise OdometryNoise `json:"noise"`
+
 	// PollMs is how often the wheels are read between sweeps. The travel at
 	// the moment a sweep was taken is interpolated between the readings either
 	// side of it, so the closer they are the better; see wheels.go.
@@ -107,6 +111,7 @@ func defaultOdometry() OdometryConfig {
 		Track:         0.6275,
 		MaxAgeMs:      1500,
 		PollMs:        50,
+		Noise:         defaultOdometryNoise(),
 		MaxWheelSpeed: 3,
 	}
 }
@@ -132,6 +137,9 @@ func applyOdometryDefaults(c *OdometryConfig) {
 	}
 	if c.MaxAgeMs <= 0 {
 		c.MaxAgeMs = d.MaxAgeMs
+	}
+	if c.Noise == (OdometryNoise{}) {
+		c.Noise = d.Noise
 	}
 	if c.PollMs <= 0 {
 		c.PollMs = d.PollMs

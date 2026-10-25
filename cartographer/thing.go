@@ -99,11 +99,15 @@ type Traits struct {
 	// available: the best guess about where the vehicle is now is where it was
 	// going last time.
 	vx, vy, vtheta float64
-	lastSweep      time.Time
-	integrated     int
-	degenerate     int
-	failures       int
-	usingOdometry  bool
+	// state is at, the drift the wheels report, and the uncertainty of both,
+	// relative to the map; see fusion.go.
+	state         filterState
+	sweeps        int
+	lastSweep     time.Time
+	integrated    int
+	degenerate    int
+	failures      int
+	usingOdometry bool
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -201,6 +205,7 @@ func newResource(uac usecases.ConfigurableAsset, sys *components.System) (*compo
 		rightCervice: wheelCervice(cfg.Odometry, "rightWheel", cfg.Odometry.RightNodeID, sys),
 		odo:          newOdometer(cfg.Odometry),
 		wheels:       newWheelHistory(wheelHistoryKept),
+		state:        newFilter(),
 	}
 	if cfg.Odometry.on() {
 		log.Printf("cartographer: odometry from the loader's wheels %d and %d (%s), %.4f m apart",
@@ -467,6 +472,8 @@ func (t *Traits) consume(sw *forms.ScanA_v1a) {
 	}
 	first := t.integrated == 0
 	prior := t.at
+	state := t.state
+	state.at = prior
 	dt := 0.0
 	if !t.lastSweep.IsZero() {
 		dt = sw.Timestamp.Sub(t.lastSweep).Seconds()
@@ -481,7 +488,8 @@ func (t *Traits) consume(sw *forms.ScanA_v1a) {
 	// wherever the loader was switched on.
 	odo, haveOdometry := t.odometryDelta(sw.Timestamp)
 	if haveOdometry {
-		prior = compose(prior, odo)
+		state = state.predict(odo, t.cfg.Odometry.Noise)
+		prior = state.at
 		t.mu.Lock()
 		t.usingOdometry = true
 		t.mu.Unlock()
@@ -489,37 +497,36 @@ func (t *Traits) consume(sw *forms.ScanA_v1a) {
 		// Constant velocity. Crude, and the reason a real odometry source is
 		// worth having: it assumes the vehicle kept doing what it was doing.
 		prior = pose{prior.x + vx*dt, prior.y + vy*dt, prior.theta + vtheta*dt}
+		state.at = prior
 	}
 
-	at, sharp := prior, true
 	if !first {
 		m := g.match(prior, sw.Angles, sw.Distances, sw.Valid, t.cfg.Search)
-		at, sharp = m.at, m.sharp
-
-		if !sharp {
-			if haveOdometry {
-				// The view cannot pin the vehicle down in every direction. Left
-				// to itself the matcher would slide the pose along whichever
-				// direction the map is indifferent to, so that one comes from
-				// the wheels; what the view does fix — in a corridor the
-				// heading and the distance to the walls — still comes from the
-				// view. Where it fixes too little, the wheels are all there is.
-				at, _ = g.alongTheCorridor(m.at, prior, sw.Angles, sw.Distances, sw.Valid)
-			} else {
-				// Nothing to fall back on. Refusing to map is the honest
-				// answer: a corridor mapped from a pose that cannot be known
-				// comes out the wrong length, and looks entirely convincing.
-				t.mu.Lock()
-				t.degenerate++
-				n := t.degenerate
-				t.mu.Unlock()
-				if n == 1 || n%50 == 0 {
-					log.Printf("cartographer: the view does not fix the vehicle's position (%d sweeps skipped) — this needs odometry, not a better guess", n)
-				}
-				return
+		switch {
+		case haveOdometry:
+			// The wheels' prediction and the view's match, each weighed by how
+			// sure it is. Down a corridor the view is sure across it and of
+			// the heading, and says nothing along it; there the wheels decide.
+			state = state.update(m)
+		case m.sharp:
+			// No wheels: the view alone, and only where it fixes everything.
+			state = state.fix(m)
+		default:
+			// Nothing to fall back on. Refusing to map is the honest answer: a
+			// corridor mapped from a pose that cannot be known comes out the
+			// wrong length, and looks entirely convincing.
+			t.mu.Lock()
+			t.degenerate++
+			n := t.degenerate
+			t.mu.Unlock()
+			if n == 1 || n%50 == 0 {
+				log.Printf("cartographer: the view does not fix the vehicle's position (%d sweeps skipped) — this needs odometry, not a better guess", n)
 			}
+			return
 		}
 	}
+
+	at := state.at
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -537,7 +544,19 @@ func (t *Traits) consume(sw *forms.ScanA_v1a) {
 		t.vtheta = wrapAngle(at.theta-t.at.theta) / dt
 	}
 	t.at = at
+	t.state = state
 	t.lastSweep = sw.Timestamp
+
+	// Once the walls have taught it, the drift is worth a person's attention:
+	// it is the difference between the two wheels' sizes, still uncorrected.
+	t.sweeps++
+	if haveOdometry && t.sweeps%300 == 0 {
+		if sd := math.Sqrt(state.cov[3][3]); sd < 0.25*math.Pi/180 {
+			log.Printf("cartographer: the wheels report %+.2f°/m (±%.2f) of turn that the walls do not see; "+
+				"positive is to the left — the right wheel reads long or the left short",
+				state.drift*180/math.Pi, sd*180/math.Pi)
+		}
+	}
 }
 
 // snapshot writes the picture a person looks at.

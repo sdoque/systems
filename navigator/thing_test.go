@@ -122,7 +122,7 @@ func TestTheCurlInTheReadme(t *testing.T) {
 func TestThePictureIsWritten(t *testing.T) {
 	tm := newTestMap(22, 6)
 	tm.corridor(1, 2, 21, 4)
-	p, err := plan(&tm.m, 0.1, artitrax, 2, 3, 0, 19, 3)
+	p, err := plan(&tm.m, 0.1, evenOdds, artitrax, 2, 3, 0, 19, 3)
 	if err != nil {
 		t.Fatal(err)
 	}

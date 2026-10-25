@@ -202,14 +202,45 @@ func TestFormKeepsUnknownDistinctFromFree(t *testing.T) {
 	if err := f.Check(); err != nil {
 		t.Fatalf("form does not check out: %v", err)
 	}
-	if f.Cells[0] != forms.MapFree {
-		t.Errorf("observed-free cell is %d, want %d", f.Cells[0], forms.MapFree)
+	if c := f.Cells[0]; c >= 50 {
+		t.Errorf("observed-free cell is %d%%, want below 50", c)
 	}
-	if f.Cells[3] != forms.MapOccupied {
-		t.Errorf("occupied cell is %d, want %d", f.Cells[3], forms.MapOccupied)
+	if c := f.Cells[3]; c < 50 || c > forms.MapOccupied {
+		t.Errorf("occupied cell is %d%%, want 50 to 100", c)
 	}
 	if f.Cells[1] != forms.MapUnknown {
 		t.Errorf("untouched cell is %d, want %d (unknown)", f.Cells[1], forms.MapUnknown)
+	}
+}
+
+// A wall struck once and a wall struck from every pass are not the same
+// wall: the form carries how sure the map is, and evidence either way never
+// rounds onto the wrong side of even odds.
+func TestFormCarriesHowSureTheMapIs(t *testing.T) {
+	once := percentOccupied(logOcc)
+	often := percentOccupied(logClamp)
+	if once != 70 || often != 99 {
+		t.Errorf("struck once %d%%, struck often %d%%; want 70 and 99", once, often)
+	}
+	if p := percentOccupied(0.001); p != 50 {
+		t.Errorf("the faintest evidence for a wall gave %d%%, want 50", p)
+	}
+	if p := percentOccupied(-0.001); p != 49 {
+		t.Errorf("the faintest evidence against a wall gave %d%%, want 49", p)
+	}
+	if p := percentOccupied(-logClamp); p != 1 {
+		t.Errorf("certainly free gave %d%%, want 1", p)
+	}
+	if s := pgmShade(logClamp); s > 2 {
+		t.Errorf("a certain wall is shade %d, want black", s)
+	}
+	if s := pgmShade(logOcc); s < 60 || s > 90 {
+		t.Errorf("a wall struck once is shade %d, want a mid grey", s)
+	}
+	for v := float32(-5); v <= 5; v += 0.01 {
+		if v != 0 && pgmShade(v) == 205 {
+			t.Fatalf("observed cell %.2f drawn in the unknown grey", v)
+		}
 	}
 }
 

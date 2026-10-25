@@ -228,6 +228,7 @@ func mappingTraits(wheels func() (wheelSample, wheelSample, error)) *Traits {
 		odo:        newOdometer(cfg.Odometry),
 		readWheels: wheels,
 		wheels:     newWheelHistory(wheelHistoryKept),
+		state:      newFilter(),
 	}
 	tr.g.matchRange = cfg.MatchRangeMetres
 	return tr

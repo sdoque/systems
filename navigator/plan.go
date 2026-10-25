@@ -69,7 +69,18 @@ type planGrid struct {
 // newPlanGrid coarsens a map to the planning resolution. A planning cell is
 // blocked if any map cell inside it is: coarsening must never turn a wall into
 // a gap.
-func newPlanGrid(m *forms.MapA_v1a, res float64) (*planGrid, error) {
+// cellReading is how sure the map must be: a cell at least occupiedFrom
+// percent likely to be occupied is a wall, one below freeBelow percent is
+// free, and one in between is as good as unseen.
+type cellReading struct {
+	occupiedFrom, freeBelow byte
+}
+
+// evenOdds reads the map as it was read before it carried probabilities: any
+// evidence of a wall is a wall, any against it is floor.
+var evenOdds = cellReading{occupiedFrom: 50, freeBelow: 50}
+
+func newPlanGrid(m *forms.MapA_v1a, res float64, read cellReading) (*planGrid, error) {
 	if err := m.Check(); err != nil {
 		return nil, err
 	}
@@ -96,12 +107,12 @@ func newPlanGrid(m *forms.MapA_v1a, res float64) (*planGrid, error) {
 	for my := 0; my < m.Height; my++ {
 		for mx := 0; mx < m.Width; mx++ {
 			c := (my/k)*g.w + mx/k
-			switch m.Cells[my*m.Width+mx] {
-			case forms.MapFree:
-				seenFree[c] = true
-			case forms.MapUnknown:
-			default:
+			switch v := m.Cells[my*m.Width+mx]; {
+			case v == forms.MapUnknown:
+			case v >= read.occupiedFrom:
 				occupied[c] = true
+			case v < read.freeBelow:
+				seenFree[c] = true
 			}
 		}
 	}
@@ -326,8 +337,8 @@ type Plan struct {
 }
 
 // plan finds a forward route from a pose to as near a goal as can be reached.
-func plan(m *forms.MapA_v1a, res float64, v Vehicle, sx, sy, sth, gx, gy float64) (*Plan, error) {
-	g, err := newPlanGrid(m, res)
+func plan(m *forms.MapA_v1a, res float64, read cellReading, v Vehicle, sx, sy, sth, gx, gy float64) (*Plan, error) {
+	g, err := newPlanGrid(m, res, read)
 	if err != nil {
 		return nil, err
 	}

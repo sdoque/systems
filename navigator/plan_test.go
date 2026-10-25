@@ -94,7 +94,7 @@ func length(p *Plan) float64 {
 func TestStraightCorridor(t *testing.T) {
 	tm := newTestMap(22, 6)
 	tm.corridor(1, 2, 21, 4)
-	p, err := plan(&tm.m, 0.1, artitrax, 2, 3, 0, 19, 3)
+	p, err := plan(&tm.m, 0.1, evenOdds, artitrax, 2, 3, 0, 19, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,6 +104,31 @@ func TestStraightCorridor(t *testing.T) {
 	}
 	if l := length(p); l > 18 {
 		t.Errorf("17 m down a straight corridor took a %.1f m route", l)
+	}
+}
+
+// The map carries how sure it is of each cell. A corridor whose floor has
+// been seen only once — 40 % likely to be occupied — is floor read at even
+// odds, and unseen to a navigator that asks for more; a wall struck once, at
+// 70 %, is a wall either way.
+func TestTheMapIsReadAsSurelyAsAsked(t *testing.T) {
+	tm := newTestMap(22, 6)
+	tm.fill(0.9, 1.9, 21.1, 4.1, 70)
+	tm.fill(1, 2, 21, 4, 10)
+	tm.fill(10, 2, 12, 4, 40)
+
+	p, err := plan(&tm.m, 0.1, evenOdds, artitrax, 2, 3, 0, 19, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Adjusted {
+		t.Errorf("at even odds the faintly seen floor blocked the way: %s", p.Why)
+	}
+
+	strict := cellReading{occupiedFrom: 50, freeBelow: 30}
+	p, err = plan(&tm.m, 0.1, strict, artitrax, 2, 3, 0, 19, 3)
+	if err == nil && !p.Adjusted {
+		t.Error("asking for floor seen more than once, the route still crossed floor seen once")
 	}
 }
 
@@ -117,7 +142,7 @@ func TestBehindIsReachedByGoingRound(t *testing.T) {
 	tm.fill(3, 3, 17, 11, forms.MapOccupied)
 
 	// On the bottom leg, facing +x; the goal is 4 m behind.
-	p, err := plan(&tm.m, 0.1, artitrax, 10, 2, 0, 6, 2)
+	p, err := plan(&tm.m, 0.1, evenOdds, artitrax, 10, 2, 0, 6, 2)
 	if err != nil {
 		t.Fatalf("no route round the loop: %v", err)
 	}
@@ -133,7 +158,7 @@ func TestBehindIsReachedByGoingRound(t *testing.T) {
 func TestBehindInADeadEndIsRefused(t *testing.T) {
 	tm := newTestMap(22, 6)
 	tm.corridor(1, 2, 21, 4)
-	_, err := plan(&tm.m, 0.1, artitrax, 12, 3, 0, 4, 3)
+	_, err := plan(&tm.m, 0.1, evenOdds, artitrax, 12, 3, 0, 4, 3)
 	if err == nil || !strings.Contains(err.Error(), "forward") {
 		t.Errorf("a goal behind in a dead end: %v, want a refusal naming the forward-only limit", err)
 	}
@@ -142,7 +167,7 @@ func TestBehindInADeadEndIsRefused(t *testing.T) {
 func TestAGoalOnAWallIsMovedAndExplained(t *testing.T) {
 	tm := newTestMap(22, 6)
 	tm.corridor(1, 2, 21, 4)
-	p, err := plan(&tm.m, 0.1, artitrax, 2, 3, 0, 15, 4.05) // on the upper wall
+	p, err := plan(&tm.m, 0.1, evenOdds, artitrax, 2, 3, 0, 15, 4.05) // on the upper wall
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +183,7 @@ func TestAGoalOnAWallIsMovedAndExplained(t *testing.T) {
 func TestAGoalOutsideTheMapIsMovedAndExplained(t *testing.T) {
 	tm := newTestMap(22, 6)
 	tm.corridor(1, 2, 21, 4)
-	p, err := plan(&tm.m, 0.1, artitrax, 2, 3, 0, 40, 3)
+	p, err := plan(&tm.m, 0.1, evenOdds, artitrax, 2, 3, 0, 40, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +198,7 @@ func TestAGoalOutsideTheMapIsMovedAndExplained(t *testing.T) {
 func TestAGoalInUnseenGroundIsMovedAndExplained(t *testing.T) {
 	tm := newTestMap(22, 6)
 	tm.corridor(1, 2, 12, 4) // the rest of the corridor has not been seen
-	p, err := plan(&tm.m, 0.1, artitrax, 2, 3, 0, 18, 3)
+	p, err := plan(&tm.m, 0.1, evenOdds, artitrax, 2, 3, 0, 18, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +213,7 @@ func TestTheGroundUnderTheVehicleIsFree(t *testing.T) {
 	tm := newTestMap(22, 6)
 	tm.corridor(1, 2, 21, 4)
 	tm.fill(1.8, 2.8, 2.2, 3.2, forms.MapUnknown)
-	if _, err := plan(&tm.m, 0.1, artitrax, 2, 3, 0, 19, 3); err != nil {
+	if _, err := plan(&tm.m, 0.1, evenOdds, artitrax, 2, 3, 0, 19, 3); err != nil {
 		t.Errorf("a vehicle standing on unseen ground could not start: %v", err)
 	}
 }
@@ -199,7 +224,7 @@ func TestTooNarrowIsNotAWayThrough(t *testing.T) {
 	tm := newTestMap(22, 6)
 	tm.corridor(1, 2, 21, 4)
 	tm.fill(9, 2, 11, 3.5, forms.MapOccupied) // leaves a 0.5 m gap
-	p, err := plan(&tm.m, 0.1, artitrax, 2, 3, 0, 19, 3)
+	p, err := plan(&tm.m, 0.1, evenOdds, artitrax, 2, 3, 0, 19, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +252,7 @@ func TestStripesBetweenRaysAreNotWalls(t *testing.T) {
 			tm.m.Cells[j*tm.m.Width+i] = forms.MapUnknown
 		}
 	}
-	p, err := plan(&tm.m, 0.1, artitrax, 2, 3, 0, 19, 3)
+	p, err := plan(&tm.m, 0.1, evenOdds, artitrax, 2, 3, 0, 19, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +274,7 @@ func TestGapsBetweenRaysAreBridgedButNotTheUnknown(t *testing.T) {
 			}
 		}
 	}
-	p, err := plan(&tm.m, 0.1, artitrax, 2, 3, 0, 19, 3)
+	p, err := plan(&tm.m, 0.1, evenOdds, artitrax, 2, 3, 0, 19, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +286,7 @@ func TestGapsBetweenRaysAreBridgedButNotTheUnknown(t *testing.T) {
 	tm2 := newTestMap(22, 6)
 	tm2.corridor(1, 2, 21, 4)
 	tm2.fill(12, 2, 21, 4, forms.MapUnknown)
-	p2, err := plan(&tm2.m, 0.1, artitrax, 2, 3, 0, 19, 3)
+	p2, err := plan(&tm2.m, 0.1, evenOdds, artitrax, 2, 3, 0, 19, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +300,7 @@ func TestABridgeDoesNotCrossAWall(t *testing.T) {
 	tm := newTestMap(22, 6)
 	tm.corridor(1, 2, 21, 4)
 	tm.fill(10, 2, 10.1, 4, forms.MapOccupied) // a wall across the corridor
-	p, err := plan(&tm.m, 0.1, artitrax, 2, 3, 0, 19, 3)
+	p, err := plan(&tm.m, 0.1, evenOdds, artitrax, 2, 3, 0, 19, 3)
 	if err != nil {
 		t.Fatal(err)
 	}

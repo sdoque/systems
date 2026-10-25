@@ -62,10 +62,21 @@ func TestTheViewFixesWhatItCanAndTheWheelsTheRest(t *testing.T) {
 	if m.sharp {
 		t.Fatalf("a plain corridor gave a sharp fix at %+v (score %.1f)", m.at, m.score)
 	}
-	got, ok := g.alongTheCorridor(m.at, prior, an, d, v)
-	if !ok {
-		t.Fatal("the corridor was not recognized as fixing the heading and the cross position")
+	// The match carries no information along the corridor, and plenty across.
+	quad := func(x, y float64) float64 {
+		v := m.info.mulVec([3]float64{x, y, 0})
+		return x*v[0] + y*v[1]
 	}
+	if a, c := quad(ux, uy), quad(nx, ny); a > 1e-3*c {
+		t.Errorf("information %.3g along the corridor against %.3g across it", a, c)
+	}
+	// The wheels' prediction, uncertain by 5 cm either way and by 2°.
+	f := newFilter()
+	f.at = prior
+	drift := f.cov[3][3]
+	f.cov = embed(diag3(0.05*0.05, 0.05*0.05, math.Pow(2*math.Pi/180, 2)))
+	f.cov[3][3] = drift
+	got := f.update(m).at
 	along := (got.x-truth.x)*ux + (got.y-truth.y)*uy
 	across := (got.x-truth.x)*nx + (got.y-truth.y)*ny
 	heading := wrapAngle(got.theta-truth.theta) * 180 / math.Pi
@@ -73,7 +84,7 @@ func TestTheViewFixesWhatItCanAndTheWheelsTheRest(t *testing.T) {
 	if math.Abs(along-0.2) > 0.03 {
 		t.Errorf("along the corridor %.3f m, want the wheels' 0.2", along)
 	}
-	if math.Abs(across) > 0.03 {
+	if math.Abs(across) > 0.02 {
 		t.Errorf("across the corridor %.3f m off; the walls fix that", across)
 	}
 	if math.Abs(heading) > 0.5 {
@@ -118,6 +129,12 @@ func TestTheWallsHoldTheHeadingWhenTheWheelsSlip(t *testing.T) {
 	}
 	if math.Abs(got.y) > 0.10 {
 		t.Errorf("%.3f m to the side of the corridor's center line", got.y)
+	}
+	// The filter has learned what the wheels get wrong: 2 % over a 0.6275 m
+	// track is 1.83° of turn per meter that never happened.
+	want := 0.02 / tr.cfg.Odometry.Track * 180 / math.Pi
+	if got := tr.state.drift * 180 / math.Pi; math.Abs(got-want) > 0.2 {
+		t.Errorf("learned a drift of %.2f°/m, want %.2f", got, want)
 	}
 	// Along the corridor only the wheels can say, and they read 1 % long on
 	// average.

@@ -7,13 +7,12 @@ Like the [guetteur](../guetteur) it is the sensor and nothing more. It knows the
 lidar's network protocol and where on the vehicle the lidar is mounted, and it
 publishes what a consumer can act on. It does not map and it does not drive.
 
-> **Not yet run against the device.** It is written from Livox's published
-> protocol and checked against the Livox-SDK2 source where the prose leaves a
-> detail open. Every packet format, both checksums and the command exchange are
-> tested against frames built from the specification, against a simulator that
-> produces real packets, and against a fake lidar on the loopback interface. The
-> guetteur's first version was written the same way and was wrong until it met
-> the sensor; expect the same here, and see [the first run](#the-first-run).
+> **First run on the Artitrax's Mid-360 on 26 October 2026** (firmware
+> 13.18.2.44). Discovery, the queries, configuring the lidar, the point cloud
+> and the IMU all worked; two things the documents did not say were found and
+> handled: the point packets' checksum is left empty, and the gyroscope's zero
+> is well away from zero (below). Not yet checked on the vehicle: the mount —
+> where the lidar sits and how it is turned — and the vehicle's own outline.
 
 ## Services
 
@@ -81,9 +80,11 @@ points are not corrected for it; the same is true of the guetteur's sweep.
 
 On the computer the lidar is wired to:
 
-1. **Network.** The lidar's address is `192.168.1.1XX`, the last two digits of
-   its serial number. The port it is plugged into needs an address on
-   `192.168.1.x`; Livox's instructions use `192.168.1.50`.
+1. **Network.** On the Artitrax the lidar is at `192.168.10.113` and the
+   laptop's Ethernet port at `192.168.10.50`, as the ROS driver's configuration
+   had set them. From the factory, the lidar's address is `192.168.1.1XX`, the
+   last two digits of its serial number, and the port it is plugged into needs
+   an address on `192.168.1.x`; Livox's instructions use `192.168.1.50`.
 2. **Probe.** `./vigie -probe` broadcasts a discovery request on every
    interface, and prints what the lidar says about itself — serial number,
    firmware, working state, temperature, diagnostic status, and where it is
@@ -94,10 +95,21 @@ On the computer the lidar is wired to:
    replayed anywhere (`"source": "replay"`, `"replayFile": "run1.vigie"`), and is
    what the parser is tested against before anyone trusts it on the vehicle.
 4. **Look at the log.** Every ten seconds the vigie says what arrived and what
-   it refused. If two hundred well-formed packets in a row fail the checksum, it
-   says that loudly: the data checksum is the one detail Livox's own SDK never
-   checks, so it is the one most likely to differ from the document. Look at a
-   recording before setting `checkDataCRC` to `false`.
+   it refused, if anything was. The Mid-360 leaves the checksum of its point
+   packets empty (only the IMU packets carry one), which the vigie says once
+   and then checks those packets for their structure alone; a checksum that is
+   filled in and wrong is still refused. If two hundred well-formed packets in
+   a row fail one, it says so loudly: look at a recording before setting
+   `checkDataCRC` to `false`.
+5. **Stand still for the first three seconds.** The gyroscope reads something
+   when nothing turns — on the Artitrax −2.3, +0.3 and −1.3°/s about x, y and z,
+   which would turn the heading 75° a minute — so the vigie measures that zero
+   at start and subtracts it. `yawrate` and `heading` answer 503 until it has;
+   if the vehicle moves meanwhile, the log says so and it measures again. The
+   zero also wanders as the lidar warms: the vertical one moved by 0.18°/s
+   between two runs four minutes apart. Over a long drive, whatever uses the
+   heading should go on estimating it, as the cartographer does the wheels'
+   drift.
 
 **The configuration is written to the lidar and kept there.** With `configure`
 true (the default) the vigie tells the lidar to send its data to this host. A
@@ -112,13 +124,14 @@ ROS driver or Livox Viewer elsewhere would then stop receiving it. Set
 | `replayFile` | | a recording made with `-record` |
 | `lidarIP` | | the lidar's address; empty finds it by broadcast |
 | `configure` | true | point the lidar's data at this host, and set it sampling |
-| `checkDataCRC` | true | check the CRC-32 on every point and IMU packet |
+| `checkDataCRC` | true | check the CRC-32 on every point and IMU packet that carries one |
 | `mount` | z 1.0 m | where the lidar is, from the reference point on the ground, and how it is turned: `xMetres`, `yMetres`, `zMetres`, `rollDegrees`, `pitchDegrees`, `yawDegrees` |
 | `body` | none | the vehicle's own outline, `minX`…`maxY` in meters, whose returns are ignored |
 | `slice` | 0.3–1.5 m, 1°, 0.2–40 m, 200 ms | the band of heights, bin width, ranges and window that make the scan |
 | `clearance` | ±0.45 m, 0.1–1.6 m | the corridor ahead: half its width, and the heights the vehicle could hit |
 | `imuAverageMs` | 100 | the window the IMU's readings are averaged over |
 | `staleAfterMs` | 1000 | how old the newest data may be before the services stop answering |
+| `gyroZeroSeconds` | 3 | how long the vehicle must stand still at start for the gyroscope's zero to be measured |
 
 **The mount assumes the Mid-360's own frame is x forward, y left, z up**, as
 Livox draws it. That has not been checked on the vehicle. The quickest check is

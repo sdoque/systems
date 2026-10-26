@@ -11,6 +11,7 @@
 package main
 
 import (
+	"log"
 	"math"
 	"sync"
 	"time"
@@ -222,14 +223,73 @@ func clearanceAhead(pts []timedPoint, cfg ClearanceConfig, body Box) (float64, b
 //-------------------------------------The IMU
 
 // motion is what the IMU says, in the vehicle frame.
+//
+// The gyroscope reads something even when nothing turns. On the Artitrax's
+// Mid-360 that was −2.4, +0.3 and −1.4°/s about x, y and z, steady over
+// minutes, against a noise of 0.05 to 0.1°/s. Integrated as it is, the heading
+// drifts 86° a minute. So its zero is measured first: the samples of the first
+// zeroFor are averaged, the vehicle standing still, and subtracted from every
+// sample after. If the samples spread more than a still vehicle's would, the
+// vehicle was moving; the measurement starts again, and the rate and heading
+// stay unavailable until it succeeds.
 type motion struct {
 	mu      sync.Mutex
 	samples []timedIMU
 	window  time.Duration
 
-	heading   float64 // degrees, integrated since start
+	heading   float64 // degrees, integrated since the zero was known
 	lastStamp uint64  // the lidar's time of the previous sample, ns
 	got       bool
+
+	zeroFor  time.Duration
+	zero     [3]float64 // rad/s
+	known    bool
+	calStart uint64 // lidar time the current measurement began, ns
+	calN     float64
+	calSum   [3]float64
+	calSq    [3]float64
+}
+
+// stillSpread is the most a still gyroscope's readings spread, one standard
+// deviation in rad/s: five times the noise measured on the vehicle.
+const stillSpread = 0.5 * math.Pi / 180
+
+// zeroKnown is whether the gyroscope's zero has been measured.
+func (m *motion) zeroKnown() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.known || m.zeroFor == 0
+}
+
+// measureZero takes one raw sample into the zero's measurement.
+func (m *motion) measureZero(s timedIMU) {
+	if m.calN == 0 {
+		m.calStart = s.stamp
+	}
+	m.calN++
+	for k := 0; k < 3; k++ {
+		m.calSum[k] += s.gyro[k]
+		m.calSq[k] += s.gyro[k] * s.gyro[k]
+	}
+	if s.stamp < m.calStart || time.Duration(s.stamp-m.calStart) < m.zeroFor {
+		return
+	}
+	var mean, spread [3]float64
+	still := true
+	for k := 0; k < 3; k++ {
+		mean[k] = m.calSum[k] / m.calN
+		spread[k] = math.Sqrt(math.Max(0, m.calSq[k]/m.calN-mean[k]*mean[k]))
+		still = still && spread[k] < stillSpread
+	}
+	m.calN, m.calSum, m.calSq = 0, [3]float64{}, [3]float64{}
+	if !still {
+		log.Printf("vigie: the vehicle moved while the gyroscope's zero was measured (spread %.2f, %.2f, %.2f °/s); measuring again",
+			spread[0]*180/math.Pi, spread[1]*180/math.Pi, spread[2]*180/math.Pi)
+		return
+	}
+	m.zero, m.known = mean, true
+	log.Printf("vigie: the gyroscope's zero is %.3f, %.3f, %.3f °/s about x, y, z; it is subtracted from every reading",
+		mean[0]*180/math.Pi, mean[1]*180/math.Pi, mean[2]*180/math.Pi)
 }
 
 type timedIMU struct {
@@ -242,11 +302,17 @@ type timedIMU struct {
 func (m *motion) add(s timedIMU) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.zeroFor > 0 && !m.known {
+		m.measureZero(s)
+	}
+	for k := 0; k < 3; k++ {
+		s.gyro[k] -= m.zero[k]
+	}
 	// Integrate the yaw rate into a heading, sample by sample, on the lidar's
 	// own clock: arrival times carry the network's jitter, its stamps do not.
 	// A gap of more than a quarter second is a lost stream, not a quarter
 	// second of turning, and a clock that went backwards is a restart.
-	if m.got && s.stamp > m.lastStamp {
+	if m.got && s.stamp > m.lastStamp && (m.known || m.zeroFor == 0) {
 		if dt := float64(s.stamp-m.lastStamp) / 1e9; dt < 0.25 {
 			m.heading += s.gyro[2] * dt * 180 / math.Pi
 		}

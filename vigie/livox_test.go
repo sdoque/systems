@@ -16,6 +16,7 @@ import (
 	"errors"
 	"math"
 	"net"
+	"os"
 	"testing"
 )
 
@@ -167,5 +168,53 @@ func TestABadDataPacketIsRefused(t *testing.T) {
 	}
 	if _, err := decodePacket(flipped, false); err != nil {
 		t.Errorf("with the CRC check off, a well-formed packet was refused: %v", err)
+	}
+}
+
+// Packets as the Artitrax's Mid-360 sent them (firmware 13.18.2.44), taken
+// from a recording on the vehicle on 26 October 2026.
+func TestPacketsFromTheDevice(t *testing.T) {
+	pts, err := os.ReadFile("testdata/mid360-points.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Its point packets leave the checksum empty. They must still be read,
+	// marked as unchecked, and a corrupted one with a checksum filled in
+	// must not be.
+	p, err := decodePacket(pts, true)
+	if err != nil {
+		t.Fatalf("a point packet from the device: %v", err)
+	}
+	if !p.unchecked || p.dataType != dataCartesian32 || len(p.points)+p.empty != 96 {
+		t.Errorf("unchecked %v, type %d, %d points and %d empty; want an unchecked 32-bit packet of 96",
+			p.unchecked, p.dataType, len(p.points), p.empty)
+	}
+	for _, q := range p.points {
+		if r := math.Sqrt(q.x*q.x + q.y*q.y + q.z*q.z); r < 0.05 || r > 70 {
+			t.Errorf("a return at %.2f m, outside what a Mid-360 measures", r)
+			break
+		}
+	}
+	wrong := append([]byte(nil), pts...)
+	binary.LittleEndian.PutUint32(wrong[24:], 0xDEADBEEF)
+	if _, err := decodePacket(wrong, true); !errors.Is(err, errDataCRC) {
+		t.Errorf("a filled-in wrong checksum: %v, want errDataCRC", err)
+	}
+
+	// Its IMU packets carry the checksum, and it matches.
+	imu, err := os.ReadFile("testdata/mid360-imu.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err = decodePacket(imu, true)
+	if err != nil {
+		t.Fatalf("an IMU packet from the device: %v", err)
+	}
+	if p.unchecked || len(p.imu) != 1 {
+		t.Fatalf("unchecked %v with %d samples; want a checked packet of one", p.unchecked, len(p.imu))
+	}
+	a := p.imu[0].acc
+	if g := math.Sqrt(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]); math.Abs(g-1) > 0.05 {
+		t.Errorf("the standing vehicle's accelerometer reads %.3f g, want about 1", g)
 	}
 }

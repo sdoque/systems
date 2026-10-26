@@ -210,3 +210,41 @@ func TestARecordingReplays(t *testing.T) {
 		t.Errorf("%d datagrams replayed, want 5", n)
 	}
 }
+
+// The gyroscope reads something when nothing turns; on the vehicle about
+// −1.4°/s about the vertical. Its zero is measured while still, the rate and
+// heading are unavailable until then, and a vehicle that moves during the
+// measurement makes it start again.
+func TestTheGyroscopesZeroIsMeasuredFirst(t *testing.T) {
+	const bias = -1.434 * math.Pi / 180
+	m := &motion{window: 100 * time.Millisecond, zeroFor: 3 * time.Second}
+	start := time.Now()
+	stamp := uint64(1e12)
+	feed := func(seconds, rate float64, wobble float64) {
+		for i := 0; i < int(seconds*200); i++ {
+			stamp += 5e6
+			w := wobble * math.Sin(float64(i)/7)
+			m.add(timedIMU{at: start.Add(time.Duration(stamp - 1e12)), stamp: stamp, gyro: [3]float64{0, 0, bias + rate + w}, acc: [3]float64{0, 0, 1}})
+		}
+	}
+	// Moving at first: a slow sway of ±10°/s.
+	feed(3.1, 0, 10*math.Pi/180)
+	if m.zeroKnown() {
+		t.Fatal("a zero was taken while the vehicle swayed")
+	}
+	// Then still. The measurement under way when the swaying stopped still
+	// holds some of it and is refused too; the one after is clean.
+	feed(6.2, 0, 0)
+	if !m.zeroKnown() {
+		t.Fatal("six seconds still and the zero is still unknown")
+	}
+	// Turning at 10°/s for 2 s: 20°, not 20° plus the bias's 2.9°.
+	feed(2, 10*math.Pi/180, 0)
+	gyro, _, heading, _, _ := m.averages()
+	if math.Abs(gyro[2]*180/math.Pi-10) > 0.05 {
+		t.Errorf("yaw rate %.3f°/s, want 10", gyro[2]*180/math.Pi)
+	}
+	if math.Abs(heading-20) > 0.1 {
+		t.Errorf("heading %.2f° after turning 20°", heading)
+	}
+}

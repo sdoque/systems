@@ -61,6 +61,10 @@ type VigieConfig struct {
 
 	IMUAverageMs int `json:"imuAverageMs"`
 	StaleAfterMs int `json:"staleAfterMs"`
+
+	// GyroZeroSeconds is how long the vehicle must stand still at start for
+	// the gyroscope's zero to be measured; see motion in process.go.
+	GyroZeroSeconds float64 `json:"gyroZeroSeconds"`
 }
 
 // Traits is the lidar, and what a service handler is given.
@@ -71,6 +75,10 @@ type Traits struct {
 	imu  *motion
 	rec  *recorder
 	stat stats
+
+	// saidUnchecked is which data types have been reported as arriving with
+	// an empty checksum; read and written by consume alone.
+	saidUnchecked [256]bool
 }
 
 // stats counts what arrived, so the log can say what is wrong.
@@ -141,9 +149,10 @@ func defaultConfig() VigieConfig {
 			BinDegrees: 1, MinRangeMetres: 0.2, MaxRangeMetres: 40,
 			AccumulateMs: 200,
 		},
-		Clearance:    ClearanceConfig{HalfWidthMetres: 0.45, MinHeightMetres: 0.1, MaxHeightMetres: 1.6},
-		IMUAverageMs: 100,
-		StaleAfterMs: 1000,
+		Clearance:       ClearanceConfig{HalfWidthMetres: 0.45, MinHeightMetres: 0.1, MaxHeightMetres: 1.6},
+		IMUAverageMs:    100,
+		GyroZeroSeconds: 3,
+		StaleAfterMs:    1000,
 	}
 }
 
@@ -169,6 +178,9 @@ func applyDefaults(c *VigieConfig) {
 	if c.Clearance.HalfWidthMetres <= 0 {
 		c.Clearance = d.Clearance
 	}
+	if c.GyroZeroSeconds <= 0 {
+		c.GyroZeroSeconds = d.GyroZeroSeconds
+	}
 	if c.IMUAverageMs <= 0 {
 		c.IMUAverageMs = d.IMUAverageMs
 	}
@@ -192,7 +204,8 @@ func newResource(uac usecases.ConfigurableAsset, sys *components.System, recordP
 		cfg: cfg,
 		rot: cfg.Mount.rotation(),
 		pts: &cloud{window: time.Duration(cfg.Slice.AccumulateMs) * time.Millisecond},
-		imu: &motion{window: time.Duration(cfg.IMUAverageMs) * time.Millisecond},
+		imu: &motion{window: time.Duration(cfg.IMUAverageMs) * time.Millisecond,
+			zeroFor: time.Duration(cfg.GyroZeroSeconds * float64(time.Second))},
 	}
 	if recordPath != "" {
 		rec, err := newRecorder(recordPath)
@@ -325,6 +338,11 @@ func (t *Traits) consume(ctx context.Context, in <-chan datagram) {
 			p, err := decodePacket(d.data, t.cfg.CheckDataCRC)
 			if !t.count(err) {
 				continue
+			}
+			if p.unchecked && !t.saidUnchecked[p.dataType] {
+				t.saidUnchecked[p.dataType] = true
+				log.Printf("vigie: the lidar leaves the checksum of its data type %d packets empty; "+
+					"they are checked for their structure only", p.dataType)
 			}
 			if p.dataType == dataIMU {
 				for _, s := range p.imu {
@@ -460,6 +478,10 @@ func (t *Traits) motionService(w http.ResponseWriter, r *http.Request, what stri
 	gyro, acc, heading, at, ok := t.imu.averages()
 	if !ok || time.Since(at) > time.Duration(t.cfg.StaleAfterMs)*time.Millisecond {
 		http.Error(w, "no IMU sample within the freshness window", http.StatusServiceUnavailable)
+		return
+	}
+	if (what == "yawrate" || what == "heading") && !t.imu.zeroKnown() {
+		http.Error(w, "the gyroscope's zero is still being measured: the vehicle must stand still", http.StatusServiceUnavailable)
 		return
 	}
 	pitch, roll := tilt(acc)

@@ -336,6 +336,8 @@ type packet struct {
 	points   []point       // returns only: a point with no return is dropped
 	empty    int           // points that came back as no return
 	imu      []imuSample
+	// unchecked is a packet whose sender left the checksum empty.
+	unchecked bool
 }
 
 var errDataCRC = errors.New("data packet CRC-32 does not match")
@@ -345,9 +347,13 @@ var errDataCRC = errors.New("data packet CRC-32 does not match")
 // The structure is always checked: the length field against the datagram, the
 // point count against the data type. checkCRC adds the CRC-32 the protocol
 // describes over the timestamp and the data. Livox's own SDK does not check it,
-// so whether every device fills it in is not known until one has been read; a
-// structural fault is refused either way, and a CRC fault is reported as
-// errDataCRC so the caller can count it separately.
+// and on the Artitrax's Mid-360 (firmware 13.18.2.44, October 2026) only the
+// IMU packets carry it: every point packet has zero in the field. A stored
+// zero is therefore taken as "not filled in", and such a packet is checked for
+// its structure alone and marked unchecked; the odds that a real checksum is
+// zero are one in four billion. A structural fault is refused either way, and
+// a CRC that is filled in and wrong is reported as errDataCRC so the caller
+// can count it separately.
 func decodePacket(b []byte, checkCRC bool) (packet, error) {
 	if len(b) < dataHeaderLength {
 		return packet{}, fmt.Errorf("data packet of %d bytes is shorter than its header", len(b))
@@ -376,7 +382,10 @@ func decodePacket(b []byte, checkCRC bool) (packet, error) {
 	if n*size != len(data) {
 		return packet{}, fmt.Errorf("data type %d: %d points of %d bytes do not fill %d bytes", p.dataType, n, size, len(data))
 	}
-	if checkCRC && binary.LittleEndian.Uint32(b[24:]) != crc32Livox(b[28:]) {
+	switch stored := binary.LittleEndian.Uint32(b[24:]); {
+	case stored == 0:
+		p.unchecked = true
+	case checkCRC && stored != crc32Livox(b[28:]):
 		return p, errDataCRC
 	}
 	for i := 0; i < n; i++ {

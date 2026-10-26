@@ -197,14 +197,24 @@ four-corner model: sender, sender's access point, receiver's access point,
 receiver). Payment itself travels on the banking rails, not on Peppol.
 
 So Peppol sits at the **boundary of the company**, not inside the local cloud.
-In the pen-holder case it could carry the order-to-cash process across that
-boundary:
+
+The pen-holder systems were built with this in view. Since they were
+introduced on 13 April 2026, the clerk's form has asked for the buyer's Peppol
+participant identifier (`peppol_id`, an ISO 6523 scheme code and an
+identifier, such as `0007:` and a Swedish organization number), and the
+tracker stores it with the order. The clerk's README names the intended use:
+the system that takes the order downstream sends the e-invoice through the
+Peppol network. What is missing is that system, and the gateway it would use.
+
+In the pen-holder case Peppol could carry the order-to-cash process across the
+company's boundary:
 
 - **Order in.** A Peppol Order (BIS Ordering 3, a UBL Order) arriving at the
   company's access point becomes a tracker order, exactly as the clerk's form
   does. The clerk serves people; Peppol serves other companies' systems.
 - **Invoice out.** When an order is completed, an invoice (Peppol BIS Billing
-  3.0, compliant with the European standard EN 16931) goes to the customer.
+  3.0, compliant with the European standard EN 16931) goes to the customer,
+  addressed by the participant identifier already on the order.
 - **Payment back.** A remittance advice, where the customer sends one, closes
   the case.
 

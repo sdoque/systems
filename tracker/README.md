@@ -68,6 +68,7 @@ Every request and response body carries a `PenHolderOrder_v1` JSON object.
 | `timestamp` | `time.Time` | When the order was placed |
 | `completed_timestamp` | `time.Time` | When production finished (zero until complete) |
 | `production_line` | `string` | Assigned production line |
+| `peppol_id` | `string` | The buyer's Peppol participant identifier, `scheme:identifier` (e.g. `0007:5560564317`); optional, for e-invoicing downstream |
 | `version` | `string` | Always `"PenHolderOrder_v1"` |
 
 The `version` field identifies the form type to the mbaigo unpacking machinery
@@ -91,6 +92,7 @@ CREATE TABLE IF NOT EXISTS PenHolderOrders (
     OrderedTimestamp   DATETIME NOT NULL,
     CompletedTimestamp DATETIME,
     ProductionLine     TEXT    NOT NULL,
+    PeppolID           TEXT    NOT NULL DEFAULT '',
     Version            TEXT    NOT NULL
 );
 ```

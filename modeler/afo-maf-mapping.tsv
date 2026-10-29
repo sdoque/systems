@@ -1,0 +1,106 @@
+# How each AFO term appears in SysML v2 — the mapping between the ontology
+# the kgrapher writes (kgrapher/ontologies/afo.ttl) and the library the
+# modeler writes (mAF.sysml). mAF is generated from this table and AFO by
+# `go generate` (cmd/mafgen); the frame it is generated into, for what AFO
+# does not determine, is maf-frame.sysml.
+#
+# One row per term AFO declares, plus rows starting with "+" for elements mAF
+# needs and AFO has no term for. maf_test.go fails if a term is missing, a row
+# names a term AFO does not declare, or mAF.sysml is not what the generator
+# makes of this table.
+#
+# status:
+#   maf          generated into mAF, as the kind, name, owner, type and
+#                multiplicity columns say
+#   generated    written by the model generator (mbaigo usecases/smodeling.go,
+#                the modeler) rather than declared in the library
+#   not-modeled  deliberately left out; the note says why
+#   extension    an mAF element with no AFO term ("+name" rows)
+#
+# kind: a definition ("abstract part def", "part def", "attribute def",
+# "enum def", "abstract port def"), a feature of the owner definitions
+# ("attribute", "part"), or an enumeration literal ("enum"). A definition's
+# specializations come from AFO's rdfs:subClassOf and its doc from AFO's
+# rdfs:comment. An owner may carry its own multiplicity: Owner[0..1].
+#
+# Columns are separated by tabs; "-" is empty.
+term	status	kind	name	owner	type	mult	note
+System	maf	abstract part def	ArrowheadSystem	-	-	-	named ArrowheadSystem because System is too general a name in a model that may import other libraries
+CoreSystem	maf	abstract part def	CoreSystem	-	-	-
+ServiceRegistrar	maf	abstract part def	ServiceRegistrar	-	-	-
+Orchestrator	maf	abstract part def	Orchestrator	-	-	-
+CertificateAuthority	maf	abstract part def	CertificateAuthority	-	-	-
+Authorizer	maf	abstract part def	Authorizer	-	-	-
+MaitreD	maf	abstract part def	MaitreD	-	-	-
+UnitAsset	maf	abstract part def	UnitAsset	-	-	-
+Host	maf	part def	Host	-	-	-
+LocalCloud	maf	abstract part def	LocalCloud	-	-	-
+Service	maf	abstract port def	ServicePort	-	-	-	a service is a port, not a part: connections and the model's figures are between ports
+Mode	maf	enum def	Mode	-	-	-	GetState, SetState and Compute (in the frame) each carry the Mode they are
+Get	maf	enum	'get'	Mode	-	-	quoted like the missions
+Set	maf	enum	'set'	Mode	-	-
+Do	maf	enum	'do'	Mode	-	-	'do' is a SysML v2 keyword, so it must be quoted
+Endpoint	maf	attribute def	Endpoint	-	-	-	a value describing an address, not a thing with parts
+SecurityPosture	maf	attribute def	SecurityPosture	-	-	-	filled from usecases.Posture, the function the graph is written from
+ExternalAttachment	maf	part def	ExternalAttachment	-	-	-	a part, so a connection from the system to something outside the cloud can be drawn
+ProvidedService	generated	-	-	-	-	-	an out port usage on the unit asset: a direction, not a type
+ConsumedService	generated	-	-	-	-	-	an in port usage on the unit asset: a direction, not a type
+Husk	generated	-	-	-	-	-	flattened into the system part: host, <proto>Port and <proto>Endpoint attributes; a husk has no structure a model needs apart from its system
+FunctionalLocation	not-modeled	-	-	-	-	-	represented by hasFunctionalLocation's string for now; a part def once rooms within buildings (AFO's SKOS and BOT alignment) are wanted in the model
+Server	not-modeled	-	-	-	-	-	declared in AFO and written by no emitter; model it when the kgrapher writes it
+SecureLocalCloud	not-modeled	-	-	-	-	-	defined by a condition (a certificate authority is present), so a reasoner infers membership; a closed-world model can only assert it, which would be a second, unchecked statement of the same fact
+ResilientLocalCloud	not-modeled	-	-	-	-	-	defined by a condition (two orchestrators and two registrars); as SecureLocalCloud
+hasName	maf	attribute	name	Host, ArrowheadSystem, LocalCloud, ExternalAttachment	String	-
+runsOnHost	maf	attribute	host	ArrowheadSystem	String	-	the host's name; the cloud's IBD relates it to the Host part
+hasIPAddress	maf	attribute	ipAddress	Host	String	[*]
+hasMission	maf	attribute	mission	UnitAsset	Mission	-	the Mission enumeration is in the frame, from the framework's closed list
+hasFunctionalLocation	maf	attribute	functionalLocation	UnitAsset	String	[0..*]
++value	extension	attribute	value	ServicePort	Quantities::ScalarQuantityValue	[0..1]	a port's value, which a service with a unit redefines with its ISQ quantity type and measurement reference
+hasUnit	maf	attribute	qudtUnit	ServicePort	String	[0..1]	the same QUDT identifier the graph states; the value's measurement reference says it in SysML v2
+hasQuantityKind	maf	attribute	qudtQuantityKind	ServicePort	String	[0..1]	as hasUnit, for the quantity kind
+hasMode	maf	attribute	mode	ServicePort	Mode	[0..1]	set on a consumed service's port
+hasMethods	maf	attribute	methods	ServicePort	String	[0..*]	the W3C HTTP method IRIs, as strings
+hasForms	maf	attribute	forms	ServicePort	String	[0..*]
+hasDefaultForm	maf	attribute	defaultForm	ServicePort	String	[0..1]
+hasRegistrationPeriod	maf	attribute	registrationPeriod	ServicePort	ISQ::DurationValue	[0..1]
+isSubscribable	maf	attribute	subscribable	ServicePort	Boolean	[0..1]
+usesProtocol	maf	attribute	protocol	Endpoint, ExternalAttachment[0..1]	String	-
+usesPort	maf	attribute	portNumber	Endpoint	Integer	-	'port' is a SysML v2 keyword; bound to the system's <proto>Port attribute, which the cloud's IBD gives a value
+hasSecurityLevel	maf	attribute	securityLevel	SecurityPosture	String	-
+namesCertificateAuthority	maf	attribute	namesCertificateAuthority	SecurityPosture	Boolean	-
+namesAuthorizer	maf	attribute	namesAuthorizer	SecurityPosture	Boolean	-
+isIdentified	maf	attribute	isIdentified	SecurityPosture	Boolean	-
+canVerifyPeers	maf	attribute	canVerifyPeers	SecurityPosture	Boolean	-
+verifiesTokens	maf	attribute	verifiesTokens	SecurityPosture	Boolean	-
+offersTLS	maf	attribute	offersTLS	SecurityPosture	Boolean	-
+acceptsPlaintext	maf	attribute	acceptsPlaintext	SecurityPosture	Boolean	-
+isEncrypted	maf	attribute	isEncrypted	ExternalAttachment	Boolean	-
+isAuthenticated	maf	attribute	isAuthenticated	ExternalAttachment	Boolean	-
+communicatesOver	maf	attribute	endpoints	ArrowheadSystem	Endpoint	[0..*]	the husk is flattened into the system, so its endpoints are the system's
+hasSecurityPosture	maf	attribute	posture	ArrowheadSystem	SecurityPosture	[0..1]
+hasExternalAttachment	maf	part	externalAttachments	ArrowheadSystem	ExternalAttachment	[0..*]	AFO hangs it on the security posture; in a structural model it belongs to the system that reaches out
+consumes	generated	-	-	-	-	-	connect <consumer port> to <provider port>
+consumesFrom	generated	-	-	-	-	-	the connect statement resolved from the bound URL: the binding the orchestrator actually made, as the graph's consumesFrom is
+consumesService	generated	-	-	-	-	-	an in port usage on the unit asset
+providesService	generated	-	-	-	-	-	an out port usage on the unit asset
+provides	generated	-	-	-	-	-	connect <consumer port> to <provider port>
+contains	generated	-	-	-	-	-	part usages of the cloud's LocalCloud specialization
+hasUnitAsset	generated	-	-	-	-	-	part usages of the unit assets in the system's part def
+hasHusk	generated	-	-	-	-	-	flattened into the system part
+onHost	generated	-	-	-	-	-	attribute host on the system part; husk flattened
+hasServiceDefinition	generated	-	-	-	-	-	the port def's name: one port def per service definition
+hostedOnEndpoint	generated	-	-	-	-	-	a provides comment with the URL in the cloud's IBD: the port and the endpoint it answers on are not yet related in the model
+hasUrl	generated	-	-	-	-	-	a provides comment with the URL in the cloud's IBD
+consumingFromSystem	not-modeled	-	-	-	-	-	derived in AFO by a property chain; the model states the connections it would be derived from
+providingToSystem	not-modeled	-	-	-	-	-	inverse of consumingFromSystem
+isContainedIn	not-modeled	-	-	-	-	-	inverse of contains; ownership in SysML is navigable both ways
+endpointOfHusk	not-modeled	-	-	-	-	-	inverse of communicatesOver
+hostingEndpoint	not-modeled	-	-	-	-	-	inverse of onHost
+isHostOf	not-modeled	-	-	-	-	-	inverse of runsOnHost
+isHuskOf	not-modeled	-	-	-	-	-	inverse of hasHusk
+isServerOf	not-modeled	-	-	-	-	-	inverse of hasServer
+isUnitAssetOf	not-modeled	-	-	-	-	-	inverse of hasUnitAsset
+serviceConsumedBy	not-modeled	-	-	-	-	-	inverse of consumesService
+serviceProvidedBy	not-modeled	-	-	-	-	-	inverse of providesService
+hasServer	not-modeled	-	-	-	-	-	Server is not modeled
+hasDeveloper	not-modeled	-	-	-	-	-	written by no emitter

@@ -37,6 +37,9 @@ import (
 // compile time from mAF.sysml and emitted inline at the top of every
 // assembled cloud package so the output is self-contained.
 //
+// mAF.sysml is generated; see mafgen.
+//
+//go:generate go run ./cmd/mafgen
 //go:embed mAF.sysml
 var mAFLibrary string
 
@@ -175,7 +178,13 @@ func (t *Traits) assembleModel(w http.ResponseWriter) {
 			name := extractPortDefName(line)
 			if name != "" && !seenPortDefs[name] {
 				seenPortDefs[name] = true
-				portDefs = append(portDefs, line)
+				// Written here rather than copied, so every port definition
+				// specialises mAF::ServicePort whichever system named it
+				// first. A system built before ports carried units writes
+				// "port def 'Temperature';", and a newer one's port usage
+				// redefines ServicePort's value: copied, the first one seen
+				// would decide whether the model is valid.
+				portDefs = append(portDefs, fmt.Sprintf("    port def '%s' :> ServicePort;", name))
 			}
 		}
 		for _, line := range aa {
@@ -303,15 +312,22 @@ func extractBlock(lines []string, start int) (string, int) {
 	return strings.Join(collected, "\n"), len(lines) - start
 }
 
-// extractPortDefName extracts the definition name from a "    port def '<name>';" line.
+// extractPortDefName extracts the definition name from a "    port def '<name>';"
+// or "    port def '<name>' :> ServicePort;" line.
 func extractPortDefName(line string) string {
 	trimmed := strings.TrimSpace(line)
 	if !strings.HasPrefix(trimmed, "port def ") {
 		return ""
 	}
 	name := strings.TrimPrefix(trimmed, "port def ")
-	name = strings.Trim(name, "'; \t")
-	return name
+	if strings.HasPrefix(name, "'") {
+		if end := strings.Index(name[1:], "'"); end >= 0 {
+			name = name[1 : end+1]
+		}
+	} else if end := strings.IndexAny(name, " :;{"); end >= 0 {
+		name = name[:end]
+	}
+	return strings.Trim(name, "'; \t")
 }
 
 // extractAbstractActionName extracts the name from an "    abstract action def <Name>;" line.

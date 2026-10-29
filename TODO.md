@@ -102,8 +102,46 @@ say why here and then delete the entry.
 - **The kgrapher sends no credentials to GraphDB** and has no configuration
   field for any. GraphDB supports users and tokens; this deployment uses
   neither.
+- **A policy cannot say "heaters only", so the cottage lets the ethermostat
+  switch the bathroom light.** Found 27 September 2026. The deployed rule is
+  `{"subject": "ethermostat", "missions": ["actuation"], "actions": ["read",
+  "write"]}`: every actuation asset, with no service selector, no
+  `must_match_attribute` and no denials. The light was switched with valid
+  tokens during the crossed-binding incident (`cottage-light-incident.md` in
+  the notes), and the beehive has the same rule the other way round, so it may
+  write to the heater plugs. The ethermostat now refuses anything but its own
+  plug, so the authorizer is the second line of defense, and on this point it
+  provides none.
+
+  The policy language cannot express the rule. A light and a heater plug both
+  offer `on_off`. `must_match_attribute` pairs the subject's attribute with the
+  asset's, and a bathroom light shares the bathroom heater's
+  `FunctionalLocation`. Nothing in a rule selects assets by their own details.
+
+  Interim, no code change: a denial per asset the ethermostat must not touch,
+  `beekeeper/BathroomLight` and `beekeeper/lumi_remote_b28ac1` today. This is a
+  blacklist, and a light paired in Phoscon later is allowed until someone adds
+  a denial for it.
+
+  The fix: let a rule select assets by their registered details, for example
+  write only to assets whose `DisplayName` ends in `Heater`, or which declare a
+  device class the beekeeper would have to start publishing. That makes it a
+  whitelist, so a new light is refused by default. It belongs in the paper's
+  attribute-coherence section too.
 
 ## Correctness
+
+- **A system that exits at the cottage is never restarted.** `Restart=on-failure`
+  in `mbaigo-cloud.service` watches `start_systems.sh`, which returns once the
+  tmux session exists; the systems inside it are nobody's children. Any
+  `log.Fatal` leaves that system down until someone notices, and for the
+  meteorologue or the ethermostat that is the heating. One systemd unit per
+  system, or a watchdog over the panes.
+- **The power-cut path has never been tested end to end.** The meteorologue
+  now waits for Netatmo and the ethermostat builds controllers without
+  thermometers (27 September 2026), but only in unit tests. The real test:
+  power off the Pi *and* the router, bring the Pi back first, and check the
+  plugs come on within `frostGuardMinutes` plus the start time.
 
 - **The systems README calls the thermostat a PID controller.** Its code has
   only `Kp` and `Ki`.
@@ -427,21 +465,30 @@ the release pause exists to batch.
   decoration, and the check that established it was made only after nearly
   recommending their removal.
 
-- **mAF and AFO describe the same framework and have drifted.** `mAF.sysml` is
-  the SysML v2 vocabulary the modeler embeds, and it has no notion of the
-  security posture, of a functional location, or of units — so the SysML model
-  of a temperature service cannot say °C, which is the fault we spent a morning
-  fixing on the RDF side. Where the two do overlap they disagree in form: a
-  mission is a declared property in AFO and a bare `String` in mAF, and
-  `GetState`/`SetState`/`Compute` are plainly AFO's `Get`/`Set`/`Do` under
-  other names with nothing saying so.
+- **mAF and AFO describe the same framework and have drifted.** Partly
+  closed 27 September 2026: ports now carry units (ISQ/SI types and
+  measurement references, plus the QUDT identifiers the graph uses, mapped in
+  `mbaigo/usecases/sysml_units.go`), missions are a closed enumeration, the
+  authorizer and maitreD have types, and unit assets have a functional
+  location. `modeler/maf_test.go` fails if the missions, the units mAF must
+  declare or the core systems drift again. Not yet loaded in a SysML v2 tool;
+  `MAF_SAMPLE=<file> go test -run CarriesUnits` in the modeler writes a model
+  to check. The modeler needs the next mbaigo release for
+  `usecases.SysMLUnitRefs`.
 
-  The cheap step is to make `smodeling.go` carry units and quantity kinds
-  through, since it never looks at `Details` at all. The real answer is to
-  derive mAF from AFO: AFO is machine-readable and now declares everything the
-  framework writes, while `mAF.sysml` is hand-maintained and embedded with
-  `go:embed`. Generated, the two cannot drift. Today the drift is invisible
-  until somebody notices a model with no units.
+  Closed the same day: `modeler/mAF.sysml` is now generated (`go generate`,
+  `cmd/mafgen`) from `kgrapher/ontologies/afo.ttl`, `afo-maf-mapping.tsv` and
+  `maf-frame.sysml`, and a test fails if it is not what the generator makes
+  of them. Every one of AFO's 78 terms has a row: 47 generated into mAF
+  (including the security posture, endpoints, external attachments, Mode and
+  the service port's methods, forms, mode, registration period and
+  subscribability, which the model generator now fills from the same
+  functions the graph is written from), 15 written by the model generator,
+  16 deliberately not modeled. Still to do: load a generated model in a
+  SysML v2 tool (`MAF_SAMPLE=<file> go test -run CarriesUnits` writes one);
+  release mbaigo v0.4.3, which the modeler needs; and decide whether
+  FunctionalLocation becomes a part. `kgrapher/files/afo.ttl` (AFO 1.0.0) and
+  `modeler/afo.sysml` (its April hand translation) are read by nothing.
 
 ## Not yet run on hardware
 

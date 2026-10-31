@@ -1,6 +1,6 @@
 module github.com/sdoque/systems/uaclient
 
-go 1.26.6
+go 1.27.3
 
 require (
 	github.com/gopcua/opcua v0.6.5

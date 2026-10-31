@@ -70,6 +70,46 @@ which always answers, is how a consumer learns why.
 `Check()` refuses a sweep whose arrays disagree in length, because indexing them
 out of step puts an obstacle at the wrong bearing.
 
+## Ghosts beyond the wall
+
+A beam that meets a smooth surface at a shallow angle — ice on a tunnel wall,
+the vehicle's own aluminum plate — reflects away instead of scattering back.
+The wall returns nothing, the beam hits something else, and the sensor reports
+the whole bent path as if it were straight: a point **beyond the wall**. The
+SF45/B guide warns about it ("no shiny or highly reflective surfaces near the
+beam path"). In a map it does double harm: it puts an obstacle outside the
+corridor, and the cartographer traces its beam through the real wall, marking
+the wall free.
+
+Two defences, in this system because a sensor should report only what it
+believes came back:
+
+- **Spikes are dropped**, by default. A return farther than every neighbor,
+  up to `isolatedWindow` samples either side, by
+  more than `isolatedToleranceMetres` or `isolatedTolerancePercent` of its
+  range, becomes no return. A ghost beyond a wall has the wall's returns on
+  both sides and is dropped. A wall met at a shallow angle is kept: its range
+  changes fast, nearly a meter per degree eight meters down a corridor, but
+  steadily, with nearer neighbors on one side and farther on the other. A point
+  with neighbors on one side only is never judged. A return *nearer* than every
+  neighbor is kept: it may be a post or a chair leg one sample wide, and a
+  ghost is never nearer than its wall. The first version of this filter
+  dropped a sixth of a clean simulated corridor; this one drops none.
+- **Weak returns are refused**, when `minStrengthPercent` is above zero. The
+  guetteur then asks the sensor for each return's strength (bit 2 of command
+  27, packed between the distance and the yaw) and logs every 30 seconds how
+  many it refused. It is off by default, and the sensor configured exactly as
+  before, because the right threshold has to be read from the sensor: the
+  strength of real wall returns against the ghosts. A reflection is weak; a
+  whole mirror image of a corridor, which the spike filter cannot remove, is
+  this setting's job. To measure, set it to 1: almost nothing is refused, and
+  the log line reports the 5th, 25th, 50th and 75th percentile of the
+  strengths, once where the ghosts appear and once where they do not.
+
+**Check the mounting first.** Aluminum plate, the beacon pole or a box edge near
+the beam is a mirror the guide says to move away from, and moving the scanner a
+few centimeters is the cheapest fix of all.
+
 ## Running it without the sensor
 
 The template ships `"source": "simulated"`, which ray-casts a 20 m hallway with
@@ -115,4 +155,7 @@ through without a single test noticing.
 | `updateRate` | 8 | command 66, the sensor's own enumeration; see above |
 | `scanDelay` | 5 | command 85, the delay between scan positions, 5–2000 |
 | `sweepHz`, `pointsPerSweep` | 5, 160 | the simulator only |
+| `minStrengthPercent` | 0 | refuse returns weaker than this; 0 leaves the strength out — see [ghosts](#ghosts-beyond-the-wall) |
+| `isolatedWindow` | 2 | samples either side a spike is judged against; −1 turns the filter off |
+| `isolatedToleranceMetres` / `isolatedTolerancePercent` | 0.15 / 5 | how far a neighbor may be and still be the same surface, whichever is larger |
 

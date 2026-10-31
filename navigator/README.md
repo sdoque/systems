@@ -155,7 +155,17 @@ destination is dropped when the map changes.
 | `vehicle` | `{"Model": ["artitrax"]}` | picks the loader |
 | `replanSeconds` | 5 | how often a standing destination is planned again |
 | `arriveMetres` | 0.5 | how near counts as there |
+| `occupiedPercent` | 50 | a map cell at least this likely to be occupied is a wall |
+| `freePercent` | 50 | one less likely than this is floor; anything between is treated as unseen |
 | `picturePath` | `plan.ppm` | |
+
+**How sure the map must be.** The cartographer's map gives each cell the
+probability, in percent, that it is occupied. Read at the defaults, any
+evidence of a wall is a wall and any against it is floor, which is how the map
+was read before it carried probabilities. A `freePercent` of 30 plans only over
+floor seen more than once; the planner then treats once-seen floor as unseen,
+so a route may stop short where the map is thin. Raising `occupiedPercent`
+would plan through a wall struck only once, which a vehicle should not do.
 
 In an authorized cloud the navigator must be allowed to read the
 cartographer's `map` and `pose` and the loader's `curvatureLimit`.

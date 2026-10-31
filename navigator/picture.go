@@ -40,14 +40,14 @@ func writePicture(path string, m *forms.MapA_v1a, p *Plan, at here) error {
 	type rgb [3]byte
 	img := make([]rgb, m.Width*m.Height)
 	for i, c := range m.Cells {
-		switch c {
-		case forms.MapUnknown:
-			img[i] = rgb{160, 160, 160}
-		case forms.MapFree:
-			img[i] = rgb{255, 255, 255}
-		default:
-			img[i] = rgb{0, 0, 0}
+		// Unknown in a grey of its own; observed cells darker the surer the
+		// map is that they are occupied.
+		if c == forms.MapUnknown {
+			img[i] = rgb{160, 200, 230}
+			continue
 		}
+		shade := byte(255 - int(min(c, forms.MapOccupied))*255/int(forms.MapOccupied))
+		img[i] = rgb{shade, shade, shade}
 	}
 	dot := func(x, y float64, r int, colour rgb) {
 		ci := int(math.Round((x - m.OriginX) / m.Resolution))

@@ -288,29 +288,25 @@ func (g *grid) score(p pose, angles, distances []float64, valid []bool, stride i
 	return total
 }
 
-// matchResult is where a sweep was taken from, and whether the map was able to
+// matchResult is where a sweep was taken from, and how well the map was able to
 // say so.
 //
-// sharp is the part that matters. A scan matcher always returns a best pose,
+// The second part is what matters. A scan matcher always returns a best pose,
 // and in a place that cannot constrain it — a straight corridor, an empty
 // hall — that best pose is whichever one the sampling pattern happened to
-// favour. Returning it without comment would be this project's recurring
+// favor. Returning it without comment would be this project's recurring
 // failure in a new costume: a thing that cannot see, reporting that all is
-// well. So the peak is probed, and a flat one is declared flat.
+// well.
+//
+// So the match comes with its information: the inverse of its covariance, in
+// the map frame, with nothing at all in a direction the view does not fix.
+// sharp says that it fixes all three: position both ways, and heading.
 type matchResult struct {
 	at    pose
 	score float64
+	info  mat3
 	sharp bool
 }
-
-// probeDistance and probeAngle are how far the peak is nudged to see whether it
-// is a peak at all; sharpRatio is how much the score must fall for it to count
-// as one.
-const (
-	probeDistance = 0.10
-	probeAngle    = 3 * math.Pi / 180
-	sharpRatio    = 0.95
-)
 
 // match searches for the pose that best explains this sweep, starting from a
 // prior — the previous pose advanced by whatever motion is believed to have
@@ -318,19 +314,24 @@ const (
 //
 // Two passes: a coarse one over a wide window, then a fine one around whatever
 // the coarse pass liked. Exhaustive search at fine resolution over the same
-// window would be some hundreds of times the work for the same answer.
+// window would be some hundreds of times the work for the same answer. Both
+// passes' scores are kept: the coarse one, over the whole window, says which
+// directions the view fixes at all, and the fine one, around the peak, how
+// well; see matchInformation.
 func (g *grid) match(prior pose, angles, distances []float64, valid []bool, cfg SearchConfig) matchResult {
 	if g.dirty {
 		g.rebuildField()
 	}
 
-	search := func(centre pose, linStep, linRange, angStep, angRange float64, stride int) (pose, float64) {
+	var wide, near []matchSample
+	search := func(centre pose, linStep, linRange, angStep, angRange float64, stride int, keep *[]matchSample) (pose, float64) {
 		local, localScore := centre, math.Inf(-1)
 		for dx := -linRange; dx <= linRange+1e-9; dx += linStep {
 			for dy := -linRange; dy <= linRange+1e-9; dy += linStep {
 				for dt := -angRange; dt <= angRange+1e-9; dt += angStep {
 					c := pose{centre.x + dx, centre.y + dy, centre.theta + dt}
 					s := g.score(c, angles, distances, valid, stride)
+					*keep = append(*keep, matchSample{[3]float64{dx, dy, dt}, s * float64(stride)})
 					if s > localScore {
 						local, localScore = c, s
 					}
@@ -340,39 +341,14 @@ func (g *grid) match(prior pose, angles, distances []float64, valid []bool, cfg 
 		return local, localScore
 	}
 
-	coarse, _ := search(prior, cfg.CoarseStep, cfg.SearchRange, cfg.CoarseAngle, cfg.AngleRange, cfg.CoarseStride)
-	best, bestScore := search(coarse, cfg.FineStep, cfg.CoarseStep, cfg.FineAngle, cfg.CoarseAngle, 1)
+	coarse, _ := search(prior, cfg.CoarseStep, cfg.SearchRange, cfg.CoarseAngle, cfg.AngleRange, cfg.CoarseStride, &wide)
+	best, bestScore := search(coarse, cfg.FineStep, cfg.CoarseStep, cfg.FineAngle, cfg.CoarseAngle, 1, &near)
 
-	return matchResult{at: best, score: bestScore, sharp: g.isSharp(best, bestScore, angles, distances, valid)}
-}
-
-// isSharp nudges the winning pose in six directions and asks whether the score
-// actually falls. If the map is happy to put the sweep a hand's breadth away in
-// some direction, then it does not know where the sweep was taken from in that
-// direction, whatever the best score says.
-//
-// This is the aperture problem, and it is not a defect to be tuned away: two
-// parallel walls genuinely say nothing about how far along them you are. The
-// answer is odometry, which is why this system consumes a pose service when one
-// exists. What it must never do is invent the missing degree of freedom.
-func (g *grid) isSharp(best pose, bestScore float64, angles, distances []float64, valid []bool) bool {
 	if bestScore <= 0 {
-		return false
+		return matchResult{at: best, score: bestScore}
 	}
-	probes := []pose{
-		{best.x + probeDistance, best.y, best.theta},
-		{best.x - probeDistance, best.y, best.theta},
-		{best.x, best.y + probeDistance, best.theta},
-		{best.x, best.y - probeDistance, best.theta},
-		{best.x, best.y, best.theta + probeAngle},
-		{best.x, best.y, best.theta - probeAngle},
-	}
-	for _, p := range probes {
-		if g.score(p, angles, distances, valid, 1) >= sharpRatio*bestScore {
-			return false
-		}
-	}
-	return true
+	info, observed := matchInformation(wide, near, cfg)
+	return matchResult{at: best, score: bestScore, info: info, sharp: observed == 3}
 }
 
 // SearchConfig is the scan matcher's window, exposed because the right values
@@ -452,21 +428,54 @@ func (g *grid) form() forms.MapA_v1a {
 	m.DistanceUnit = "<http://qudt.org/vocab/unit/M>"
 	m.Cells = make([]byte, len(g.cells))
 	for i, v := range g.cells {
-		switch {
-		case v == 0:
-			m.Cells[i] = forms.MapUnknown
-		case v > 0:
-			m.Cells[i] = forms.MapOccupied
-		default:
-			m.Cells[i] = forms.MapFree
-		}
+		m.Cells[i] = percentOccupied(v)
 	}
 	return m
+}
+
+// percentOccupied is a cell's evidence as the map form carries it: unknown if
+// never observed, otherwise the probability that it is occupied, in percent.
+//
+// The first version sent only free and occupied, cut at even odds, so a cell
+// struck once — 70 % — and a cell struck fifty times — the clamp, 99 % — were
+// the same wall to every consumer, and a stray return showed as black as the
+// corridor's own wall. The probability is what the grid knows; each consumer
+// chooses how sure it needs to be. A cell with any evidence for occupancy
+// stays at or above 50 and one with any against it below, so a consumer that
+// cuts at 50 sees exactly what it saw before.
+func percentOccupied(v float32) byte {
+	if v == 0 {
+		return forms.MapUnknown
+	}
+	p := byte(math.Round(100 / (1 + math.Exp(-float64(v)))))
+	switch {
+	case v > 0 && p < 50:
+		return 50
+	case v < 0 && p > 49:
+		return 49
+	}
+	return p
 }
 
 // writePGM dumps the map as a grey image, which is the form a person can
 // actually look at. The values follow the convention the robotics tools use:
 // black is occupied, white is free, mid-grey is unseen.
+// pgmShade is a cell as a person sees it: the conventional mid grey for
+// never observed, and otherwise darker the surer it is occupied, from white
+// for certainly free to black for certainly occupied. A wall seen once is a
+// light grey; one seen from every pass is black. The unknown grey itself is
+// not used for an observed cell, so the two cannot be confused.
+func pgmShade(v float32) byte {
+	if v == 0 {
+		return 205
+	}
+	shade := byte(math.Round(254 * (1 - 1/(1+math.Exp(-float64(v))))))
+	if shade == 205 {
+		shade = 204
+	}
+	return shade
+}
+
 func (g *grid) writePGM(path string) error {
 	buf := make([]byte, 0, g.width*g.height+64)
 	buf = append(buf, []byte(fmt.Sprintf("P5\n%d %d\n255\n", g.width, g.height))...)
@@ -474,15 +483,7 @@ func (g *grid) writePGM(path string) error {
 	// in reverse, otherwise the hallway comes out mirrored.
 	for y := g.height - 1; y >= 0; y-- {
 		for x := 0; x < g.width; x++ {
-			v := g.cells[y*g.width+x]
-			switch {
-			case v == 0:
-				buf = append(buf, 205)
-			case v > 0:
-				buf = append(buf, 0)
-			default:
-				buf = append(buf, 254)
-			}
+			buf = append(buf, pgmShade(g.cells[y*g.width+x]))
 		}
 	}
 	return os.WriteFile(path, buf, 0o644)

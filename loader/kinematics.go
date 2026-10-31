@@ -12,11 +12,15 @@
  *
  * Contributors:
  *   Jan A. van Deventer, Luleå - initial implementation
+ *   Simon Pergel, Luleå - one circumference per wheel
  ***************************************************************************SDG*/
 
 package main
 
-import "math"
+import (
+	"fmt"
+	"math"
+)
 
 // The vehicle's geometry, and what it takes to follow a curve with it.
 //
@@ -50,6 +54,60 @@ type Geometry struct {
 	JointToRear        float64 `json:"jointToRearAxleMetres"`
 	Track              float64 `json:"trackMetres"`
 	WheelCircumference float64 `json:"wheelCircumferenceMetres"`
+
+	// PerWheel is each wheel's own rolling circumference, where it differs
+	// from WheelCircumference. Tires that look alike are not: on the Artitrax
+	// they measured 1.335 to 1.345 m. Five millimeters between the two front
+	// wheels is read by the cartographer as a third of a degree of turn every
+	// meter, which bends a straight wall. A wheel left out, or zero, takes
+	// WheelCircumference.
+	PerWheel *WheelCircumferences `json:"perWheelCircumferenceMetres,omitempty"`
+}
+
+// WheelCircumferences is one rolling circumference per wheel, in meters.
+type WheelCircumferences struct {
+	FrontLeft  float64 `json:"frontLeft,omitempty"`
+	FrontRight float64 `json:"frontRight,omitempty"`
+	BackLeft   float64 `json:"backLeft,omitempty"`
+	BackRight  float64 `json:"backRight,omitempty"`
+}
+
+// circumferenceAt is the rolling circumference of the wheel at kinematic
+// position pos (frontLeft..backRight): its own if it has one, the shared one
+// otherwise.
+func (g Geometry) circumferenceAt(pos int) float64 {
+	if g.PerWheel != nil {
+		own := [4]float64{
+			frontLeft:  g.PerWheel.FrontLeft,
+			frontRight: g.PerWheel.FrontRight,
+			backLeft:   g.PerWheel.BackLeft,
+			backRight:  g.PerWheel.BackRight,
+		}
+		if pos >= 0 && pos < len(own) && own[pos] > 0 {
+			return own[pos]
+		}
+	}
+	return g.WheelCircumference
+}
+
+// maxCircumferenceSpread is how far a wheel's own circumference may be from
+// the shared one. Real tires differ by a percent or so; a value ten percent
+// out is a typing error, most likely centimeters for meters, and would set
+// that wheel's speed a hundred times wrong.
+const maxCircumferenceSpread = 0.10
+
+// checkCircumferences refuses per-wheel circumferences that cannot be a tire.
+func (g Geometry) checkCircumferences() error {
+	names := [4]string{frontLeft: "frontLeft", frontRight: "frontRight", backLeft: "backLeft", backRight: "backRight"}
+	for pos, name := range names {
+		c := g.circumferenceAt(pos)
+		if math.Abs(c-g.WheelCircumference) > maxCircumferenceSpread*g.WheelCircumference {
+			return fmt.Errorf("geometry.perWheelCircumferenceMetres.%s is %v m, more than %.0f%% from "+
+				"wheelCircumferenceMetres (%v m); circumferences are in meters",
+				name, c, maxCircumferenceSpread*100, g.WheelCircumference)
+		}
+	}
+	return nil
 }
 
 // frontCurvature is the curvature of the front axle's path at articulation
@@ -130,7 +188,7 @@ func (g Geometry) wheelRPMs(speeds [4]float64, maxRPM float64) [4]float64 {
 	var rpm [4]float64
 	worst := 0.0
 	for i, s := range speeds {
-		rpm[i] = s / g.WheelCircumference * 60
+		rpm[i] = s / g.circumferenceAt(i) * 60
 		worst = math.Max(worst, math.Abs(rpm[i]))
 	}
 	if worst > maxRPM {

@@ -108,7 +108,7 @@ func distancePayload(cm, centideg int16) []byte {
 // With 27 set to bits 0 and 8, command 44 is first-return-raw in cm then yaw in
 // hundredths of a degree, both int16.
 func TestDistanceDataIsCentimetersThenYaw(t *testing.T) {
-	angle, dist, ok := parseDistanceData(distancePayload(1234, -4550), 50)
+	angle, dist, _, ok := parseDistanceData(distancePayload(1234, -4550), 50, false)
 	if !ok {
 		t.Fatal("a valid payload was rejected")
 	}
@@ -123,7 +123,7 @@ func TestDistanceDataIsCentimetersThenYaw(t *testing.T) {
 // The rule the guetteur rests on: nothing coming back is never a distance.
 func TestALostSignalIsNotADistance(t *testing.T) {
 	for _, cm := range []int16{lostSignalValue, 0, -1} {
-		angle, dist, ok := parseDistanceData(distancePayload(cm, 1000), 50)
+		angle, dist, _, ok := parseDistanceData(distancePayload(cm, 1000), 50, false)
 		if !ok {
 			t.Errorf("%d cm: the point was dropped; it should be kept as a non-return", cm)
 		}
@@ -137,13 +137,13 @@ func TestALostSignalIsNotADistance(t *testing.T) {
 }
 
 func TestBeyondRangeIsNotADistance(t *testing.T) {
-	if _, dist, _ := parseDistanceData(distancePayload(3000, 0), 20); dist != 0 {
+	if _, dist, _, _ := parseDistanceData(distancePayload(3000, 0), 20, false); dist != 0 {
 		t.Errorf("30 m with a 20 m maximum was reported as %v m", dist)
 	}
 }
 
 func TestAShortPayloadIsRejected(t *testing.T) {
-	if _, _, ok := parseDistanceData([]byte{1, 2, 3}, 50); ok {
+	if _, _, _, ok := parseDistanceData([]byte{1, 2, 3}, 50, false); ok {
 		t.Error("a three-byte payload was accepted")
 	}
 }
@@ -175,4 +175,34 @@ func nextFrame(b *bytes.Buffer) []byte {
 	head := b.Bytes()[:3]
 	n := int(binary.LittleEndian.Uint16(head[1:3])>>6) + 3 + 2
 	return b.Next(n)
+}
+
+// With 27 set to bits 0, 2 and 8, the strength sits between the distance and
+// the yaw, and the yaw moves two bytes on.
+func TestDistanceDataWithStrength(t *testing.T) {
+	b := make([]byte, 6)
+	yaw := int16(-1200)
+	binary.LittleEndian.PutUint16(b[0:2], 812)
+	binary.LittleEndian.PutUint16(b[2:4], 37)
+	binary.LittleEndian.PutUint16(b[4:6], uint16(yaw))
+	angle, dist, strength, ok := parseDistanceData(b, 50, true)
+	if !ok || math.Abs(dist-8.12) > 1e-9 || strength != 37 || math.Abs(angle+12) > 1e-9 {
+		t.Errorf("%.2f m, %.0f%%, %.2f°, %v; want 8.12 m, 37%%, -12°", dist, strength, angle, ok)
+	}
+	if _, _, _, ok := parseDistanceData(b[:4], 50, true); ok {
+		t.Error("a payload without room for the yaw was accepted")
+	}
+	if fields := uint32(distanceOutputFields | strengthField); fields != 0x105 {
+		t.Errorf("distance output 0x%X, want 0x105", fields)
+	}
+}
+
+func TestPercentiles(t *testing.T) {
+	v := []float64{50, 10, 40, 20, 30}
+	if p := percentiles(v, 0, 50, 100); p[0] != 10 || p[1] != 30 || p[2] != 50 {
+		t.Errorf("%v", p)
+	}
+	if p := percentiles(nil, 50); p[0] != 0 {
+		t.Errorf("empty: %v", p)
+	}
 }

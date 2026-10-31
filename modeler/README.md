@@ -13,8 +13,10 @@ The output covers:
 
 - **mAF library** — a SysML v2 package that defines the Arrowhead
   vocabulary (`ArrowheadSystem`, `ServiceRegistrar`, `Orchestrator`,
-  `CertificateAuthority`, `UnitAsset`, `Host`, `LocalCloud`, plus the
-  abstract actions `GetState` / `SetState` / `Compute`). Emitted inline at
+  `CertificateAuthority`, `Authorizer`, `MaitreD`, `UnitAsset`, `Host`,
+  `LocalCloud`, `ServicePort`, the closed `Mission` enumeration, the
+  abstract actions `GetState` / `SetState` / `Compute`, and the units the
+  systems use that the SysML v2 standard library lacks). Emitted inline at
   the top of every assembled cloud package so the output is
   self-contained. The library source lives in [`mAF.sysml`](mAF.sysml)
   and is embedded at compile time via `go:embed`.
@@ -59,6 +61,7 @@ two complementary angles:
 | Ports, items, data flows        | No              | First-class                      |
 | Behavior (action sequences)    | No              | First-class (`action def`)       |
 | Connections between parts       | Derivable       | First-class (`connect`)          |
+| Units of a service's value      | QUDT unit and quantity kind | ISQ/SI quantity type and measurement reference, plus the same QUDT identifiers |
 
 The kgrapher emits AFO instances; the modeler emits mAF-specialised
 SysML v2. The two outputs are views of the same runtime topology, each
@@ -90,10 +93,35 @@ sequenceDiagram
 Each system's `/smodel` endpoint (provided by the `mbaigo` framework)
 generates a SysML v2 fragment with:
 
-- **port defs** — one per unique service definition (provided or consumed).
+- **port defs** — one per unique service definition (provided or consumed),
+  each specializing `mAF::ServicePort`.
+- **ports that carry their unit** — a service or cervice that declares a
+  `Unit` gets a port body typing its value by the SysML v2 standard
+  library (release 2026-08) and stating the QUDT unit and quantity kind
+  the knowledge graph uses for the same service:
+
+  ```
+  out port 'temperature' : 'Temperature' {  // provided service
+      attribute :>> value : Quantities::ScalarQuantityValue { :>> mRef = SI::'°C_abs'; }
+      attribute :>> qudtUnit = "http://qudt.org/vocab/unit/DEG_C";
+      attribute :>> qudtQuantityKind = "http://qudt.org/vocab/quantitykind/ThermodynamicTemperature";
+  }
+  ```
+
+  A consumer's port carries the unit it asks for, so a connection between a
+  °C provider and a °F consumer shows both, which is where the framework
+  converts. A reading and a difference are kept apart as the library keeps
+  them: an absolute Celsius reading is on the scale `'°C_abs'`, a deviation
+  (`Measure: interval`) is a `TemperatureDifferenceValue` in `'°C'`. The
+  library's `ThermodynamicTemperatureValue` accepts only units, not the
+  Celsius scale, so absolute °C and °F readings are typed by the general
+  `ScalarQuantityValue` and keep their quantity kind in `qudtQuantityKind`.
+  The mapping is `mbaigo/usecases/sysml_units.go`; a unit without one is
+  named by its QUDT identifier and not typed.
 - **part defs** — one for the system (named `<system>System`, specialised
   from an mAF type — `ServiceRegistrar` / `Orchestrator` /
-  `CertificateAuthority` for core systems, `ArrowheadSystem` for domain
+  `CertificateAuthority` / `Authorizer` / `MaitreD` for core systems,
+  `ArrowheadSystem` for domain
   systems) and one per unit asset (named `<system>_<asset>UnitAsset`,
   specialised from `UnitAsset`). Asset type names are qualified by the
   system to prevent collisions when two systems happen to use the same
@@ -179,23 +207,42 @@ Consecutive steps are linked with `first X then Y;` pairs.
 
 ## Extending the mAF library
 
-The [`mAF.sysml`](mAF.sysml) file is the source of truth for the
-Arrowhead vocabulary in SysML v2 terms. If you add a new core system
-category, a new kind of action, or want to tighten cardinality
-constraints on `LocalCloud`, edit that file directly — the change takes
-effect on the next `go build` because the library is embedded at compile
-time. No Go code needs to be touched unless you also change how concrete
-systems specialise from it (that logic lives in
-`mbaigo/usecases/smodeling.go`).
+[`mAF.sysml`](mAF.sysml) is **generated**; do not edit it. It is made by
+`go generate` (which runs [`cmd/mafgen`](cmd/mafgen)) from three sources:
+
+- **`kgrapher/ontologies/afo.ttl`** — the ontology. Each definition's
+  specializations are AFO's `rdfs:subClassOf` (less any implied by another)
+  and its `doc` is AFO's `rdfs:comment` for the term, so the library
+  documents itself in the ontology's words.
+- **[`afo-maf-mapping.tsv`](afo-maf-mapping.tsv)** — one row per term AFO
+  declares, saying how SysML v2 shows it: generated into mAF (with its kind,
+  name, owner, type and multiplicity), written by the model generator, or
+  deliberately not modeled and why (inverses, property chains, classes a
+  reasoner infers such as `SecureLocalCloud`). Rows starting with `+` are mAF
+  elements AFO has no term for.
+- **[`maf-frame.sysml`](maf-frame.sysml)** — what AFO does not determine: the
+  header and imports, the `GetState` / `SetState` / `Compute` actions, the
+  `Mission` enumeration, and the units the SysML v2 standard library lacks.
+  The generated definitions replace its `// @generated` line.
+
+To change mAF, change one of those and run `go generate` in the modeler. The
+tests fail when:
+
+- AFO declares a term the table has no row for, or a row names a term AFO
+  does not declare;
+- `mAF.sysml` is not what the generator makes of the three sources — a hand
+  edit, or a source edited without regenerating;
+- the `Mission` literals differ from `components.Missions`, a unit the
+  mapping (`mbaigo/usecases/sysml_units.go`) refers to as `mAF::<name>` is
+  not declared, or a core system type is missing.
 
 Guidelines:
 
 - Keep mAF **abstract**. Concrete part defs belong in the generated
   output, not in the library.
-- Keep mAF **aligned with AFO**. If you add a class to AFO, add the
-  equivalent abstract part def to mAF (or explain why it doesn't map).
 - mAF expresses what SysML v2 can natively express. Reasoning that
-  belongs in OWL (property chains, class intersections) stays in AFO.
+  belongs in OWL (property chains, class intersections) stays in AFO, and
+  its row says so.
 
 ## Output example
 

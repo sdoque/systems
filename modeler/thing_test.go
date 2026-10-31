@@ -118,6 +118,8 @@ func TestExtractPortDefName(t *testing.T) {
 		{"empty string", "", ""},
 		{"comment line", "    // port def 'ignored';", ""},
 		{"multi-word definition", "    port def 'pumpSpeed';", "pumpSpeed"},
+		{"specializing ServicePort", "    port def 'Temperature' :> ServicePort;", "Temperature"},
+		{"unquoted, specializing", "    port def OnOffPort :> ServicePort;", "OnOffPort"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

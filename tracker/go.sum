@@ -10,8 +10,8 @@ github.com/ncruces/go-strftime v0.1.9 h1:bY0MQC28UADQmHmaF5dgpLmImcShSi2kHU9XLdh
 github.com/ncruces/go-strftime v0.1.9/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
-github.com/sdoque/mbaigo v0.4.2 h1:IfMNWa/XUnFLa87tKc34kGS0UK+PpZ9OBsYq0XAkIco=
-github.com/sdoque/mbaigo v0.4.2/go.mod h1:uvuQ4Q1Qdi1U8BpaoBzDvst8BsskEVaVoMZ9T+5SyYc=
+github.com/sdoque/mbaigo v0.4.3 h1:ndzprlW3LaF7w3j3fSECsMv0YdDRDQ3TUUR/dridJq4=
+github.com/sdoque/mbaigo v0.4.3/go.mod h1:U+GbP3QKfQ5g6qK3n6BYe6Er/nG0HVk1lFrO2hvCOis=
 golang.org/x/exp v0.0.0-20260727155853-b88d891fe743 h1:ex206bKw+v3K0dm3andkrIF+ijyQKJG1pLgwQ2PYdQM=
 golang.org/x/exp v0.0.0-20260727155853-b88d891fe743/go.mod h1:EdfpwwqSu+0Li0mzskwHU6FWDV3t9Q+RZDo3QMUtL3Q=
 golang.org/x/mod v0.38.0 h1:MECBjubtXD7yj4HrhIUcywNaGeNVUdfVnxmPajOk4yk=

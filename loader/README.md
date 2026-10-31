@@ -183,10 +183,18 @@ after every change.
    counts per degree** — with straight at 450, 40° cannot be more than 450
    counts away; the loader warns if it is.
 5. **The wheels.** Off the blocks, drive straight along a measured 40 m and read
-   `travel` on the front wheels before and after. The circumference is 40 ÷ the
-   revolutions; put it in `geometry.wheelCircumferenceMetres`. The 1.335 m in
-   the configuration was measured unloaded; the loaded figure will be smaller.
-   This is the only place the wheel size lives.
+   `travel` on **all four** wheels before and after. Each wheel's circumference
+   is 40 ÷ its own revolutions. Put the typical value in
+   `geometry.wheelCircumferenceMetres` and each wheel's own in
+   `geometry.perWheelCircumferenceMetres` (`frontLeft`, `frontRight`,
+   `backLeft`, `backRight`, in meters). The 1.335 m in the configuration was
+   measured unloaded; the loaded figure will be smaller. Do not skip the
+   per-wheel values because the tires look alike: on the Artitrax they measured
+   1.335 to 1.345 m, and five millimeters between the front two is read by the
+   cartographer as a third of a degree of turn every meter, which bends a
+   straight wall. A per-wheel value more than 10 % from the shared one stops
+   the loader at start-up, since it is almost certainly centimeters. This is the
+   only place the wheel size lives.
 
 ## Driving
 
@@ -277,6 +285,8 @@ Generated on the first run.
 | `geometry.jointToFrontAxleMetres` / `jointToRearAxleMetres` | 0.6175 / 0.6175 | L1 and L2 |
 | `geometry.trackMetres` | 0.6275 | |
 | `geometry.wheelCircumferenceMetres` | 1.335 | calibrate: step 5 |
+| `geometry.perWheelCircumferenceMetres` | none | each wheel's own, by `frontLeft` … `backRight`; a wheel left out takes the shared one; calibrate: step 5 |
+| `geometry.perWheelCircumferenceMetres` | none | each wheel's own, by `frontLeft` … `backRight`; a wheel left out takes the shared one; calibrate: step 5 |
 | `waist.straightCount` | 450 | calibrate: step 1 |
 | `waist.effortTurnsLeft` | 0 | calibrate: step 2; `1`, `-1`, or `0` for not known |
 | `waist.calibrationCount` / `calibrationDegrees` | 0 / 0 | calibrate: steps 3–4; degrees positive left |

@@ -1,9 +1,9 @@
 module github.com/sdoque/systems/tracker
 
-go 1.26.6
+go 1.27.3
 
 require (
-	github.com/sdoque/mbaigo v0.4.2
+	github.com/sdoque/mbaigo v0.4.3
 	modernc.org/sqlite v1.36.1
 )
 

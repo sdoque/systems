@@ -1,0 +1,175 @@
+@prefix :        <https://w3id.org/synecdoque/afo-sml#> .
+@prefix afo:     <https://w3id.org/synecdoque/afo#> .
+@prefix sml:     <https://w3id.org/sml/def#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@base            <https://w3id.org/synecdoque/afo-sml#> .
+
+<https://w3id.org/synecdoque/afo-sml> rdf:type owl:Ontology ;
+    owl:versionIRI <https://w3id.org/synecdoque/afo-sml/0.1.0> ;
+    owl:versionInfo "0.1.0" ;
+    rdfs:label "AFO to SML alignment" ;
+    dcterms:title "Arrowhead Framework Ontology — Semantic Modelling and Linking alignment" ;
+    dcterms:description "Aligns AFO's classes and properties onto SML, the top-level ontology of EN 17632 (Semantic modelling and linking), so an Arrowhead local cloud can be read beside the asset models of the built environment." ;
+    dcterms:creator "Jan van Deventer" ;
+    dcterms:publisher "Synecdoque" ;
+    dcterms:license <http://creativecommons.org/licenses/by/4.0/> ;
+    dcterms:modified "2026-10-27"^^xsd:date ;
+    rdfs:seeAlso <https://docs.crow.nl/sml/> ,
+                 <https://doi.org/10.1109/OJIES.2026.3693084> ;
+    rdfs:comment """An alignment only, in the style of afo-lis.ttl: it introduces no
+instances, and states AFO terms solely to hang alignment axioms on them. It
+does not import SML; load https://w3id.org/sml/def beside it to reason.
+
+SML declares three pairs of disjoint classes that the alignment must respect,
+because a reasoner will:
+
+  - PhysicalObject, InformationObject, Activity, Event and State;
+  - FunctionalEntity and TechnicalEntity: what is needed against what
+    provides it;
+  - PlannedEntity and RealizedEntity: what is designed against what exists.
+
+Functional and technical. The parts of a cloud (the cloud, its systems,
+their husks, servers, unit assets and endpoints, and the hosts they run on)
+are technical entities: they are the solution. What a unit asset serves, its
+functional location, is the functional entity it implements. A service is
+an SML function: an activity performed by an object whose external behavior
+contributes to the goals of others.
+
+Physical or not. SML's physical object exists in 4D space-time as matter or
+energy. A host may be a virtual machine; a system, a husk and a unit asset
+are software. They are aligned to sml:Object and no further, so they stay
+consistent with either reading. afo-lis.ttl makes UnitAsset a physical
+object; that is not repeated here, because a thermostat's control loop or a
+weather service's forecast is not one. The endpoint is the exception: SML's
+port is explicitly "a physical or logical point of interaction", and it is
+aligned to that.
+
+Planned or realized. No AFO class is aligned to either, because the class
+does not decide it. The graph the kgrapher emits is observed at run time,
+and its individuals are realized entities; a model of the same cloud made
+before it runs, such as the modeler's SysML, describes planned ones. Typing
+the individuals is the emitter's business, and sml:isRealizedBy is the
+property that would link a design to what runs.
+
+Not aligned, because SML has no counterpart: the security posture, the
+external attachment, the mode of a service, and the AFO properties that
+relate a service to its consumer, its endpoint and its forms. The binding of
+a consumer to a provider is an SML interaction with an information-flow
+transfer type over a connection; AFO has no individual for that binding to
+type.""" .
+
+
+#################################################################
+#    Object Properties
+#################################################################
+
+# Composition. Each is a technical decomposition: a technical entity made of
+# technical entities, which the class alignments below make true at both ends.
+
+###  https://w3id.org/synecdoque/afo#contains
+afo:contains rdf:type owl:ObjectProperty ;
+             rdfs:subPropertyOf sml:hasTechnicalPart .
+
+
+###  https://w3id.org/synecdoque/afo#hasHusk
+afo:hasHusk rdf:type owl:ObjectProperty ;
+            rdfs:subPropertyOf sml:hasTechnicalPart .
+
+
+###  https://w3id.org/synecdoque/afo#hasServer
+afo:hasServer rdf:type owl:ObjectProperty ;
+              rdfs:subPropertyOf sml:hasTechnicalPart .
+
+
+###  https://w3id.org/synecdoque/afo#hasUnitAsset
+afo:hasUnitAsset rdf:type owl:ObjectProperty ;
+                 rdfs:subPropertyOf sml:hasTechnicalPart .
+
+
+###  https://w3id.org/synecdoque/afo#hostingEndpoint
+afo:hostingEndpoint rdf:type owl:ObjectProperty ;
+                    rdfs:subPropertyOf sml:hasTechnicalPart ;
+                    rdfs:comment "A port is part of the object it belongs to; the endpoint is the host's." .
+
+
+###  https://w3id.org/synecdoque/afo#hasFunctionalLocation
+afo:hasFunctionalLocation rdf:type owl:ObjectProperty ;
+    rdfs:subPropertyOf [ owl:inverseOf sml:isImplementedBy ] ;
+    rdfs:comment "SML relates the functional entity to the technical entity that implements it; a unit asset implements its functional location." .
+
+
+# Units. AFO's and SML's are both sub-properties of QUDT's, with QUDT's ranges.
+
+###  https://w3id.org/synecdoque/afo#hasUnit
+afo:hasUnit rdf:type owl:ObjectProperty ;
+            rdfs:subPropertyOf sml:hasUnit .
+
+
+###  https://w3id.org/synecdoque/afo#hasQuantityKind
+afo:hasQuantityKind rdf:type owl:ObjectProperty ;
+                    rdfs:subPropertyOf sml:hasQuantityKind .
+
+
+# Not aligned: afo:providesService to sml:executes. SML gives executes the
+# domain PhysicalObject, so the alignment would make every unit asset
+# physical, which the class alignment deliberately does not.
+
+
+#################################################################
+#    Classes
+#################################################################
+
+###  https://w3id.org/synecdoque/afo#LocalCloud
+afo:LocalCloud rdf:type owl:Class ;
+               rdfs:subClassOf sml:Object ,
+                               sml:TechnicalEntity .
+
+
+###  https://w3id.org/synecdoque/afo#System
+afo:System rdf:type owl:Class ;
+           rdfs:subClassOf sml:Object ,
+                           sml:TechnicalEntity .
+
+
+###  https://w3id.org/synecdoque/afo#Husk
+afo:Husk rdf:type owl:Class ;
+         rdfs:subClassOf sml:Object ,
+                         sml:TechnicalEntity .
+
+
+###  https://w3id.org/synecdoque/afo#Server
+afo:Server rdf:type owl:Class ;
+           rdfs:subClassOf sml:Object ,
+                           sml:TechnicalEntity .
+
+
+###  https://w3id.org/synecdoque/afo#UnitAsset
+afo:UnitAsset rdf:type owl:Class ;
+              rdfs:subClassOf sml:Object ,
+                              sml:TechnicalEntity .
+
+
+###  https://w3id.org/synecdoque/afo#Host
+afo:Host rdf:type owl:Class ;
+         rdfs:subClassOf sml:Object ,
+                         sml:TechnicalEntity .
+
+
+###  https://w3id.org/synecdoque/afo#Endpoint
+afo:Endpoint rdf:type owl:Class ;
+             rdfs:subClassOf sml:Port ,
+                             sml:TechnicalEntity .
+
+
+###  https://w3id.org/synecdoque/afo#Service
+afo:Service rdf:type owl:Class ;
+            rdfs:subClassOf sml:Function .
+
+
+###  https://w3id.org/synecdoque/afo#FunctionalLocation
+afo:FunctionalLocation rdf:type owl:Class ;
+                       rdfs:subClassOf sml:FunctionalEntity .

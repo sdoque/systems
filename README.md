@@ -94,6 +94,7 @@ curvature, with left positive (ISO 8855), and knows nothing of the machine.
 | `loader` | The vehicle: drives the wheel and waist motors over CAN, reads the encoders and the articulation sensor, owns the geometry, kinematics and steering limits, and decides which one system may drive |
 | `gamer` | Drives the loader by hand from a game controller; the pilot with priority, which can take control from software and stop the vehicle whoever is driving |
 | `guetteur` | Reads a LightWare SF45/B scanning LiDAR over serial and exposes each sweep, and the clearance ahead, as services |
+| `vigie` | Reads a Livox Mid-360 3D LiDAR and its built-in IMU over Ethernet: a 360° scan in the guetteur's form, the clearance ahead at any height the vehicle could hit, the rate of turn and the tilt. Not yet run against the device |
 | `cartographer` | Builds an occupancy map from the guetteur's sweeps and the loader's wheel travel (SLAM front end), and reports where the scanner is in it |
 
 ### Imaging

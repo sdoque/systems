@@ -227,6 +227,8 @@ func mappingTraits(wheels func() (wheelSample, wheelSample, error)) *Traits {
 		g:          newGrid(cfg.WidthMetres, cfg.HeightMetres, cfg.Resolution),
 		odo:        newOdometer(cfg.Odometry),
 		readWheels: wheels,
+		wheels:     newWheelHistory(wheelHistoryKept),
+		state:      newFilter(),
 	}
 	tr.g.matchRange = cfg.MatchRangeMetres
 	return tr
@@ -244,8 +246,8 @@ func scanAt(p pose, at time.Time) *forms.ScanA_v1a {
 func TestTheWheelsCarryTheMapDownACorridor(t *testing.T) {
 	const step = 0.07                    // metres per sweep
 	var left, right float64 = 57.3, 57.3 // meters, from wherever the loader started
+	var now time.Time                    // the test's clock: the loader stamps its readings with it
 	wheels := func() (wheelSample, wheelSample, error) {
-		now := time.Now()
 		return wheelSample{left, now}, wheelSample{right, now}, nil
 	}
 	withWheels := mappingTraits(wheels)
@@ -257,6 +259,7 @@ func TestTheWheelsCarryTheMapDownACorridor(t *testing.T) {
 	start := time.Now()
 	for i := 0; i <= 30; i++ {
 		at := start.Add(time.Duration(i) * 200 * time.Millisecond)
+		now = at
 		withWheels.consume(scanAt(truth, at))
 		blind.consume(scanAt(truth, at))
 

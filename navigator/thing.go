@@ -65,6 +65,17 @@ type NavConfig struct {
 	// ArriveMetres is how near the goal counts as there.
 	ArriveMetres float64 `json:"arriveMetres"`
 
+	// OccupiedPercent and FreePercent are how sure the map must be: a cell
+	// at least OccupiedPercent likely to be occupied is a wall, one below
+	// FreePercent is free, and anything between is treated as unseen. Both
+	// default to 50, which is how the map was read before it carried
+	// probabilities: any evidence of a wall is a wall. A lower FreePercent,
+	// 30 say, drives only where the map has seen the floor more than once.
+	// A higher OccupiedPercent would drive through a wall seen only once,
+	// which a vehicle should not.
+	OccupiedPercent int `json:"occupiedPercent"`
+	FreePercent     int `json:"freePercent"`
+
 	// PicturePath is where the map with the route drawn on it is written,
 	// after every plan: what a person looks at to see what was planned.
 	PicturePath string `json:"picturePath"`
@@ -202,9 +213,20 @@ func applyDefaults(cfg *NavConfig) {
 	if cfg.ArriveMetres <= 0 {
 		cfg.ArriveMetres = 0.5
 	}
+	if cfg.OccupiedPercent <= 0 || cfg.OccupiedPercent > 100 {
+		cfg.OccupiedPercent = 50
+	}
+	if cfg.FreePercent <= 0 || cfg.FreePercent > cfg.OccupiedPercent {
+		cfg.FreePercent = min(50, cfg.OccupiedPercent)
+	}
 	if cfg.PicturePath == "" {
 		cfg.PicturePath = "plan.ppm"
 	}
+}
+
+// reading is how the map's probabilities are read, from the configuration.
+func (c NavConfig) reading() cellReading {
+	return cellReading{occupiedFrom: byte(c.OccupiedPercent), freeBelow: byte(c.FreePercent)}
 }
 
 //-------------------------------------Reading a destination
@@ -342,7 +364,7 @@ func (t *Traits) planTo(gx, gy float64, at here) (*goal, error) {
 	}
 	v := Vehicle{MaxCurvature: t.curvature(), Clearance: t.cfg.Clearance}
 	start := time.Now()
-	p, err := plan(m, t.cfg.PlanningResolution, v, at.x, at.y, at.th, gx, gy)
+	p, err := plan(m, t.cfg.PlanningResolution, t.cfg.reading(), v, at.x, at.y, at.th, gx, gy)
 	if err != nil {
 		return nil, err
 	}

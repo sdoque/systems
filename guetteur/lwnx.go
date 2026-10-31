@@ -47,6 +47,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"sort"
 	"time"
 
 	serial "go.bug.st/serial"
@@ -69,8 +70,10 @@ const (
 	cmdScanLowAngle      = 98  // RW, -170 to -5 deg (counter-clockwise limit); sent as float32
 	cmdScanHighAngle     = 99  // RW, 5 to 170 deg (clockwise limit); sent as float32
 
-	// Command 27 bitmask: bit 0 = raw first return [cm], bit 8 = yaw angle [1/100 deg]
+	// Command 27 bitmask: bit 0 = raw first return [cm], bit 8 = yaw angle [1/100 deg].
+	// Bit 2 adds the first return's strength [%], packed between the two.
 	distanceOutputFields = (1 << 0) | (1 << 8) // 0x101
+	strengthField        = 1 << 2
 
 	// Lost signal value reported by SF45/B (-1000 cm). parseDistanceData
 	// treats it, and anything else not positive, as no return.
@@ -88,7 +91,14 @@ type serialSource struct {
 	// Counters, reported when the source gives up, so a failure says which
 	// kind of failure it was.
 	framesSeen, framesBad int
+	// weak counts returns refused for their strength, out of returns, since
+	// reported.
+	weak, returns int
+	strengths     []float64
+	reported      time.Time
 }
+
+func (s *serialSource) withStrength() bool { return s.cfg.MinStrengthPercent > 0 }
 
 func newSerialSource(cfg GuetteurConfig) (*serialSource, error) {
 	mode := &serial.Mode{
@@ -135,8 +145,15 @@ func (s *serialSource) sweeps(ctx context.Context) (<-chan sweep, error) {
 	}
 	time.Sleep(100 * time.Millisecond)
 
-	// 2. Configure distance output: raw first return in cm (bit 0) and yaw angle (bit 8)
-	if err := s.writeFrame(cmdDistanceOutput, u32(distanceOutputFields)); err != nil {
+	// 2. Configure distance output: raw first return in cm (bit 0) and yaw angle
+	// (bit 8), and the return's strength (bit 2) when weak returns are to be
+	// refused.
+	fields := uint32(distanceOutputFields)
+	if s.withStrength() {
+		fields |= strengthField
+		log.Printf("guetteur: returns weaker than %.0f%% are refused as no return", s.cfg.MinStrengthPercent)
+	}
+	if err := s.writeFrame(cmdDistanceOutput, u32(fields)); err != nil {
 		return nil, fmt.Errorf("configure distance output: %w", err)
 	}
 	time.Sleep(100 * time.Millisecond)
@@ -212,9 +229,29 @@ func (s *serialSource) read(ctx context.Context) {
 		if id != cmdDistanceDataCm {
 			continue
 		}
-		angle, distance, ok := parseDistanceData(payload, s.cfg.MaxRange)
+		angle, distance, strength, ok := parseDistanceData(payload, s.cfg.MaxRange, s.withStrength())
 		if !ok {
 			continue
+		}
+		// A weak return is refused as no return. A beam reflected off a smooth
+		// surface at a shallow angle — ice, the vehicle's own aluminum plate —
+		// comes back weak, from beyond the wall that reflected it.
+		if s.withStrength() && distance > 0 {
+			s.returns++
+			s.strengths = append(s.strengths, strength)
+			if strength < s.cfg.MinStrengthPercent {
+				distance = 0
+				s.weak++
+			}
+			// Every 30 s, how many were refused and how strong the returns
+			// were: the numbers a threshold is chosen from. With the threshold
+			// at 1 % nearly nothing is refused, and this line measures.
+			if time.Since(s.reported) > 30*time.Second {
+				p := percentiles(s.strengths, 5, 25, 50, 75)
+				log.Printf("guetteur: %d of %d returns (%.1f%%) refused as weaker than %.0f%%; strength p5 %.0f%%, p25 %.0f%%, median %.0f%%, p75 %.0f%%",
+					s.weak, s.returns, 100*float64(s.weak)/float64(s.returns), s.cfg.MinStrengthPercent, p[0], p[1], p[2], p[3])
+				s.weak, s.returns, s.strengths, s.reported = 0, 0, s.strengths[:0], time.Now()
+			}
 		}
 
 		// Turnaround detection: only evaluate direction change if angle actually changed
@@ -248,31 +285,44 @@ func (s *serialSource) read(ctx context.Context) {
 	}
 }
 
-// parseDistanceData pulls one (angle, distance) pair out of a Command 44 message.
-// With Distance Output (Command 27) set to 0x101:
+// parseDistanceData pulls one point out of a Command 44 message. The fields are
+// packed in the order of their bits in Command 27. With 0x101:
 //
 //	Bytes 0-1: First return raw in cm (int16 LE)
 //	Bytes 2-3: Scan yaw angle in hundredths of a degree (int16 LE)
-func parseDistanceData(payload []byte, maxRange float64) (angleDeg, distanceM float64, ok bool) {
-	if len(payload) < 4 {
-		return 0, 0, false
+//
+// and with the strength as well, 0x105:
+//
+//	Bytes 0-1: First return raw in cm (int16 LE)
+//	Bytes 2-3: First return strength in % (int16 LE)
+//	Bytes 4-5: Scan yaw angle in hundredths of a degree (int16 LE)
+func parseDistanceData(payload []byte, maxRange float64, withStrength bool) (angleDeg, distanceM, strength float64, ok bool) {
+	yawAt := 2
+	if withStrength {
+		yawAt = 4
+	}
+	if len(payload) < yawAt+2 {
+		return 0, 0, 0, false
 	}
 	cm := int16(binary.LittleEndian.Uint16(payload[0:2]))
-	centideg := int16(binary.LittleEndian.Uint16(payload[2:4]))
+	centideg := int16(binary.LittleEndian.Uint16(payload[yawAt : yawAt+2]))
+	if withStrength {
+		strength = float64(int16(binary.LittleEndian.Uint16(payload[2:4])))
+	}
 
 	angleDeg = float64(centideg) / 100.0
 
 	// SF45/B signals lost signal / no return as -1000 cm.
 	// Any non-positive distance is not a valid return.
 	if cm <= 0 {
-		return angleDeg, 0, true // point taken, but not a return
+		return angleDeg, 0, strength, true // point taken, but not a return
 	}
 
 	distanceM = float64(cm) / 100.0 // centimeters to metres
 	if distanceM > maxRange {
-		return angleDeg, 0, true // beyond range is also not a return
+		return angleDeg, 0, strength, true // beyond range is also not a return
 	}
-	return angleDeg, distanceM, true
+	return angleDeg, distanceM, strength, true
 }
 
 //-------------------------------------Framing
@@ -391,4 +441,18 @@ func f32(v float32) []byte {
 	b := make([]byte, 4)
 	binary.LittleEndian.PutUint32(b, math.Float32bits(v))
 	return b
+}
+
+// percentiles reads the given percentiles from values, which it sorts.
+func percentiles(values []float64, ps ...float64) []float64 {
+	out := make([]float64, len(ps))
+	if len(values) == 0 {
+		return out
+	}
+	sort.Float64s(values)
+	for i, p := range ps {
+		k := int(p / 100 * float64(len(values)-1))
+		out[i] = values[k]
+	}
+	return out
 }

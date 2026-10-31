@@ -15,7 +15,7 @@ SYSTEMS := assessor authorizer beehive beekeeper busdriver ca cartographer clerk
            filmer flattener gamer guetteur hobbyist kgrapher leveler loader maitreD \
            meteorologue modboss modeler navigator nurse orchestrator painter parallax \
            photographer recognizer revolutionary sailor sapper telegrapher \
-           thermostat tracker uaclient weatherman
+           thermostat tracker uaclient vigie weatherman
 
 .PHONY: all ci release rpi win mac test lint clean whitelist $(SYSTEMS)
 

@@ -1,5 +1,5 @@
-github.com/sdoque/mbaigo v0.4.2 h1:IfMNWa/XUnFLa87tKc34kGS0UK+PpZ9OBsYq0XAkIco=
-github.com/sdoque/mbaigo v0.4.2/go.mod h1:uvuQ4Q1Qdi1U8BpaoBzDvst8BsskEVaVoMZ9T+5SyYc=
+github.com/sdoque/mbaigo v0.4.3 h1:ndzprlW3LaF7w3j3fSECsMv0YdDRDQ3TUUR/dridJq4=
+github.com/sdoque/mbaigo v0.4.3/go.mod h1:U+GbP3QKfQ5g6qK3n6BYe6Er/nG0HVk1lFrO2hvCOis=
 go.bug.st/serial v1.8.0 h1:ZtnmN8aYXtPlTghwSvDWPHKBHL9TM6oFDa+KpSn4SQE=
 go.bug.st/serial v1.8.0/go.mod h1:d0MmS16Qt9b1m06yoYRNUXhRRTJV5Qg2S5EKqQtnayQ=
 golang.org/x/sys v0.43.0 h1:Rlag2XtaFTxp19wS8MXlJwTvoh8ArU6ezoyFsMyCTNI=

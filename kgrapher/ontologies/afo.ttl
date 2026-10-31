@@ -11,7 +11,7 @@
 <https://w3id.org/synecdoque/afo> rdf:type owl:Ontology ;
     owl:versionIRI   <https://w3id.org/synecdoque/afo/2.4.0> ;
     owl:priorVersion <https://w3id.org/synecdoque/afo/2.3.0> ;
-    owl:versionInfo  "2.3.0" ;
+    owl:versionInfo  "2.4.0" ;
     rdfs:label       "Arrowhead Framework Ontology" ;
     rdfs:comment     """Version 2.0.0 moves the ontology to a permanent identifier at w3id.org. Changing an ontology IRI changes its identity, which is why this is a major version and not a patch: every term minted under the previous namespace is a different term. It was done while nothing had adopted the vocabulary, when it costs nothing, and it is not a thing to do again.""" ;
     dcterms:title    "Arrowhead Framework Ontology (AFO)" ;
@@ -19,7 +19,7 @@
     dcterms:creator  "Oskar Wintercorn" ;
     dcterms:publisher "Synecdoque" ;
     dcterms:license  <http://creativecommons.org/licenses/by/4.0/> ;
-    dcterms:modified "2026-09-06"^^xsd:date ;
+    dcterms:modified "2026-09-27"^^xsd:date ;
     rdfs:seeAlso     <https://doi.org/10.1109/OJIES.2026.3693084> ;
     dcterms:bibliographicCitation "O. Wintercorn and J. van Deventer, \"The Arrowhead Framework Ontology,\" IEEE Open Journal of the Industrial Electronics Society, 2026, doi: 10.1109/OJIES.2026.3693084." ;
     vann:preferredNamespacePrefix "afo" ;

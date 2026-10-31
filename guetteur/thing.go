@@ -6,6 +6,7 @@
  *
  * Contributors:
  *   Jan A. van Deventer, Luleå - initial implementation
+ *   Simon Pergel, Luleå - keeping near spikes, which may be real obstacles
  ***************************************************************************SDG*/
 
 package main
@@ -63,6 +64,23 @@ type GuetteurConfig struct {
 	// answering. The file-based integration on the vehicle uses 1.5 s for the
 	// same purpose and for the same reason.
 	StaleAfterMs int `json:"staleAfterMs"`
+
+	// MinStrengthPercent refuses returns weaker than this as no return, and
+	// asks the sensor for each return's strength to do it. Zero, the default,
+	// leaves the strength out and the sensor configured as before. A beam that
+	// glances off a smooth surface — ice, the vehicle's own aluminum plate —
+	// and comes back from beyond the wall is usually weak; what counts as weak
+	// has to be read from the sensor before it is set.
+	MinStrengthPercent float64 `json:"minStrengthPercent"`
+
+	// The isolated-point filter: a return is kept only if one of its
+	// neighbors, up to IsolatedWindow samples either side in the same sweep, is
+	// at a similar range — within IsolatedToleranceMetres or
+	// IsolatedTolerancePercent of it, whichever is larger. Zero means the
+	// default (2, 0.15 m, 5 %); an IsolatedWindow of -1 turns the filter off.
+	IsolatedWindow           int     `json:"isolatedWindow"`
+	IsolatedToleranceMetres  float64 `json:"isolatedToleranceMetres"`
+	IsolatedTolerancePercent float64 `json:"isolatedTolerancePercent"`
 }
 
 // Traits is the sensor, and what a service handler is given.
@@ -144,17 +162,20 @@ func initTemplate() *components.UnitAsset {
 			quality.SubPath:    &quality,
 		},
 		Traits: &GuetteurConfig{
-			Source:               "simulated",
-			Port:                 "/dev/ttyUSB0",
-			BaudRate:             921600,
-			SweepHz:              5,
-			PointsPerSweep:       160,
-			UpdateRate:           8,
-			ScanDelay:            5,
-			SectorDegrees:        160,
-			MaxRange:             50,
-			ForwardSectorDegrees: 40,
-			StaleAfterMs:         1500,
+			Source:                   "simulated",
+			Port:                     "/dev/ttyUSB0",
+			BaudRate:                 921600,
+			SweepHz:                  5,
+			PointsPerSweep:           160,
+			UpdateRate:               8,
+			ScanDelay:                5,
+			SectorDegrees:            160,
+			MaxRange:                 50,
+			ForwardSectorDegrees:     40,
+			IsolatedWindow:           2,
+			IsolatedToleranceMetres:  0.15,
+			IsolatedTolerancePercent: 5,
+			StaleAfterMs:             1500,
 		},
 	}
 }
@@ -237,6 +258,15 @@ func applyDefaults(cfg *GuetteurConfig) {
 	if cfg.ForwardSectorDegrees <= 0 {
 		cfg.ForwardSectorDegrees = 40
 	}
+	if cfg.IsolatedWindow == 0 {
+		cfg.IsolatedWindow = 2
+	}
+	if cfg.IsolatedToleranceMetres <= 0 {
+		cfg.IsolatedToleranceMetres = 0.15
+	}
+	if cfg.IsolatedTolerancePercent <= 0 {
+		cfg.IsolatedTolerancePercent = 5
+	}
 	if cfg.StaleAfterMs <= 0 {
 		cfg.StaleAfterMs = 1500
 	}
@@ -254,6 +284,9 @@ func (t *Traits) collect(ctx context.Context, ch <-chan sweep) {
 			if !open {
 				log.Println("guetteur: the sweep source has stopped")
 				return
+			}
+			if t.cfg.IsolatedWindow > 0 {
+				dropIsolated(&sw, t.cfg.IsolatedWindow, t.cfg.IsolatedToleranceMetres, t.cfg.IsolatedTolerancePercent/100)
 			}
 			t.mu.Lock()
 			t.latest = sw
@@ -430,4 +463,77 @@ func nearestInSector(sw sweep, sectorDegrees float64) (float64, bool) {
 		return 0, false
 	}
 	return best, true
+}
+
+// dropIsolated turns every spike into no return, and reports how many it
+// dropped. A spike is a return farther than all its neighbors by more than the
+// tolerance; the neighbors are the returns up to window samples either side in
+// the same sweep.
+//
+// Only farther. A return nearer than all its neighbors may be dust, but it may
+// as well be a post or a chair leg one sample wide, and a sensor that dropped
+// it would report the way clear through a real obstacle. A ghost from a
+// reflection is never nearer than the wall it glanced off. The first version
+// dropped near spikes too; Simon Pergel pointed out the post.
+//
+// A ghost from a reflection lands beyond the wall the beam glanced off, with
+// the wall's own returns on both sides of it: every neighbor is nearer. A wall
+// met at a shallow angle is not a spike, though its range changes fast from
+// one sample to the next — nearly a meter per degree, eight meters down a
+// corridor 1.5 m to the side — because it rises steadily, with nearer
+// neighbors on one side and farther ones on the other. The first version of
+// this filter asked instead for one neighbor at a similar range, and dropped a
+// sixth of a clean simulated corridor doing it.
+//
+// What it does not remove: a whole mirror image (a reflection off a large
+// smooth surface is a surface too, and is the strength gate's job), a point
+// with neighbors on one side only (nothing to judge it by), and a return that
+// averages a near and a far surface at an edge, which lies between its
+// neighbors.
+func dropIsolated(sw *sweep, window int, tolMetres, tolFraction float64) int {
+	n := len(sw.distances)
+	if len(sw.valid) < n {
+		n = len(sw.valid)
+	}
+	spike := make([]bool, n)
+	for i := 0; i < n; i++ {
+		if !sw.valid[i] {
+			continue
+		}
+		d := sw.distances[i]
+		tol := math.Max(tolMetres, tolFraction*d)
+		nearer, farther, similar := 0, 0, 0
+		before, after := false, false
+		for j := i - window; j <= i+window; j++ {
+			if j == i || j < 0 || j >= n || !sw.valid[j] {
+				continue
+			}
+			if j < i {
+				before = true
+			} else {
+				after = true
+			}
+			switch diff := sw.distances[j] - d; {
+			case diff < -tol:
+				nearer++
+			case diff > tol:
+				farther++
+			default:
+				similar++
+			}
+		}
+		// Judged only with neighbors on both sides: the end of a surface, or
+		// of the sweep, has them on one side only and would always look like
+		// a spike.
+		spike[i] = before && after && similar == 0 && farther == 0 && nearer > 0
+	}
+	dropped := 0
+	for i := 0; i < n; i++ {
+		if spike[i] {
+			sw.valid[i] = false
+			sw.distances[i] = 0
+			dropped++
+		}
+	}
+	return dropped
 }

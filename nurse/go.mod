@@ -1,5 +1,5 @@
 module github.com/sdoque/systems/nurse
 
-go 1.26.6
+go 1.27.3
 
-require github.com/sdoque/mbaigo v0.4.2
+require github.com/sdoque/mbaigo v0.4.3

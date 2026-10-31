@@ -12,7 +12,7 @@ velocity instead, and refuses to map where the view alone cannot place it.
 
 | service | form | what it is |
 |---|---|---|
-| `map` | `MapA_v1a` | the occupancy grid built so far |
+| `map` | `MapA_v1a` | the occupancy grid built so far: each cell unknown, or the probability in percent that it is occupied |
 | `pose` | `PoseA_v1a` | where in the map the sensor is believed to be |
 | `coverage` | `SignalA_v1a` | the share of the grid that has been observed at all |
 
@@ -22,8 +22,21 @@ forms carry the run in their frame — `map@2026-09-27T06:13:50Z`, the start tim
 and anything planned in one run, like a [navigator](../navigator/) route, must be
 refused in another.
 
-A `map.pgm` is also written to disk every ten seconds. That is the artefact a
+A `map.pgm` is also written to disk every ten seconds. That is the artifact a
 person looks at; the `map` service is what a system consumes.
+
+**The map says how sure it is.** Each cell keeps the evidence for and against
+its being occupied as log-odds — an occupancy grid in Elfes' sense: every
+return that ends in it is evidence for, every beam that passes through it
+evidence against. The `map` service sends that as a probability, 0 to 100
+percent, and the picture shades it, white for surely free to black for surely
+occupied, with the never-observed in the usual mid grey. A wall struck once is
+70 % and a light grey; one struck on every pass is 99 % and black. The first
+version cut at even odds and sent only free or occupied, so a stray return was
+as black as the corridor's wall, and no consumer could ask for more certainty.
+Evidence for a wall never rounds below 50 and evidence against it never above
+49, so a consumer that cuts at 50, as the [navigator](../navigator/) does by
+default, reads the map exactly as before.
 
 ## One sweep, start to finish
 
@@ -41,20 +54,27 @@ sequenceDiagram
             G-->>C: 503, nothing to map this time
         else
             G-->>C: the sweep: angles, distances, valid
-            C->>C: too few returns to be evidence? skip it
-            C->>L: GET distance (left wheel)
-            C->>L: GET distance (right wheel)
+            C->>C: too few returns to be evidence, or the same sweep again? skip it
+            C->>L: GET distance (left and right wheel), once more
             L-->>C: meters rolled, stamped when the frame arrived
+            C->>C: each wheel's travel at the moment the sweep was taken,<br/>between the readings either side of it
             C->>C: the two wheels give the axle's motion,<br/>moved to where the scanner sits
             C->>C: prior = the last map pose, moved by that
-            C->>C: match the sweep against the map from the prior,<br/>then probe the answer
-            alt the peak is sharp
+            C->>C: match the sweep against the map from the prior,<br/>and read from the scores how sure the match is, in each direction
+            alt with the wheels
+                C->>C: weigh the match against the wheels' prediction,<br/>each by its uncertainty, and learn the wheels' drift
+            else without them, the match fixes every direction
                 C->>C: take the match
-            else the view cannot say (a plain corridor)
-                C->>C: with the wheels, keep the prior.<br/>Without them, refuse to map and say so
+            else without them, it does not (a plain corridor)
+                C->>C: refuse to map, and say so
             end
             C->>C: integrate, if the vehicle has moved far enough
         end
+    end
+
+    loop every odometry pollMs, 50 ms
+        C->>L: GET distance (left and right wheel)
+        C->>C: keep the readings, three seconds of them
     end
 
     loop every ten seconds
@@ -89,14 +109,44 @@ so the along-wall direction carries no false evidence.
 walls look identical from everywhere between them. This is the aperture problem
 and it is a property of the geometry, not a defect to be tuned away.
 
-So the matcher probes its own answer: it nudges the winning pose and asks
-whether the score actually falls. A flat peak is reported as flat, and then:
+So the match comes with its uncertainty: how sure it is in every direction,
+read from the scores themselves, as Olson does for correlative scan matching
+(*Real-time correlative scan matching*, ICRA 2009, §F). The coarse search has
+scored the whole window; a Gaussian fitted to those scores says in which
+directions the fit falls off at all. One that spreads across the window — along
+a corridor — is not seen, and the match says nothing there. The fine search,
+close round the peak, says how precisely the seen directions are fixed. The two
+are read at different scales on purpose. Across the window the scores are read
+loosely, a fit 5 % worse being *e* times less likely, because a sweep's own
+sampling pattern and the ends of walls not yet drawn move the score by a few
+percent wherever it is put, and read tightly those few percent pin the vehicle
+to where the walls' dots were last drawn. Round the peak the score is read as
+the log-likelihood it is, or else the walls would fix the heading only to a
+degree and the wheels would outweigh them.
 
-- **with odometry**, the odometry is taken as the pose and the matcher is not
-  allowed to slide it along the direction the map is indifferent to;
-- **without odometry**, the sweep is *not* integrated at all, and the system
-  says so. A corridor mapped from a pose that cannot be known comes out the
-  wrong length and looks entirely convincing.
+Then:
+
+- **with odometry**, the match and the wheels' prediction are weighed by their
+  uncertainties, in a Kalman filter on the pose (`fusion.go`). In a corridor
+  the walls decide the heading and the distance to them, and the wheels the
+  distance along it; a doorway half seen counts for what it is worth; no
+  threshold decides which source wins. The filter also learns the wheels'
+  **drift**, the turn they report per meter that never happened — two wheels of
+  slightly different size do that every meter, the same way — and takes it out
+  of every step after; see below;
+- **without odometry**, a sweep the match does not fix in every direction is
+  *not* integrated at all, and the system says so. A corridor mapped from a
+  pose that cannot be known comes out the wrong length and looks entirely
+  convincing.
+
+The versions before took decisions where this weighs. The first took the
+wheels' pose whole wherever the peak was flat, heading included, and so threw
+away the walls exactly where they hold the heading best. The second took the
+heading from the walls in a corridor and the distance from the wheels, but
+judged "flat" by nudging along x and y, and a corridor at an angle to the map's
+axes passed as sharp; the matcher then slid along it. In `corridor_test.go`,
+with one wheel reading 2 % long over 20 m of corridor, the first turned the map
+36°; this one ends 0.2° off, and has learned the 1.8°/m the wheels report.
 
 ## Odometry
 
@@ -105,7 +155,7 @@ the two wheels of the scanner's own axle, found by definition `distance`, the
 wheel's `NodeID` and the vehicle's `Model`. Between two sweeps the change in
 each says how far each side moved. The wheel's size is the loader's business:
 it converts revolutions to meters with the circumference in its own
-configuration, so calibrating the wheel size means changing one number, there.
+configuration, one circumference per wheel, so the wheel sizes are calibrated there.
 
 **One axle is enough, and the articulation angle is not needed.** An
 articulated loader bends in the middle, so its two halves point in different
@@ -125,16 +175,32 @@ pose, and would also have discovered its *own* `pose` service as the odometry
 source. Neither ever ran, because nothing provided a pose.)
 
 **Where the view cannot place the vehicle, the wheels do.** Down a plain
-corridor the matcher's peak is flat, and the wheel-derived pose is taken as it
-is. `odometry_test.go` drives a simulated corridor: with the wheels the estimate
+corridor the match says nothing along it, and the distance is the wheels'.
+`odometry_test.go` drives a simulated corridor: with the wheels the estimate
 follows the vehicle to the centimeter; without them every sweep is refused.
+
+**How sure the wheels are** is the `odometry.noise` setting: one standard
+deviation of each step's error, growing with the step. The defaults are 3 % of
+the distance along it, 2 % sideways, 1.5° per meter of turn that never happened,
+and 10 % of every turn, the scrubbing of the tires. They are what the view is
+weighed against, so they matter less than they look: too confident, and the
+wheels' errors reach the map; too doubtful, and every flutter of the match
+does.
+
+**The drift the filter learns** is logged every 300 sweeps once it is known to
+a quarter of a degree per meter: *the wheels report +0.4°/m (±0.15) of turn that
+the walls do not see.* Positive means a turn to the left: the right wheel reads
+long or the left one short. It is the wheel-size difference left after the
+loader's per-wheel circumferences, the same thing a clockwise and
+counterclockwise loop (UMBmark) measures. A value that stays well away from
+zero says those circumferences are off.
 
 **What the wheels get wrong, and what guards against it:**
 
 - *Slip.* The loader drives each wheel at the speed the geometry asks for, but
   tires still creep and scrub, most in tight turns, so the heading from the
-  encoders drifts. That is why the matcher still corrects wherever the view
-  allows.
+  encoders drifts. What is the same every meter the filter learns as drift;
+  the rest is noise, and the view outweighs it wherever it sees.
 - *Counter wrap.* The encoder's own counter wraps every 204.8 revolutions; the
   loader unwraps it, so `distance` does not.
 - *A loader restart* starts the distances again from zero. A jump larger than
@@ -145,9 +211,16 @@ follows the vehicle to the centimeter; without them every sweep is refused.
   `maxAgeMs` (1.5 s) is not used. The loader and the cartographer must
   therefore agree on the time to within that — run NTP if they are on different
   hosts.
-- *Timing.* The wheels are read when a sweep is processed, not when it was
-  taken, and a sweep is not de-skewed for motion during it. At walking pace
-  that is a few centimeters.
+- *Timing.* The wheels are read every `pollMs` and once more for each sweep,
+  each reading kept with the time the loader received it, and the travel used
+  is interpolated at the sweep's own timestamp. The first version read them
+  when it got round to the sweep, a delay that varies from sweep to sweep and
+  over Wi-Fi by hundreds of milliseconds; down a corridor that variation went
+  straight into the distance. This assumes the guetteur and the loader agree on
+  the time, which they do on the same computer. Two things remain: the
+  guetteur stamps a sweep when it ends rather than in its middle, and a sweep
+  is not de-skewed for the motion during it, which bends a sweep taken while
+  turning.
 
 | `odometry` field | default | |
 |---|---|---|
@@ -158,6 +231,8 @@ follows the vehicle to the centimeter; without them every sweep is refused.
 | `scannerMount` | 0, 0, 0° | forward, left, and yaw of the scanner from that axle's center |
 | `maxAgeMs` | 1500 | longer than the loader's one-second heartbeat |
 | `maxWheelSpeedMetresPerSecond` | 3 | bounds plausible motion between readings |
+| `pollMs` | 50 | how often the wheels are read between sweeps |
+| `noise` | 0.03, 0.02, 1.5, 0.1 | `alongFraction`, `crossFraction`, `headingDegreesPerMeter`, `turnFraction`: one standard deviation of a step's error |
 
 **Check the defaults against the vehicle:** they assume the SF45/B is on the
 **front** half, over the axle, facing forward. If it is mounted elsewhere, say

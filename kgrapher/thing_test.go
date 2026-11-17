@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,10 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
-	"github.com/sdoque/mbaigo/components"
 	"time"
 )
 
@@ -307,90 +303,6 @@ func TestARefusedSystemDoesNotPoisonTheGraph(t *testing.T) {
 	}
 	if strings.Contains(kept[0], "certificate") {
 		t.Error("a refusal reached the graph")
-	}
-}
-
-// TestAnIncompleteAssemblySchedulesAnotherOne is the second half of the
-// poisoned-graph regression.
-//
-// Skipping a system that refuses is right; leaving it out for ever is not.
-// Rebuilds are driven by registry changes, and a settled cloud produces none —
-// so a pass that ran during the seconds a system was still registered under its
-// plain-HTTP URL would omit it until something else happened to move. On the
-// cottage that left the authorizer out of the graph entirely, with kgrapher
-// reporting that the graph described the cloud.
-func TestAnIncompleteAssemblySchedulesAnotherOne(t *testing.T) {
-	previous := incompleteRetry
-	incompleteRetry = 10 * time.Millisecond
-	defer func() { incompleteRetry = previous }()
-
-	tr := &Traits{owner: &components.System{Ctx: context.Background()}}
-
-	var mu sync.Mutex
-	rebuilds := 0
-	done := make(chan struct{})
-	tr.rebuilding = func() {
-		mu.Lock()
-		rebuilds++
-		if rebuilds == 2 {
-			close(done)
-		}
-		mu.Unlock()
-	}
-
-	// One retry is scheduled, and repeated calls do not multiply it.
-	tr.retryPending.Store(false)
-	for i := 0; i < 5; i++ {
-		if tr.retryPending.CompareAndSwap(false, true) {
-			go func() {
-				defer tr.retryPending.Store(false)
-				time.Sleep(incompleteRetry)
-				tr.rebuilding()
-				tr.rebuilding()
-			}()
-		}
-	}
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("no second assembly was scheduled after an incomplete pass")
-	}
-
-	mu.Lock()
-	defer mu.Unlock()
-	if rebuilds != 2 {
-		t.Errorf("%d rebuilds; want exactly 2 — the guard let duplicates through", rebuilds)
-	}
-}
-
-// A registration is an event and a binding is not, so the picture taken at
-// the event shows a consumer bound to nothing. One more pass after the
-// consumers have had time to bind — and only one, so a quiet cloud is not
-// assembled forever.
-func TestACompleteAssemblyLooksOnceMoreLater(t *testing.T) {
-	previous := settleDelay
-	settleDelay = 10 * time.Millisecond
-	defer func() { settleDelay = previous }()
-
-	// The pass runs for real; the stub fails before anything is stored, so
-	// what is exercised is the scheduling and not the assembly.
-	tr := &Traits{assembling: func() (string, int, error) { return "", 0, errors.New("stub") }}
-	tr.settlePending.Store(false)
-
-	tr.settleLater()
-	if !tr.settlePending.Load() {
-		t.Fatal("no settling pass was scheduled after a complete assembly")
-	}
-	// A second change while one is pending does not stack another.
-	tr.settleLater()
-
-	deadline := time.Now().Add(time.Second)
-	for tr.settlePending.Load() && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if tr.settlePending.Load() {
-		t.Fatal("the settling pass never ran")
 	}
 }
 

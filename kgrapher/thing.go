@@ -64,26 +64,8 @@ type Traits struct {
 	// goroutine and read by every request handler, so it is swapped as a whole.
 	graph atomic.Pointer[assembled]
 
-	// silenceFor overrides how long the stream may say nothing before it is
-	// treated as dead. Zero means silenceLimit. A field so a test can drive the
-	// watchdog itself rather than the context, which would pass whether or not
-	// the watchdog existed.
-	silenceFor time.Duration
-
-	// rebuilding is what to do when the registry settles. A field so a test can
-	// count rebuilds without a registrar, a cloud, or a triple store.
-	rebuilding func()
-
-	// retryPending stops an incomplete assembly from scheduling more than one
-	// retry at a time. Without it, each retry that is still incomplete would
-	// schedule another, and the pass that finally succeeds would arrive with a
-	// crowd of duplicates behind it.
-	retryPending atomic.Bool
-	// settlePending does the same for the follow-up pass after a change; see
-	// settleLater.
-	settlePending atomic.Bool
-	// assembling is a test seam, so a scheduled pass can be driven without a
-	// registry or a store behind it.
+	// assembling is a test seam, so a pass can be driven without a registry or
+	// a store behind it.
 	assembling func() (string, int, error)
 
 	// registry is where the subscription reads from, discovered like any other
@@ -117,13 +99,6 @@ func (t *Traits) store(turtle string) {
 func (t *Traits) current() (*assembled, bool) {
 	a := t.graph.Load()
 	return a, a != nil
-}
-
-// registryToken returns the token to present on the subscription, if the cloud
-// issues one. The subscription holds a connection open and so cannot use
-// SystemList, but it asks for the same token in the same way.
-func (t *Traits) registryToken() (string, bool) {
-	return usecases.RegistryToken(t.registry, t.owner)
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -219,14 +194,16 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 
 	// The registry is a consumed service like any other, so that in an
 	// authorized cloud the subscription carries a token minted for reading it.
-	t.registry = &components.Cervice{
-		Definition: "syslist",
-		Protos:     components.SProtocols(sys.Husk.ProtoPort),
-		Nodes:      make(map[string][]components.NodeInfo),
-		Mode:       "get",
-	}
+	t.registry = usecases.SystemListCervice(sys)
 
-	go t.follow(sys.Ctx)
+	// Rebuilt when the registry reports a change rather than when somebody
+	// asks, so the graph can be read as often as anyone likes: a dashboard
+	// polling every few seconds used to cost one call to the registrar and one
+	// to every system, every time, and an upload to the triple store with it.
+	follower := &usecases.RegistryFollower{
+		Name: "kgrapher", Registry: t.registry, System: sys, Rebuild: t.rebuild,
+	}
+	go follower.Follow(sys.Ctx)
 
 	return ua, func() {
 		log.Println("Disconnecting from GraphDB")
@@ -965,4 +942,32 @@ func withStoreAuth(c *http.Client, user, pw string) *http.Client {
 	wrapped := *c
 	wrapped.Transport = &storeAuth{base: base, user: user, pw: pw}
 	return &wrapped
+}
+
+// rebuild assembles the graph and publishes it, and reports whether every
+// system was read; the follower tries again after a pass that was not.
+//
+// A failure leaves the graph already served as it was rather than replacing
+// it with nothing. A pass that reads only some systems is the more dangerous
+// case, because it succeeds: /kgraph requires an enrolled caller, and a system
+// is registered under its plain-HTTP URL for the seconds before its
+// certificate arrives, so a pass in that window silently omits it.
+func (t *Traits) rebuild() bool {
+	assemble := t.assembleOntologies
+	if t.assembling != nil {
+		assemble = t.assembling
+	}
+	graph, skipped, err := assemble()
+	if err != nil {
+		log.Printf("kgrapher: could not assemble the graph: %v\n", err)
+		return false
+	}
+	t.store(graph)
+	t.publishToStore(graph)
+	if skipped > 0 {
+		log.Printf("kgrapher: the graph is missing %d system(s) that could not be read\n", skipped)
+		return false
+	}
+	log.Printf("kgrapher: the graph now describes the cloud as of this change\n")
+	return true
 }

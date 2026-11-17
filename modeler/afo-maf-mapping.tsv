@@ -19,7 +19,7 @@
 #
 # kind: a definition ("abstract part def", "part def", "attribute def",
 # "enum def", "abstract port def"), a feature of the owner definitions
-# ("attribute", "part"), or an enumeration literal ("enum"). A definition's
+# ("attribute", "part", "ref part"), or an enumeration literal ("enum"). A definition's
 # specializations come from AFO's rdfs:subClassOf and its doc from AFO's
 # rdfs:comment. An owner may carry its own multiplicity: Owner[0..1].
 #
@@ -42,7 +42,7 @@ Set	maf	enum	'set'	Mode	-	-
 Do	maf	enum	'do'	Mode	-	-	'do' is a SysML v2 keyword, so it must be quoted
 Endpoint	maf	attribute def	Endpoint	-	-	-	a value describing an address, not a thing with parts
 SecurityPosture	maf	attribute def	SecurityPosture	-	-	-	filled from usecases.Posture, the function the graph is written from
-ExternalAttachment	maf	part def	ExternalAttachment	-	-	-	a part, so a connection from the system to something outside the cloud can be drawn
+ExternalAttachment	maf	part def	ExternalAttachment	-	-	-	a part definition, so a connection from the system to something outside the cloud can be drawn; systems refer to it rather than own it
 ProvidedService	generated	-	-	-	-	-	an out port usage on the unit asset: a direction, not a type
 ConsumedService	generated	-	-	-	-	-	an in port usage on the unit asset: a direction, not a type
 Husk	generated	-	-	-	-	-	flattened into the system part: host, <proto>Port and <proto>Endpoint attributes; a husk has no structure a model needs apart from its system
@@ -78,7 +78,7 @@ isEncrypted	maf	attribute	isEncrypted	ExternalAttachment	Boolean	-
 isAuthenticated	maf	attribute	isAuthenticated	ExternalAttachment	Boolean	-
 communicatesOver	maf	attribute	endpoints	ArrowheadSystem	Endpoint	[0..*]	the husk is flattened into the system, so its endpoints are the system's
 hasSecurityPosture	maf	attribute	posture	ArrowheadSystem	SecurityPosture	[0..1]
-hasExternalAttachment	maf	part	externalAttachments	ArrowheadSystem	ExternalAttachment	[0..*]	AFO hangs it on the security posture; in a structural model it belongs to the system that reaches out
+hasExternalAttachment	maf	ref part	externalAttachments	ArrowheadSystem	ExternalAttachment	[0..*]	AFO hangs it on the security posture; in a structural model it belongs to the system that reaches out. A reference, not a part: the database or broker is outside the cloud, and a system that owned it would make two systems attached to one database own two
 consumes	generated	-	-	-	-	-	connect <consumer port> to <provider port>
 consumesFrom	generated	-	-	-	-	-	the connect statement resolved from the bound URL: the binding the orchestrator actually made, as the graph's consumesFrom is
 consumesService	generated	-	-	-	-	-	an in port usage on the unit asset

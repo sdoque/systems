@@ -66,6 +66,7 @@ own — and what it looks like when it has gone wrong.
 | System | Description |
 |---|---|
 | `ds18b20` | Reads temperature from 1-wire DS18B20 sensors attached to a Raspberry Pi GPIO |
+| `spiker` | Reads an ICM-20948 inertial sensor on a Raspberry Pi's I2C or SPI bus: acceleration, angular velocity and magnetic field as vectors, and the die temperature |
 | `beekeeper` | Exposes ZigBee devices paired to a RaspBee II / deCONZ gateway (plugs, lights, sensors) as Arrowhead services |
 | `meteorologue` | Exposes Netatmo weather station modules (indoor, outdoor, rain, wind) as Arrowhead services |
 | `weatherman` | Exposes a Davis Vantage Pro 2 weather station connected via USB serial as Arrowhead services |

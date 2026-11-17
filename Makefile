@@ -14,7 +14,7 @@ SYSTEMS := assessor authorizer beehive beekeeper busdriver ca cartographer clerk
            collector democrat drafter ds18b20 ds18b20F emulator envoy esr ethermostat \
            filmer flattener gamer guetteur hobbyist kgrapher leveler loader maitreD \
            meteorologue modboss modeler navigator nurse orchestrator painter parallax \
-           photographer recognizer revolutionary sailor sapper telegrapher \
+           photographer recognizer revolutionary sailor sapper spiker telegrapher \
            thermostat tracker uaclient vigie weatherman
 
 .PHONY: all ci release rpi win mac test lint clean whitelist $(SYSTEMS)

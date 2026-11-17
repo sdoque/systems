@@ -67,7 +67,7 @@ package mAF {
         attribute host : String;
         attribute endpoints : Endpoint[0..*];
         attribute posture : SecurityPosture[0..1];
-        part externalAttachments : ExternalAttachment[0..*];
+        ref part externalAttachments : ExternalAttachment[0..*];
     }
 
     abstract part def CoreSystem :> ArrowheadSystem {

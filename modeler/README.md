@@ -30,8 +30,9 @@ The output covers:
   each unit asset's consumed services when those cervices carry a
   `Mode` (`"get"` or `"set"`).
 
-The model is generated **on demand** by issuing an HTTP GET to the
-`cloudmodel` service. It is expressed in [SysML v2 textual
+The model is generated when somebody issues an HTTP GET to the
+`cloudmodel` service and, when `sysViewURL` is set, each time the
+registry changes, and is then pushed to SysView. It is expressed in [SysML v2 textual
 notation](https://www.omg.org/spec/SysML/2.0) and returned as plain text.
 
 ## Architecture
@@ -43,9 +44,33 @@ per-system meta-view, deduplicate and merge, hand back the combined
 result. The Modeler does no per-system model generation; it only
 orchestrates collection and merging.
 
-The Modeler is **demand-driven** — there is no background timer. Each
-GET on `/cloudmodel` triggers a fresh collect + merge. Consumers that
-want a current view ask for one.
+Each GET on `/cloudmodel` triggers a fresh collect + merge.
+
+### Pushing to SysView
+
+With `sysViewURL` set, the modeler also follows the Service Registrar, as
+the kgrapher does for GraphDB, and puts the model to SysView whenever the
+cloud changes:
+
+- It subscribes to the registrar's `syslist` event stream through mbaigo's
+  `usecases.RegistryFollower`, the same code the kgrapher uses.
+- A burst of registrations from a system starting up is one rebuild, once the
+  registry has been quiet for 2 s.
+- 60 s after each change it looks once more, because consumers bind to their
+  providers only after they register. Without that second look, the model
+  shows the connections as they were at the event.
+- A pass that could not read every system (one still registered under plain
+  HTTP before its certificate arrived) is retried every 30 s until it can.
+- The model is sent as `PUT <sysViewURL>/models/<cloudName>`. SysView
+  updates a window already showing that name in place, and keeps its
+  requirements attached. Otherwise it opens a new window.
+- A model identical to the one SysView last accepted is not sent again.
+- A push SysView refuses, or one made while SysView is closed, is logged and
+  not retried. The next change sends it again, or a GET returns the model in
+  the meantime.
+
+SysView is outside the local cloud and the push is unauthenticated, so the
+modeler declares it as an external attachment in its security posture.
 
 ## Relationship to AFO
 
@@ -175,7 +200,7 @@ in the same assembly pass.
                 }
             ],
             "traits": [
-                { "cloudName": "myLocalCloud" }
+                { "cloudName": "myLocalCloud", "sysViewURL": "http://192.168.1.20:8686" }
             ]
         }
     ],
@@ -188,7 +213,8 @@ in the same assembly pass.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `cloudName` | string | `"localCloud"` | Name used for the merged SysML v2 package and for the concrete `<cloudName>Def :> LocalCloud` type |
+| `cloudName` | string | `"localCloud"` | Name used for the merged SysML v2 package and for the concrete `<cloudName>Def :> LocalCloud` type; also the model's name in SysView |
+| `sysViewURL` | string | `""` | Where SysView listens, `http://<host>:8686`. Empty: nothing is pushed and the registry is not followed |
 
 ## Behavior generation
 

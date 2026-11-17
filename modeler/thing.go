@@ -22,10 +22,12 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/sdoque/mbaigo/components"
@@ -47,12 +49,20 @@ var mAFLibrary string
 
 // Traits holds the configurable parameters for the modeler assembler.
 type Traits struct {
-	CloudName string             `json:"cloudName"` // name used for the merged SysML v2 package
-	owner     *components.System `json:"-"`
-	name      string             `json:"-"`
+	CloudName string `json:"cloudName"` // name used for the merged SysML v2 package
+	// SysViewURL is where SysView listens, "http://<mac>:8686". The model is
+	// put there under CloudName each time the registry settles after a
+	// change. Empty, nothing is pushed and the model is only served on GET.
+	SysViewURL string             `json:"sysViewURL"`
+	owner      *components.System `json:"-"`
+	name       string             `json:"-"`
 	// registry is where the system list is read from, discovered like any other
 	// consumed service so the read carries a token in an authorized cloud.
 	registry *components.Cervice `json:"-"`
+	// pushed is the model SysView last accepted, so a pass that changed
+	// nothing (the look once more after every change, a retry) does not put
+	// the same model again.
+	pushed string `json:"-"`
 }
 
 //-------------------------------------Instantiate a unit asset template
@@ -95,6 +105,23 @@ func newResource(configuredAsset usecases.ConfigurableAsset, sys *components.Sys
 
 	t.registry = usecases.SystemListCervice(sys)
 
+	// SysView is outside the cloud and nothing protects the push, so the
+	// posture says so. Followed only when there is somewhere to push: a model
+	// nobody is shown is not worth reading the whole cloud for at every change.
+	if t.SysViewURL != "" {
+		u, err := url.Parse(t.SysViewURL)
+		if err != nil || u.Host == "" {
+			log.Fatalf("modeler: sysViewURL %q is not a URL like http://host:8686", t.SysViewURL)
+		}
+		sys.Husk.Attach(components.ExternalAttachment{
+			Name: "SysView", Protocol: u.Scheme, Encrypted: u.Scheme == "https", Authenticated: false,
+		})
+		follower := &usecases.RegistryFollower{
+			Name: "modeler", Registry: t.registry, System: sys, Rebuild: t.rebuild,
+		}
+		go follower.Follow(sys.Ctx)
+	}
+
 	ua := &components.UnitAsset{
 		Name:        configuredAsset.Name,
 		Mission:     configuredAsset.Mission,
@@ -128,17 +155,78 @@ func (t *Traits) aggregate(w http.ResponseWriter, r *http.Request) {
 
 //-------------------------------------Unit asset's function methods
 
-// assembleModel fetches /smodel from each registered system, merges the per-system
-// SysML v2 packages into a single package, and writes the result.
+// assembleModel builds the model and writes it.
 func (t *Traits) assembleModel(w http.ResponseWriter) {
+	model, _, err := t.buildModel()
+	if err != nil {
+		log.Printf("Error getting the system list: %s\n", err)
+		http.Error(w, "Service Unavailable: unable to read the service registrar", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte(model))
+}
+
+// rebuild builds the model and puts it to SysView, and reports whether every
+// system was read; the follower tries again after a pass that was not.
+//
+// A push that fails is logged and not retried: SysView is an application on
+// somebody's desk and is often closed, and reading the whole cloud every half
+// minute until it opens is not worth it. The next change pushes again.
+func (t *Traits) rebuild() bool {
+	model, skipped, err := t.buildModel()
+	if err != nil {
+		log.Printf("modeler: could not read the registry: %v\n", err)
+		return false
+	}
+	if model != t.pushed {
+		if err := t.pushToSysView(model); err != nil {
+			log.Printf("modeler: SysView did not take the model: %v\n", err)
+		} else {
+			t.pushed = model
+			log.Printf("modeler: SysView now shows %s as of this change\n", t.CloudName)
+		}
+	}
+	if skipped > 0 {
+		log.Printf("modeler: the model is missing %d system(s) that could not be read\n", skipped)
+		return false
+	}
+	return true
+}
+
+// pushToSysView puts the model to SysView under the cloud's name. SysView
+// updates a window showing a model of that name in place, keeping the
+// requirements attached to it, and opens a new one otherwise.
+func (t *Traits) pushToSysView(model string) error {
+	target := strings.TrimSuffix(t.SysViewURL, "/") + "/models/" + url.PathEscape(t.CloudName)
+	req, err := http.NewRequest(http.MethodPut, target, strings.NewReader(model))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		reason, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(reason)))
+	}
+	return nil
+}
+
+// buildModel fetches /smodel from each registered system and merges the
+// per-system SysML v2 packages into a single package. skipped counts the
+// systems that could not be read.
+func (t *Traits) buildModel() (model string, skipped int, err error) {
 	// Through the framework, which discovers the registry service and carries
 	// the access token. This request was built by hand and carried none, so
 	// declaring syslist as a service refused it in any cloud with an authorizer.
 	systems, err := usecases.SystemList(t.registry, t.owner)
 	if err != nil {
-		log.Printf("Error getting the system list: %s\n", err)
-		http.Error(w, "Service Unavailable: unable to read the service registrar", http.StatusServiceUnavailable)
-		return
+		return "", 0, err
 	}
 
 	// Collect per-system fragments plus structured IBD data.
@@ -154,6 +242,7 @@ func (t *Traits) assembleModel(w http.ResponseWriter) {
 		resp, err := http.Get(smodelURL)
 		if err != nil {
 			log.Printf("Unable to get SysML model from %s: %s\n", sysURL, err)
+			skipped++
 			continue
 		}
 		// A refusal is not a model — see the same guard in kgrapher. /smodel now
@@ -163,12 +252,14 @@ func (t *Traits) assembleModel(w http.ResponseWriter) {
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			resp.Body.Close()
 			log.Printf("Skipping SysML model from %s: %s\n", sysURL, resp.Status)
+			skipped++
 			continue
 		}
 		bodyBytes, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
 			log.Printf("Error reading model response from %s: %s\n", sysURL, err)
+			skipped++
 			continue
 		}
 
@@ -201,10 +292,7 @@ func (t *Traits) assembleModel(w http.ResponseWriter) {
 		}
 	}
 
-	model := t.emitCloudPackage(portDefs, abstractActions, blockDefs, behaviorDefs, fragments)
-
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write([]byte(model))
+	return t.emitCloudPackage(portDefs, abstractActions, blockDefs, behaviorDefs, fragments), skipped, nil
 }
 
 // parsePackage parses a SysML v2 package (as produced by SModeling) and returns

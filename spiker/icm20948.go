@@ -94,16 +94,16 @@ const (
 
 // The AK09916 magnetometer, on the internal bus.
 const (
-	akAddress    = 0x0C
-	akWIA2       = 0x01
-	akWIA2Value  = 0x09
-	akST1        = 0x10 // ST1, HXL..HZH, a reserved byte, ST2: nine bytes
-	akCNTL2      = 0x31
-	akCNTL3      = 0x32
-	akReset      = 0x01
-	akCont100Hz  = 0x08
-	akST1DataRdy = 1 << 0
-	akST2Overflw = 1 << 3
+	akAddress     = 0x0C
+	akWIA2        = 0x01
+	akWIA2Value   = 0x09
+	akST1         = 0x10 // ST1, HXL..HZH, a reserved byte, ST2: nine bytes
+	akCNTL2       = 0x31
+	akCNTL3       = 0x32
+	akReset       = 0x01
+	akCont100Hz   = 0x08
+	akST1DataRdy  = 1 << 0
+	akST2Overflow = 1 << 3
 
 	akMicroTeslaPerLSB = 0.15
 )
@@ -389,7 +389,7 @@ func (c *icm20948) decode(buf [23]byte) rawSample {
 	s.tempC = be(12)/tempLSBPerDegree + 21
 
 	st1, st2 := buf[14], buf[22]
-	s.magGood = st1&akST1DataRdy != 0 && st2&akST2Overflw == 0
+	s.magGood = st1&akST1DataRdy != 0 && st2&akST2Overflow == 0
 	s.mag = [3]float64{
 		le(15) * akMicroTeslaPerLSB,
 		-le(17) * akMicroTeslaPerLSB,

@@ -178,7 +178,7 @@ func TestABurstIsDecodedIntoOneFrame(t *testing.T) {
 		t.Errorf("magnetic field %v (good %v), want 15, -15, 15 µT in the accelerometer's axes", s.mag, s.magGood)
 	}
 
-	buf[22] = akST2Overflw
+	buf[22] = akST2Overflow
 	if c.decode(buf).magGood {
 		t.Error("a magnetometer reading that overflowed was kept")
 	}

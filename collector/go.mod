@@ -1,10 +1,10 @@
 module github.com/sdoque/systems/collector
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/influxdata/influxdb-client-go/v2 v2.14.0
-	github.com/sdoque/mbaigo v0.4.3
+	github.com/sdoque/mbaigo v0.4.4
 )
 
 require (
